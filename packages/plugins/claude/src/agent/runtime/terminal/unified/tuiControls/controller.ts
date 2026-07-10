@@ -1,4 +1,5 @@
-import type { RuntimeConfigOutcomeChangeKeyV1, RuntimeConfigOutcomeTimingV1 } from '@happier-dev/protocol';
+import type { RuntimeConfigOutcomeChangeKeyV1, RuntimeConfigOutcomeTimingV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import { sleep } from '@happier-dev/plugin-sdk/experimental/timeout';
 
 import { resolveClaudeDefaultEffortForKnownAliasOrModel } from '../../../reasoningEffort.js';
 
@@ -52,6 +53,14 @@ function hasModeChange(desired: ClaudeDesiredRuntimeConfig): boolean {
   return typeof desired.agentModeId === 'string' && desired.agentModeId.trim().length > 0;
 }
 
+function isModeOnlyRuntimeConfigChange(desired: ClaudeDesiredRuntimeConfig): boolean {
+  return hasModeChange(desired)
+    && desired.model === undefined
+    && desired.reasoningEffort === undefined
+    && desired.ultracode === undefined
+    && desired.maxThinkingTokens == null;
+}
+
 function mergeDesired(
   base: ClaudeDesiredRuntimeConfig,
   override: ClaudeDesiredRuntimeConfig,
@@ -97,7 +106,7 @@ export function createClaudeUnifiedTuiControlController(
   deps: ClaudeTuiControlControllerDeps,
 ): ClaudeUnifiedTuiControlController {
   const nowMs = deps.nowMs ?? Date.now;
-  const wait = deps.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const wait = deps.wait ?? sleep;
   const timings = { ...DEFAULT_CLAUDE_TUI_CONTROL_TIMINGS, ...deps.timings };
   const telemetry = deps.telemetry ?? NOOP_TELEMETRY;
   const runtime: ControlRuntime = { port: deps.port, wait, timings, nowMs };
@@ -188,6 +197,7 @@ export function createClaudeUnifiedTuiControlController(
 
   function buildControlPlans(desired: ClaudeDesiredRuntimeConfig, reason: ApplyRuntimeConfigReason): ControlPlan[] {
     const plans: ControlPlan[] = [];
+    const modeOnly = isModeOnlyRuntimeConfigChange(desired);
     // Ordering: model → effort → ultracode → permission/plan mode.
     if (desired.model !== undefined) {
       plans.push({
@@ -255,9 +265,10 @@ export function createClaudeUnifiedTuiControlController(
             runtime,
             telemetry,
             maxAttempts: deps.maxModeCycleAttempts,
-            // The in-flight steer path may cycle in the steer-safe GENERATING window (probe Q-A);
-            // every other reason keeps the idle-only window.
-            ...(reason === 'in_flight_steer' ? { window: 'in_flight_steer' as const } : {}),
+            // Mode-only changes may cycle in the steer-safe GENERATING window regardless of caller
+            // path. Non-mode and mixed changes keep the idle-only window so partial config truth is
+            // never reported as fully effective.
+            ...(modeOnly ? { window: 'in_flight_steer' as const } : {}),
           },
           { permissionMode: desired.permissionMode, agentModeId: desired.agentModeId },
         ),

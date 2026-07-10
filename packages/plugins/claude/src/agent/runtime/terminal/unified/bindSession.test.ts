@@ -1,16 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   createEventsFixture,
   createPluginContextFixture,
   createTerminalHostFixture,
+  expectRuntimeEnvelope,
 } from '../../engine.testkit.js';
 import {
   bindClaudeUnifiedTerminalSession,
+  resolveUnifiedTerminalResumeChoice,
   resolveUnifiedTerminalPermissionMode,
 } from './bindSession.js';
+import { getClaudeProjectPath } from '../../../surfaces/sessions/handoff/path.js';
 
-type InternalHostSessionParamsWithCredentials =
+type SessionParamsWithCredentials =
   Parameters<typeof bindClaudeUnifiedTerminalSession>[0]['sessionParams'] & Readonly<{
     credentials: Readonly<{
       token: string;
@@ -23,7 +26,7 @@ function modeMetadata(modeId: string, updatedAt = 1): Readonly<Record<string, un
 }
 
 describe('bindClaudeUnifiedTerminalSession', () => {
-  it('preserves host session credentials on the unified terminal plan opts', async () => {
+  it('returns a public session runtime without launching the terminal while binding', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
     const ctx = createPluginContextFixture(terminalHost.service, events.service);
@@ -31,18 +34,280 @@ describe('bindClaudeUnifiedTerminalSession', () => {
       token: 'host-token',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
     };
-    const sessionParams: InternalHostSessionParamsWithCredentials = {
+    const sessionParams: SessionParamsWithCredentials = {
       cwd: '/tmp/claude-project',
       permissionMode: 'default',
       credentials,
     };
 
-    const plan = await bindClaudeUnifiedTerminalSession({
+    const runtime = await bindClaudeUnifiedTerminalSession({
       ctx,
       sessionParams,
     });
 
-    expect(plan.opts).toMatchObject({ credentials });
+    expectRuntimeEnvelope(runtime);
+    expect(terminalHost.service.resolve).not.toHaveBeenCalled();
+    expect(terminalHost.service.createOrAttachHost).not.toHaveBeenCalled();
+  });
+
+  it('passes the persisted workflow headline into startup interruption reconciliation', async () => {
+    vi.useFakeTimers();
+    const terminalHost = createTerminalHostFixture();
+    const events = createEventsFixture();
+    const writeSystemRecord = vi.fn(async () => undefined);
+    const ctx = createPluginContextFixture(terminalHost.service, events.service, {
+      sessionWriteSystemRecord: writeSystemRecord,
+      sessionWriteMetadata: vi.fn(async () => undefined),
+    });
+    const credentials = {
+      token: 'host-token',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    };
+    const runtime = await bindClaudeUnifiedTerminalSession({
+      ctx,
+      sessionParams: {
+        cwd: '/tmp/claude-project',
+        permissionMode: 'default',
+        credentials,
+        metadata: {
+          sessionWorkflowActivityHeadlineV1: {
+            v: 1,
+            backendId: 'claude',
+            updatedAt: 1000,
+            primaryRunId: 'wf_stale',
+            activeRuns: [{
+              runId: 'wf_stale',
+              title: 'Stale workflow',
+              status: 'active',
+              updatedAt: 1000,
+              recordRevision: '2',
+              recordUpdatedAt: 1000,
+              totalAgents: 4,
+              completedAgents: 1,
+            }],
+          },
+        },
+      },
+    });
+    const envelope = expectRuntimeEnvelope(runtime);
+
+    try {
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(writeSystemRecord).toHaveBeenCalledWith(expect.objectContaining({
+        payload: expect.objectContaining({
+          runId: 'wf_stale',
+          status: 'stopped',
+          statusReason: 'interrupted',
+        }),
+      }));
+    } finally {
+      await envelope.operations.resetOrDisposeRuntime().catch(() => undefined);
+      vi.useRealTimers();
+    }
+  });
+
+  it('uses the active tmux terminal metadata instead of a stale zellij host setting', async () => {
+    const terminalHost = createTerminalHostFixture();
+    const events = createEventsFixture();
+    const ctx = createPluginContextFixture(terminalHost.service, events.service);
+    const credentials = {
+      token: 'host-token',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    };
+    const sessionParams: SessionParamsWithCredentials = {
+      cwd: '/tmp/claude-project',
+      permissionMode: 'default',
+      credentials,
+      metadata: {
+        claudeUnifiedTerminalHost: 'zellij',
+        terminal: {
+          mode: 'tmux',
+          requested: 'tmux',
+          tmux: { target: 'happy:window-1' },
+        },
+      },
+    };
+
+    const runtime = await bindClaudeUnifiedTerminalSession({
+      ctx,
+      sessionParams,
+    });
+
+    const envelope = expectRuntimeEnvelope(runtime);
+    await envelope.operations.startOrLoadSession();
+
+    expect(terminalHost.service.resolve).toHaveBeenCalledWith({ preference: 'tmux' });
+
+    await envelope.operations.resetOrDisposeRuntime();
+  });
+
+  it('uses the active zellij terminal metadata instead of a stale tmux host setting', async () => {
+    const terminalHost = createTerminalHostFixture();
+    const events = createEventsFixture();
+    const ctx = createPluginContextFixture(terminalHost.service, events.service);
+    const credentials = {
+      token: 'host-token',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    };
+    const sessionParams: SessionParamsWithCredentials = {
+      cwd: '/tmp/claude-project',
+      permissionMode: 'default',
+      credentials,
+      metadata: {
+        claudeUnifiedTerminalHost: 'tmux',
+        terminal: {
+          mode: 'zellij',
+          requested: 'zellij',
+          zellij: { sessionName: 'happy-session-1' },
+        },
+      },
+    };
+
+    const runtime = await bindClaudeUnifiedTerminalSession({
+      ctx,
+      sessionParams,
+    });
+
+    const envelope = expectRuntimeEnvelope(runtime);
+    await envelope.operations.startOrLoadSession();
+
+    expect(terminalHost.service.resolve).toHaveBeenCalledWith({ preference: 'zellij' });
+
+    await envelope.operations.resetOrDisposeRuntime();
+  });
+
+  it('starts a live-only transcript follow for a known resumed Claude session before SessionStart', async () => {
+    const { mkdtemp, rm, writeFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const tempDir = await mkdtemp(join(tmpdir(), 'claude-known-resume-bind-'));
+    const transcriptPath = join(tempDir, 'claude-known-resume.jsonl');
+    await writeFile(transcriptPath, '', 'utf8');
+
+    const terminalHost = createTerminalHostFixture();
+    const events = createEventsFixture();
+    const sessionHooks = {
+      startServer: async () => ({
+        port: 43123,
+        stop: async () => undefined,
+        dispose: async () => undefined,
+      }),
+      resolveForwarderAssets: async () => ({
+        nodeExecutable: '/managed/bin/node',
+        sessionForwarderScript: '/app/scripts/session_hook_forwarder.cjs',
+        permissionForwarderScript: '/app/scripts/permission_hook_forwarder.cjs',
+      }),
+      createPluginDir: async () => '/tmp/happier-claude-hook-plugin',
+      disposePluginDir: async () => undefined,
+      publishProviderTranscript: async () => undefined,
+    };
+    const ctx = createPluginContextFixture(terminalHost.service, events.service, {
+      sessionHooks,
+      transcriptFileFollowAllowedPathRoots: [tempDir],
+    });
+    const credentials = {
+      token: 'host-token',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    };
+    const sessionParams: SessionParamsWithCredentials = {
+      cwd: '/tmp/claude-project',
+      permissionMode: 'default',
+      credentials,
+      metadata: {
+        claudeSessionId: 'claude-known-resume',
+        claudeTranscriptPath: transcriptPath,
+      },
+    };
+
+    const runtime = await bindClaudeUnifiedTerminalSession({
+      ctx,
+      sessionParams,
+    });
+    const envelope = expectRuntimeEnvelope(runtime);
+
+    try {
+      await envelope.operations.startOrLoadSession();
+
+      expect(ctx.agentRuntime.transcripts.fileFollow.follow).toHaveBeenCalledWith(expect.objectContaining({
+        path: transcriptPath,
+        startAt: 'end',
+        strategy: 'poll',
+      }));
+      expect(envelope.operations.readSessionIdentity()).toEqual({ sessionId: 'claude-known-resume' });
+    } finally {
+      await envelope.operations.resetOrDisposeRuntime().catch(() => undefined);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('starts a live-only transcript follow from an explicit runtime resume id before SessionStart', async () => {
+    const { mkdir, mkdtemp, rm, writeFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const tempDir = await mkdtemp(join(tmpdir(), 'claude-explicit-resume-bind-'));
+    const configDir = join(tempDir, 'claude-config');
+    const workspaceDir = join(tempDir, 'workspace');
+    const providerSessionId = 'claude-explicit-resume';
+    const transcriptDir = getClaudeProjectPath(workspaceDir, configDir);
+    const transcriptPath = join(transcriptDir, `${providerSessionId}.jsonl`);
+
+    const terminalHost = createTerminalHostFixture();
+    const events = createEventsFixture();
+    const sessionHooks = {
+      startServer: async () => ({
+        port: 43123,
+        stop: async () => undefined,
+        dispose: async () => undefined,
+      }),
+      resolveForwarderAssets: async () => ({
+        nodeExecutable: '/managed/bin/node',
+        sessionForwarderScript: '/app/scripts/session_hook_forwarder.cjs',
+        permissionForwarderScript: '/app/scripts/permission_hook_forwarder.cjs',
+      }),
+      createPluginDir: async () => '/tmp/happier-claude-hook-plugin',
+      disposePluginDir: async () => undefined,
+      publishProviderTranscript: async () => undefined,
+    };
+    const ctx = createPluginContextFixture(terminalHost.service, events.service, {
+      sessionHooks,
+      transcriptFileFollowAllowedPathRoots: [tempDir],
+    });
+    const credentials = {
+      token: 'host-token',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) },
+    };
+    const sessionParams: SessionParamsWithCredentials & Readonly<{ resume: string }> = {
+      cwd: workspaceDir,
+      permissionMode: 'default',
+      credentials,
+      isolation: { env: { CLAUDE_CONFIG_DIR: configDir } },
+      metadata: {},
+      resume: providerSessionId,
+    };
+
+    try {
+      await mkdir(transcriptDir, { recursive: true });
+      await writeFile(transcriptPath, '', 'utf8');
+
+      const runtime = await bindClaudeUnifiedTerminalSession({
+        ctx,
+        sessionParams,
+      });
+      const envelope = expectRuntimeEnvelope(runtime);
+
+      await envelope.operations.startOrLoadSession();
+
+      expect(ctx.agentRuntime.transcripts.fileFollow.follow).toHaveBeenCalledWith(expect.objectContaining({
+        path: transcriptPath,
+        startAt: 'end',
+        strategy: 'poll',
+      }));
+      expect(envelope.operations.readSessionIdentity()).toEqual({ sessionId: providerSessionId });
+
+      await envelope.operations.resetOrDisposeRuntime();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -83,5 +348,31 @@ describe('resolveUnifiedTerminalPermissionMode', () => {
       permissionMode: 'safe-yolo',
       runtimeMetadata: modeMetadata('build'),
     })).toBe('auto');
+  });
+});
+
+describe('resolveUnifiedTerminalResumeChoice', () => {
+  it('defaults to asking every time when no metadata is present', () => {
+    expect(resolveUnifiedTerminalResumeChoice({})).toBe('ask_every_time');
+  });
+
+  it('accepts valid initial spawn metadata values', () => {
+    expect(resolveUnifiedTerminalResumeChoice({
+      initialMetadata: { claudeUnifiedTerminalResumeChoice: 'resume_from_summary' },
+    })).toBe('resume_from_summary');
+    expect(resolveUnifiedTerminalResumeChoice({
+      initialMetadata: { claudeUnifiedTerminalResumeChoice: 'resume_full_session' },
+    })).toBe('resume_full_session');
+  });
+
+  it('prefers runtime metadata over initial metadata and ignores malformed values', () => {
+    expect(resolveUnifiedTerminalResumeChoice({
+      runtimeMetadata: { claudeUnifiedTerminalResumeChoice: 'resume_full_session' },
+      initialMetadata: { claudeUnifiedTerminalResumeChoice: 'resume_from_summary' },
+    })).toBe('resume_full_session');
+    expect(resolveUnifiedTerminalResumeChoice({
+      runtimeMetadata: { claudeUnifiedTerminalResumeChoice: 'bogus' },
+      initialMetadata: { claudeUnifiedTerminalResumeChoice: 'resume_from_summary' },
+    })).toBe('resume_from_summary');
   });
 });

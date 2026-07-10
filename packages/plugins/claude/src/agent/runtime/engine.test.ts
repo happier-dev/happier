@@ -5,8 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type {
   TerminalPromptInput,
-} from '@happier-dev/agents';
-import type { RuntimeEventV1 } from '@happier-dev/protocol/runtime';
+} from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import type { RuntimeEventV1 } from '@happier-dev/plugin-sdk';
 
 import { createClaudeBackendEngine } from './engine.js';
 import { claudeHandoffSurface } from '../surfaces/sessions/handoff/providerOps.js';
@@ -38,7 +38,7 @@ describe('createClaudeBackendEngine', () => {
     });
     const engine = createClaudeBackendEngine(ctx);
 
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       permissionMode: 'safe-yolo',
@@ -60,39 +60,18 @@ describe('createClaudeBackendEngine', () => {
       },
     });
 
-    expect(plan).toMatchObject({
-      kind: 'hostSessionRuntimePlan',
-      providerId: 'claude',
-      opts: {
-        directory: '/tmp/claude-project',
-        backendId: 'claude',
-      },
-      config: {
-        backendDisplayName: 'Claude',
-        providerName: 'Claude',
-        agentMessageType: 'claude',
-        createSessionRuntime: expect.any(Function),
-      },
+    expect(sessionRuntime).toMatchObject({
+      identity: { read: expect.any(Function) },
+      events: { subscribe: expect.any(Function) },
+      send: expect.any(Function),
+      permissions: { capability: 'responds' },
+      dispose: expect.any(Function),
     });
-    expect(ctx.features.isEnabled).toHaveBeenCalledWith('providers.claude.unifiedTerminal');
+    expect(ctx.features.isEnabled).toHaveBeenCalledWith('agents.claude.unifiedTerminal');
     expect(terminalHost.service.resolve).not.toHaveBeenCalled();
     expect(terminalHost.service.createOrAttachHost).not.toHaveBeenCalled();
 
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-          setThinking: (value: boolean) => void;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'safe-yolo',
-      setThinking: vi.fn(),
-    });
+    const created = sessionRuntime;
     const runtime = expectRuntimeEnvelope(created).operations;
 
     await runtime.startOrLoadSession();
@@ -166,7 +145,7 @@ describe('createClaudeBackendEngine', () => {
     });
     const engine = createClaudeBackendEngine(ctx);
 
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       permissionMode: 'safe-yolo',
@@ -176,19 +155,7 @@ describe('createClaudeBackendEngine', () => {
         },
       },
     });
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'safe-yolo',
-    });
+    const created = sessionRuntime;
     const runtime = expectRuntimeEnvelope(created).operations;
 
     runtime.beginTurnLifecycle();
@@ -213,12 +180,6 @@ describe('createClaudeBackendEngine', () => {
         accountSubject: expect.objectContaining({
           kind: 'provisionalLocalSubject',
         }),
-        aliases: [expect.objectContaining({
-          kind: 'nativeCli',
-          providerId: 'claude',
-          localCredentialRef: expect.stringMatching(/^opaque:claude:nativeCli:/),
-          sessionId: 'happy-session-1',
-        })],
         meters: [expect.objectContaining({
           meterId: 'weekly',
           utilizationPct: 100,
@@ -238,7 +199,7 @@ describe('createClaudeBackendEngine', () => {
     const ctx = createPluginContextFixture(terminalHost.service, events.service);
     const engine = createClaudeBackendEngine(ctx);
 
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       metadata: {
@@ -246,14 +207,14 @@ describe('createClaudeBackendEngine', () => {
       },
     });
 
-    expect(plan).toMatchObject({
-      kind: 'hostSessionRuntimePlan',
-      providerId: 'claude',
-      config: {
-        createSessionRuntime: expect.any(Function),
-      },
+    expect(sessionRuntime).toMatchObject({
+      identity: { read: expect.any(Function) },
+      events: { subscribe: expect.any(Function) },
+      send: expect.any(Function),
+      permissions: { capability: 'responds' },
+      dispose: expect.any(Function),
     });
-    expect(ctx.features.isEnabled).toHaveBeenCalledWith('providers.claude.unifiedTerminal');
+    expect(ctx.features.isEnabled).toHaveBeenCalledWith('agents.claude.unifiedTerminal');
     expect(terminalHost.service.resolve).not.toHaveBeenCalled();
     expect(terminalHost.service.createOrAttachHost).not.toHaveBeenCalled();
   });
@@ -268,37 +229,23 @@ describe('createClaudeBackendEngine', () => {
     });
     const engine = createClaudeBackendEngine(ctx);
 
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       metadata: {},
     });
 
-    expect(plan).toMatchObject({
-      kind: 'hostSessionRuntimePlan',
-      providerId: 'claude',
-      config: {
-        createSessionRuntime: expect.any(Function),
-      },
+    expect(sessionRuntime).toMatchObject({
+      identity: { read: expect.any(Function) },
+      events: { subscribe: expect.any(Function) },
+      send: expect.any(Function),
+      permissions: { capability: 'responds' },
+      dispose: expect.any(Function),
     });
-    expect(ctx.features.isEnabled).toHaveBeenCalledWith('providers.claude.unifiedTerminal');
+    expect(ctx.features.isEnabled).toHaveBeenCalledWith('agents.claude.unifiedTerminal');
     expect(ctx.settings.get).toHaveBeenCalledWith('claudeUnifiedTerminalEnabled');
 
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-          setThinking: (value: boolean) => void;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'default',
-      setThinking: vi.fn(),
-    });
+    const created = sessionRuntime;
 
     const runtime = expectRuntimeEnvelope(created).operations;
     await runtime.startOrLoadSession();
@@ -317,26 +264,14 @@ describe('createClaudeBackendEngine', () => {
     });
     const engine = createClaudeBackendEngine(ctx);
 
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       metadata: {
         claudeUnifiedTerminalEnabled: true,
       },
     });
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'default',
-    });
+    const created = sessionRuntime;
     const runtime = expectRuntimeEnvelope(created).operations;
 
     await runtime.sendTurnPrompt('fast claude');
@@ -352,13 +287,13 @@ describe('createClaudeBackendEngine', () => {
     await runtime.resetOrDisposeRuntime();
   });
 
-  it('creates a plugin-owned unified terminal host session runtime plan', async () => {
+  it('creates a plugin-owned unified terminal public session runtime', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
     const ctx = createPluginContextFixture(terminalHost.service, events.service);
     const engine = createClaudeBackendEngine(ctx);
 
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       permissionMode: 'safe-yolo',
@@ -381,41 +316,15 @@ describe('createClaudeBackendEngine', () => {
       },
     });
 
-    expect(plan).toMatchObject({
-      kind: 'hostSessionRuntimePlan',
-      providerId: 'claude',
-      opts: {
-        directory: '/tmp/claude-project',
-        backendId: 'claude',
-      },
-      config: {
-        backendDisplayName: 'Claude',
-        providerName: 'Claude',
-        agentMessageType: 'claude',
-        createSessionRuntime: expect.any(Function),
-      },
+    expect(sessionRuntime).toMatchObject({
+      identity: { read: expect.any(Function) },
+      events: { subscribe: expect.any(Function) },
+      send: expect.any(Function),
+      permissions: { capability: 'responds' },
+      dispose: expect.any(Function),
     });
-    expect((plan as Readonly<{
-      config?: Readonly<{
-        resolveKeepAliveMode?: () => string;
-      }>;
-    }>).config?.resolveKeepAliveMode?.()).toBe('terminal');
 
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-          setThinking: (value: boolean) => void;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'safe-yolo',
-      setThinking: vi.fn(),
-    });
+    const created = sessionRuntime;
     const envelope = expectRuntimeEnvelope(created);
     const runtime = envelope.operations;
 
@@ -432,7 +341,13 @@ describe('createClaudeBackendEngine', () => {
       launch: {
         kind: 'agent-cli',
         agentId: 'claude',
-        args: ['--plugin-dir', '/tmp/happier-claude-hook-plugin', '--permission-mode', 'auto'],
+        args: [
+          '--plugin-dir',
+          '/tmp/happier-claude-hook-plugin',
+          '--allow-dangerously-skip-permissions',
+          '--permission-mode',
+          'auto',
+        ],
         cwd: '/tmp/claude-project',
         env: {
           CLAUDE_CONFIG_DIR: '/tmp/claude-config',
@@ -464,7 +379,7 @@ describe('createClaudeBackendEngine', () => {
       new Promise<void>((resolve) => setTimeout(resolve, 0)),
     ]);
     await events.emit('@happier/session/provider-hook', {
-      providerId: 'opencode',
+      agentId: 'opencode',
       sessionId: 'happy-session-1',
       eventName: 'UserPromptSubmit',
     });
@@ -526,7 +441,7 @@ describe('createClaudeBackendEngine', () => {
     });
     const engine = createClaudeBackendEngine(ctx);
 
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       permissionMode: 'safe-yolo',
@@ -534,19 +449,7 @@ describe('createClaudeBackendEngine', () => {
         claudeUnifiedTerminalEnabled: true,
       },
     });
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'safe-yolo',
-    });
+    const created = sessionRuntime;
     const runtime = expectRuntimeEnvelope(created).operations;
 
     await runtime.updateSessionRuntimeConfig({
@@ -577,7 +480,7 @@ describe('createClaudeBackendEngine', () => {
     });
     const engine = createClaudeBackendEngine(ctx);
 
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       metadata: {
@@ -585,19 +488,7 @@ describe('createClaudeBackendEngine', () => {
         claudeUnifiedTerminalHost: 'zellij',
       },
     });
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'default',
-    });
+    const created = sessionRuntime;
     const runtime = expectRuntimeEnvelope(created).operations;
 
     await runtime.startOrLoadSession();
@@ -644,11 +535,13 @@ describe('createClaudeBackendEngine', () => {
     expect(sessionHooks.service.startServer).toHaveBeenCalledWith(expect.objectContaining({
       providerId: 'claude',
       sessionId: 'happy-session-1',
+      lifecycle: { kind: 'session', sessionId: 'happy-session-1' },
       onSessionHook: expect.any(Function),
     }));
     expect(sessionHooks.service.resolveForwarderAssets).toHaveBeenCalledTimes(1);
     expect(sessionHooks.service.createPluginDir).toHaveBeenCalledWith(expect.objectContaining({
       providerId: 'claude',
+      lifecycle: { kind: 'session', sessionId: 'happy-session-1' },
       files: [
         expect.objectContaining({ path: '.claude-plugin/plugin.json' }),
         expect.objectContaining({
@@ -682,26 +575,14 @@ describe('createClaudeBackendEngine', () => {
     });
     const engine = createClaudeBackendEngine(ctx);
 
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       metadata: {
         claudeUnifiedTerminalEnabled: true,
       },
     });
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'default',
-    });
+    const created = sessionRuntime;
     const runtime = expectRuntimeEnvelope(created).operations;
 
     await runtime.startOrLoadSession();
@@ -730,26 +611,14 @@ describe('createClaudeBackendEngine', () => {
     });
     const engine = createClaudeBackendEngine(ctx);
 
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       metadata: {
         claudeUnifiedTerminalEnabled: true,
       },
     });
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'default',
-    });
+    const created = sessionRuntime;
     const runtime = expectRuntimeEnvelope(created).operations;
 
     await runtime.startOrLoadSession();
@@ -803,7 +672,7 @@ describe('createClaudeBackendEngine', () => {
     });
     const engine = createClaudeBackendEngine(ctx);
 
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       metadata: {
@@ -811,19 +680,7 @@ describe('createClaudeBackendEngine', () => {
         claudeUnifiedTerminalHost: 'zellij',
       },
     });
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'default',
-    });
+    const created = sessionRuntime;
     const runtime = expectRuntimeEnvelope(created).operations;
 
     await runtime.startOrLoadSession();
@@ -894,7 +751,7 @@ describe('createClaudeBackendEngine', () => {
       accountUsage: { recordSnapshot },
     });
     const engine = createClaudeBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       permissionMode: 'safe-yolo',
@@ -902,19 +759,7 @@ describe('createClaudeBackendEngine', () => {
         claudeUnifiedTerminalEnabled: true,
       },
     });
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'safe-yolo',
-    });
+    const created = sessionRuntime;
     const envelope = expectRuntimeEnvelope(created);
     const runtime = envelope.operations;
     const runtimeEvents: RuntimeEventV1[] = [];
@@ -943,14 +788,15 @@ describe('createClaudeBackendEngine', () => {
     });
 
     await expect(completion).rejects.toThrow(/529|overloaded/iu);
-    expect(runtimeEvents).toEqual([
+    const failedEvents = runtimeEvents.filter((event) => event.kind === 'turn-failed');
+    expect(failedEvents).toEqual([
       expect.objectContaining({
         kind: 'turn-failed',
         sessionId: 'happy-session-1',
         issue: expect.objectContaining({
-          source: 'provider_status_error',
+          source: 'agent_status_error',
           code: 'claude.provider.capacity',
-          provider: 'claude',
+          agentId: 'claude',
           usageLimit: expect.objectContaining({
             limitCategory: 'capacity',
             providerLimitId: 'server_overloaded',
@@ -968,11 +814,6 @@ describe('createClaudeBackendEngine', () => {
         accountSubject: expect.objectContaining({
           kind: 'provisionalLocalSubject',
         }),
-        aliases: [expect.objectContaining({
-          kind: 'nativeCli',
-          providerId: 'claude',
-          sessionId: 'happy-session-1',
-        })],
         meters: [expect.objectContaining({
           meterId: 'server_overloaded',
           isCapacityLimited: true,
@@ -990,7 +831,7 @@ describe('createClaudeBackendEngine', () => {
     const events = createEventsFixture();
     const ctx = createPluginContextFixture(terminalHost.service, events.service);
     const engine = createClaudeBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       permissionMode: 'safe-yolo',
@@ -998,19 +839,7 @@ describe('createClaudeBackendEngine', () => {
         claudeUnifiedTerminalEnabled: true,
       },
     });
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'safe-yolo',
-    });
+    const created = sessionRuntime;
     const runtime = expectRuntimeEnvelope(created).operations;
     const runtimeEvents: RuntimeEventV1[] = [];
     runtime.subscribeRuntimeEvents((event) => {
@@ -1036,26 +865,14 @@ describe('createClaudeBackendEngine', () => {
     const events = createEventsFixture();
     const ctx = createPluginContextFixture(terminalHost.service, events.service);
     const engine = createClaudeBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       metadata: {
         claudeUnifiedTerminalEnabled: true,
       },
     });
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'default',
-    });
+    const created = sessionRuntime;
     const runtime = expectRuntimeEnvelope(created).operations;
 
     await runtime.startOrLoadSession();
@@ -1084,57 +901,36 @@ describe('createClaudeBackendEngine', () => {
       const events = createEventsFixture();
       const ctx = createPluginContextFixture(terminalHost.service, events.service);
       const engine = createClaudeBackendEngine(ctx);
-      const plan = await engine.runtimeCore?.createSessionRuntime({
+      const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
         cwd: '/tmp/claude-project',
         sessionId: 'happy-session-1',
         metadata: {
           claudeUnifiedTerminalEnabled: true,
         },
       });
-      const created = await (plan as Readonly<{
-        config: Readonly<{
-          createSessionRuntime(params: Readonly<{
-            directory: string;
-            session: Readonly<{ sessionId: string }>;
-            getPermissionMode: () => string;
-          }>): Promise<unknown>;
-        }>;
-      }>).config.createSessionRuntime({
-        directory: '/tmp/claude-project',
-        session: { sessionId: 'happy-session-1' },
-        getPermissionMode: () => 'default',
-      });
+      const created = sessionRuntime;
       const runtime = expectRuntimeEnvelope(created).operations;
-      const runtimeEvents: RuntimeEventV1[] = [];
-      runtime.subscribeRuntimeEvents((event) => {
-        runtimeEvents.push(event);
-      });
 
       await runtime.startOrLoadSession();
+      vi.mocked(terminalHost.service.evaluateLiveness).mockResolvedValueOnce({
+        paneAlive: false,
+        observedAt: 123,
+      });
       runtime.beginTurnLifecycle();
-      await runtime.sendTurnPrompt('hello claude');
-      let completionSettled = false;
+      await expect(runtime.sendTurnPrompt('hello claude')).resolves.toBeUndefined();
+      expect(terminalHost.service.injectUserPrompt).not.toHaveBeenCalled();
+
       const completion = runtime.waitForTurnCompletion().then(
-        () => {
-          completionSettled = true;
-          return 'resolved';
-        },
-        (error: unknown) => {
-          completionSettled = true;
-          return error instanceof Error ? error.message : String(error);
-        },
+        () => 'resolved',
+        (error: unknown) => error instanceof Error ? error.message : String(error),
       );
-
-      await vi.advanceTimersByTimeAsync(5_000);
-
-      expect(runtimeEvents).toContainEqual(expect.objectContaining({
-        kind: 'backend-error',
-        error: expect.objectContaining({
-          code: 'claude_unified_terminal_injection_failed',
-        }),
-      }));
+      let completionSettled = false;
+      void completion.finally(() => {
+        completionSettled = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await Promise.resolve();
       expect(completionSettled).toBe(false);
-      expect(terminalHost.service.dispose).not.toHaveBeenCalled();
 
       await runtime.resetOrDisposeRuntime();
       await expect(completion).resolves.toMatch(/disposed/);
@@ -1143,61 +939,12 @@ describe('createClaudeBackendEngine', () => {
     }
   });
 
-  it('defers prompt injection instead of failing the turn on a transient non-alive terminal observation', async () => {
-    const terminalHost = createTerminalHostFixture();
-    const events = createEventsFixture();
-    const ctx = createPluginContextFixture(terminalHost.service, events.service);
-    const engine = createClaudeBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({
-      cwd: '/tmp/claude-project',
-      sessionId: 'happy-session-1',
-      metadata: {
-        claudeUnifiedTerminalEnabled: true,
-      },
-    });
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'default',
-    });
-    const runtime = expectRuntimeEnvelope(created).operations;
-
-    await runtime.startOrLoadSession();
-    vi.mocked(terminalHost.service.evaluateLiveness).mockResolvedValueOnce({
-      paneAlive: false,
-      observedAt: 123,
-    });
-    runtime.beginTurnLifecycle();
-    await expect(runtime.sendTurnPrompt('hello claude')).resolves.toBeUndefined();
-    expect(terminalHost.service.injectUserPrompt).not.toHaveBeenCalled();
-
-    const completion = runtime.waitForTurnCompletion().then(
-      () => 'resolved',
-      (error: unknown) => error instanceof Error ? error.message : String(error),
-    );
-    await expect(Promise.race([
-      completion,
-      new Promise<string>((resolve) => setTimeout(() => resolve('pending'), 0)),
-    ])).resolves.toBe('pending');
-
-    await runtime.resetOrDisposeRuntime();
-    await expect(completion).resolves.toMatch(/disposed/);
-  });
-
   it('does not complete a queued UI prompt from provider completion before Claude accepts it', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
     const ctx = createPluginContextFixture(terminalHost.service, events.service);
     const engine = createClaudeBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       permissionMode: 'safe-yolo',
@@ -1205,19 +952,7 @@ describe('createClaudeBackendEngine', () => {
         claudeUnifiedTerminalEnabled: true,
       },
     });
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'safe-yolo',
-    });
+    const created = sessionRuntime;
     const runtime = expectRuntimeEnvelope(created).operations;
 
     await runtime.startOrLoadSession();
@@ -1241,26 +976,14 @@ describe('createClaudeBackendEngine', () => {
     const events = createEventsFixture();
     const ctx = createPluginContextFixture(terminalHost.service, events.service);
     const engine = createClaudeBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       metadata: {
         claudeUnifiedTerminalEnabled: true,
       },
     });
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'safe-yolo',
-    });
+    const created = sessionRuntime;
     const runtime = expectRuntimeEnvelope(created).operations;
 
     await runtime.startOrLoadSession();
@@ -1291,26 +1014,14 @@ describe('createClaudeBackendEngine', () => {
     };
     const ctx = createPluginContextFixture(terminalHost.service, events.service, { transcripts });
     const engine = createClaudeBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       metadata: {
         claudeUnifiedTerminalEnabled: true,
       },
     });
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'safe-yolo',
-    });
+    const created = sessionRuntime;
     const runtime = expectRuntimeEnvelope(created).operations;
     const runtimeEvents: RuntimeEventV1[] = [];
     runtime.subscribeRuntimeEvents((event) => {
@@ -1358,26 +1069,14 @@ describe('createClaudeBackendEngine', () => {
     };
     const ctx = createPluginContextFixture(terminalHost.service, events.service, { transcripts });
     const engine = createClaudeBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       metadata: {
         claudeUnifiedTerminalEnabled: true,
       },
     });
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'safe-yolo',
-    });
+    const created = sessionRuntime;
     const runtime = expectRuntimeEnvelope(created).operations;
     const runtimeEvents: RuntimeEventV1[] = [];
     runtime.subscribeRuntimeEvents((event) => {
@@ -1431,26 +1130,14 @@ describe('createClaudeBackendEngine', () => {
     };
     const ctx = createPluginContextFixture(terminalHost.service, events.service, { transcripts });
     const engine = createClaudeBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       metadata: {
         claudeUnifiedTerminalEnabled: true,
       },
     });
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'safe-yolo',
-    });
+    const created = sessionRuntime;
     const runtime = expectRuntimeEnvelope(created).operations;
     const runtimeEvents: RuntimeEventV1[] = [];
     runtime.subscribeRuntimeEvents((event) => {
@@ -1501,26 +1188,14 @@ describe('createClaudeBackendEngine', () => {
     };
     const ctx = createPluginContextFixture(terminalHost.service, events.service, { transcripts });
     const engine = createClaudeBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const sessionRuntime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/claude-project',
       sessionId: 'happy-session-1',
       metadata: {
         claudeUnifiedTerminalEnabled: true,
       },
     });
-    const created = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/claude-project',
-      session: { sessionId: 'happy-session-1' },
-      getPermissionMode: () => 'safe-yolo',
-    });
+    const created = sessionRuntime;
     const runtime = expectRuntimeEnvelope(created).operations;
     const runtimeEvents: RuntimeEventV1[] = [];
     runtime.subscribeRuntimeEvents((event) => {

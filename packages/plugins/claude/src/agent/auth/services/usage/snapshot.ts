@@ -1,14 +1,14 @@
 import {
     ProviderAccountUsageSnapshotV1Schema,
     buildProviderAccountUsageRecordId,
-    normalizeProviderAccountUsageAliases,
-    normalizeConnectedServiceLimitCategoryV1,
-    type ConnectedServiceQuotaMeterV1,
-    type ConnectedServiceLimitCategoryV1,
-    type ConnectedServiceQuotaSnapshotV1,
-    type ProviderAccountUsageAliasV1,
     type ProviderAccountUsageSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/experimental/cloud/usage';
+import {
+    normalizeConnectedServiceLimitCategoryV1,
+    type ConnectedServiceLimitCategoryV1,
+    type ConnectedServiceQuotaMeterV1,
+    type ConnectedServiceQuotaSnapshotV1,
+} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 import type {
     ClaudeUsageSubjectRef,
@@ -24,19 +24,12 @@ export const CLAUDE_RUNTIME_RATE_LIMITS_STALE_AFTER_MS = 5 * 60 * 1000;
 type ClaudeConnectedServiceId = 'claude-subscription' | 'anthropic';
 type ClaudeRuntimeMeterScope = 'five_hour' | 'seven_day' | 'unknown';
 
-export type ClaudeProviderAccountUsageAliasInput =
-    | Readonly<{ kind: 'nativeCli'; sessionId?: string; localCredentialRef?: string }>
-    | Readonly<{ kind: 'envCredential'; sessionId?: string; localCredentialRef?: string }>
-    | Readonly<{ kind: 'connectedServiceProfile'; serviceId: ClaudeConnectedServiceId; profileId: string }>
-    | Readonly<{ kind: 'connectedServiceGroupMember'; serviceId: ClaudeConnectedServiceId; profileId: string; groupId: string }>;
-
 export type MapClaudeRuntimeRateLimitsToProviderAccountUsageSnapshotInput = Readonly<{
     subject: ClaudeUsageSubjectRef;
     observation: NormalizedClaudeRuntimeRateLimitsObservation;
     observedAtMs: number;
     fetchedAtMs: number;
     staleAfterMs?: number;
-    aliases?: readonly ClaudeProviderAccountUsageAliasInput[];
     accountLabel?: string | null;
     planLabel?: string | null;
 }>;
@@ -45,7 +38,6 @@ export type MapClaudeQuotaSnapshotToProviderAccountUsageSnapshotInput = Readonly
     subject: ClaudeUsageSubjectRef;
     quotaSnapshot: ConnectedServiceQuotaSnapshotV1;
     observedAtMs?: number;
-    aliases?: readonly ClaudeProviderAccountUsageAliasInput[];
 }>;
 
 export type MapClaudeUsageLimitDetailsToProviderAccountUsageSnapshotInput = Readonly<{
@@ -54,7 +46,6 @@ export type MapClaudeUsageLimitDetailsToProviderAccountUsageSnapshotInput = Read
     observedAtMs: number;
     fetchedAtMs: number;
     staleAfterMs?: number;
-    aliases?: readonly ClaudeProviderAccountUsageAliasInput[];
     accountLabel?: string | null;
     planLabel?: string | null;
 }>;
@@ -80,28 +71,6 @@ function buildRecordKey(
         quotaScope: quotaScope ?? (subject.kind === 'providerSubject' && subject.subjectKind === 'organization'
             ? 'organization'
             : 'account'),
-    };
-}
-
-function buildAlias(
-    alias: ClaudeProviderAccountUsageAliasInput,
-    accountSubjectId: string,
-): ProviderAccountUsageAliasV1 {
-    return {
-        ...alias,
-        providerId: 'claude',
-        accountSubjectId,
-    };
-}
-
-function buildConnectedServiceAlias(quotaSnapshot: ConnectedServiceQuotaSnapshotV1): ClaudeProviderAccountUsageAliasInput {
-    if (quotaSnapshot.serviceId !== 'claude-subscription' && quotaSnapshot.serviceId !== 'anthropic') {
-        throw new Error(`Unsupported Claude account usage service id: ${quotaSnapshot.serviceId}`);
-    }
-    return {
-        kind: 'connectedServiceProfile',
-        serviceId: quotaSnapshot.serviceId,
-        profileId: quotaSnapshot.profileId,
     };
 }
 
@@ -193,7 +162,6 @@ function buildSnapshot(params: Readonly<{
     fetchedAtMs: number;
     staleAfterMs: number;
     meters: readonly ConnectedServiceQuotaMeterV1[];
-    aliases: readonly ClaudeProviderAccountUsageAliasInput[];
     accountLabel?: string | null;
     planLabel?: string | null;
 }>): ProviderAccountUsageSnapshotV1 {
@@ -207,9 +175,6 @@ function buildSnapshot(params: Readonly<{
             kind: params.subject.kind,
             id: params.subject.accountSubjectId,
         },
-        aliases: normalizeProviderAccountUsageAliases(
-            params.aliases.map((alias) => buildAlias(alias, params.subject.accountSubjectId)),
-        ),
         observedAtMs: normalizeTimestampMs(params.observedAtMs),
         fetchedAtMs: normalizeTimestampMs(params.fetchedAtMs),
         staleAfterMs: params.staleAfterMs,
@@ -236,7 +201,6 @@ export function mapClaudeRuntimeRateLimitsToProviderAccountUsageSnapshot(
         meters: params.observation.status === 'loaded_data'
             ? params.observation.meters.map(runtimeMeterToQuotaMeter)
             : [],
-        aliases: params.aliases ?? [],
         accountLabel: params.accountLabel,
         planLabel: params.planLabel,
     });
@@ -245,7 +209,6 @@ export function mapClaudeRuntimeRateLimitsToProviderAccountUsageSnapshot(
 export function mapClaudeQuotaSnapshotToProviderAccountUsageSnapshot(
     params: MapClaudeQuotaSnapshotToProviderAccountUsageSnapshotInput,
 ): ProviderAccountUsageSnapshotV1 {
-    const aliases = params.aliases ?? [buildConnectedServiceAlias(params.quotaSnapshot)];
     return buildSnapshot({
         subject: params.subject,
         source: 'providerHttp',
@@ -254,7 +217,6 @@ export function mapClaudeQuotaSnapshotToProviderAccountUsageSnapshot(
         fetchedAtMs: params.quotaSnapshot.fetchedAt,
         staleAfterMs: params.quotaSnapshot.staleAfterMs,
         meters: params.quotaSnapshot.meters,
-        aliases,
         accountLabel: params.quotaSnapshot.accountLabel,
         planLabel: params.quotaSnapshot.planLabel,
     });
@@ -272,7 +234,6 @@ export function mapClaudeUsageLimitDetailsToProviderAccountUsageSnapshot(
         fetchedAtMs: params.fetchedAtMs,
         staleAfterMs: params.staleAfterMs ?? CLAUDE_RUNTIME_RATE_LIMITS_STALE_AFTER_MS,
         meters: [usageLimitDetailsToQuotaMeter(params.details)],
-        aliases: params.aliases ?? [],
         accountLabel: params.accountLabel,
         planLabel: params.planLabel,
     });

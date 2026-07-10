@@ -38,6 +38,13 @@ describe('createMessageRouter', () => {
             },
             {
                 type: 'user',
+                uuid: 'model-command-1',
+                message: {
+                    content: '<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args></command-args>',
+                },
+            },
+            {
+                type: 'user',
                 uuid: 'compact-stdout-1',
                 message: {
                     content:
@@ -45,9 +52,44 @@ describe('createMessageRouter', () => {
                         + "\u001b[2mPostCompact [python3 '/tmp/hook.py'] completed successfully\u001b[22m</local-command-stdout>",
                 },
             },
+            {
+                type: 'user',
+                uuid: 'model-stdout-1',
+                message: {
+                    content: '<local-command-stdout>Set model to Opus 4.8 and saved as your default for new sessions</local-command-stdout>',
+                },
+            },
         ] satisfies RawJSONLines[]) {
             router.emitSessionMessage(message, true);
         }
+
+        expect(emitted).toEqual([]);
+    });
+
+    it('drops Claude attachment control rows from session and imported emission', () => {
+        const emitted: RawJSONLines[] = [];
+        const router = createMessageRouter({
+            onMessage: (message) => emitted.push(message),
+            logEvent: () => undefined,
+        });
+        const attachment = {
+            type: 'attachment',
+            uuid: 'attachment-1',
+            attachment: {
+                type: 'deferred_tools_delta',
+                itemCount: 1,
+            },
+        } satisfies RawJSONLines;
+
+        router.emitSessionMessage(attachment, true);
+        router.emitImportedSidechainMessage({
+            ...attachment,
+            uuid: 'attachment-2',
+        });
+        router.emitImportedTeamInboxMessage({
+            ...attachment,
+            uuid: 'attachment-3',
+        });
 
         expect(emitted).toEqual([]);
     });

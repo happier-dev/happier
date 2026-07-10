@@ -2,7 +2,7 @@ import type {
     PluginPromptAssetContributionV1,
     PromptAssetCapabilitiesV1,
     PromptAssetTypeDescriptorV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/manifest';
 
 export type ClaudePromptAssetConfig = Readonly<{
     assetTypeId: string;

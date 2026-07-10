@@ -5,12 +5,11 @@ import { CLAUDE_UI_DESCRIPTOR } from './descriptor.js';
 const FORBIDDEN_NO_EXECUTE_KEYS = new Set([
   'projection',
   'importName',
-  'source',
   'label',
   'uiBehaviorOverride',
   'sessionProviderBehavior',
   'messageMetaOverride',
-  'providerSettings',
+  'agentSettings',
   'visibleMessageResolver',
   'svgIconXml',
 ]);
@@ -25,6 +24,9 @@ function collectNoExecuteViolations(value: unknown, path = 'descriptor'): string
   return Object.entries(value as Readonly<Record<string, unknown>>).flatMap(([key, child]) => {
     const violations: string[] = [];
     if (FORBIDDEN_NO_EXECUTE_KEYS.has(key)) violations.push(`${path}.${key}: executable projection key`);
+    if (key === 'source' && typeof child === 'string') {
+      violations.push(`${path}.${key}: executable projection source`);
+    }
     if (typeof child === 'string' && /#[0-9a-fA-F]{3,8}\b/.test(child)) {
       violations.push(`${path}.${key}: raw color literal`);
     }
@@ -68,12 +70,15 @@ describe('CLAUDE_UI_DESCRIPTOR', () => {
         toolRendering: {
           hideUnknownToolsByDefault: false,
         },
+        picker: expect.objectContaining({
+          iconScale: 1.1,
+        }),
         icon: { assetId: 'claude' },
       }),
       settings: expect.objectContaining({
-        kind: 'providerSettings.v1',
-        descriptorId: 'claude.providerSettings.v1',
-        providerId: 'claude',
+        kind: 'agentSettings.v1',
+        descriptorId: 'claude.agentSettings.v1',
+        agentId: 'claude',
         settings: expect.objectContaining({
           claudeRemoteAgentSdkEnabled: expect.objectContaining({
             schema: { kind: 'boolean' },
@@ -95,6 +100,29 @@ describe('CLAUDE_UI_DESCRIPTOR', () => {
       }),
       behavior: expect.objectContaining({
         descriptorId: 'claude.uiBehavior.v1',
+        externalSessions: expect.objectContaining({
+          supportsBackgroundFollow: true,
+          browse: {
+            order: 20,
+            sourceOptions: [
+              {
+                key: 'claude:default',
+                labelKey: 'externalSessions.browseSourceClaudeDefault',
+                source: { kind: 'claudeConfig' },
+              },
+            ],
+            compatibleSource: {
+              sourceKind: 'claudeConfig',
+              optionalFields: ['configDir', 'projectId'],
+            },
+            linkEnsureRequestExtras: {
+              sourceFromCandidate: {
+                sourceKind: 'claudeConfig',
+                optionalFields: ['configDir', 'projectId'],
+              },
+            },
+          },
+        }),
       }),
       session: expect.objectContaining({
         providerBehavior: {

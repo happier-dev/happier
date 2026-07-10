@@ -1,6 +1,12 @@
 import type { SDKMessage } from '../../../sdk/types.js';
-import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol';
+import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/plugin-sdk/experimental/diagnostics';
 import { createClaudeConnectedServiceRuntimeAuthAdapter } from '../../../auth/services/runtime/index.js';
+import { resolveClaudeAgentSdkRuntimeAuthRetryDecision } from './runtimeAuthRetryDecision.js';
+
+export {
+    isClaudeAgentSdkStopHookWithNoBackgroundTasks,
+    readClaudeAgentSdkBackgroundTaskId,
+} from './providerActivity.js';
 
 function collectAgentSdkResultErrorText(value: unknown, output: string[]): void {
     if (typeof value === 'string') {
@@ -60,32 +66,13 @@ export function hasClaudeAgentSdkRuntimeAuthFailureEvidence(message: unknown): b
     // inside a Task-tool subagent must not fail the parent turn nor trigger reactive auth
     // recovery/restart of a healthy parent session (incident 2026-06-12, cmq8y3nlx).
     if (isSubagentScopedClaudeMessage(message)) return false;
+    if (resolveClaudeAgentSdkRuntimeAuthRetryDecision(message).action === 'await_provider_retry') return false;
     const classification = claudeRuntimeAuthAdapter.classifyRuntimeAuthFailure({
         target: { agentId: 'claude' },
         selection: { serviceId: 'claude-subscription' },
         error: message,
     });
     return classification?.limitCategory === 'auth_invalid' || classification?.kind === 'auth_expired';
-}
-
-export function readClaudeAgentSdkBackgroundTaskId(message: unknown): string | null {
-    if (!message || typeof message !== 'object') return null;
-    const record = message as Record<string, unknown>;
-    const taskResult = record.tool_use_result ?? record.toolUseResult;
-    if (!taskResult || typeof taskResult !== 'object') return null;
-    const taskResultRecord = taskResult as Record<string, unknown>;
-    if (taskResultRecord.assistantAutoBackgrounded !== true) return null;
-    const taskId = taskResultRecord.backgroundTaskId ?? taskResultRecord.background_task_id;
-    return typeof taskId === 'string' && taskId.trim().length > 0 ? taskId : null;
-}
-
-export function isClaudeAgentSdkStopHookWithNoBackgroundTasks(message: unknown): boolean {
-    if (!message || typeof message !== 'object') return false;
-    const record = message as Record<string, unknown>;
-    const hookEventName = record.hook_event_name ?? record.hookEventName;
-    if (hookEventName !== 'Stop') return false;
-    const backgroundTasks = record.background_tasks ?? record.backgroundTasks;
-    return Array.isArray(backgroundTasks) && backgroundTasks.length === 0;
 }
 
 export function extractTextDeltaFromStreamEvent(message: unknown): string | null {
@@ -157,6 +144,87 @@ export function extractThinkingStartFromStreamEvent(message: unknown): string | 
 }
 
 export type StreamEventToolUseStart = { id: string; name: string; input: unknown };
+
+function readNonEmptyString(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+}
+
+function readSdkMessageContent(message: unknown): unknown[] | null {
+    if (!message || typeof message !== 'object') return null;
+    const record = message as Record<string, unknown>;
+    const messageRecord = record.message;
+    if (!messageRecord || typeof messageRecord !== 'object' || Array.isArray(messageRecord)) return null;
+    const content = (messageRecord as Record<string, unknown>).content;
+    return Array.isArray(content) ? content : null;
+}
+
+function readClaudeSdkToolResultOutput(value: unknown): unknown {
+    if (typeof value === 'string') return value;
+    if (!Array.isArray(value)) return value ?? '';
+    const textParts: string[] = [];
+    for (const item of value) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+        const record = item as Record<string, unknown>;
+        if (record.type !== 'text') continue;
+        if (typeof record.text === 'string') textParts.push(record.text);
+    }
+    return textParts.length > 0 ? textParts.join('') : value;
+}
+
+export type ClaudeSdkToolUseBlock = Readonly<{
+    id: string;
+    name: string;
+    input: unknown;
+}>;
+
+export function extractToolUseBlocksFromSdkMessage(message: unknown): ClaudeSdkToolUseBlock[] {
+    if (!message || typeof message !== 'object') return [];
+    const record = message as Record<string, unknown>;
+    if (record.type !== 'assistant') return [];
+    const content = readSdkMessageContent(message);
+    if (!content) return [];
+    const blocks: ClaudeSdkToolUseBlock[] = [];
+    for (const item of content) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+        const block = item as Record<string, unknown>;
+        if (block.type !== 'tool_use') continue;
+        const id = readNonEmptyString(block.id);
+        const name = readNonEmptyString(block.name);
+        if (!id || !name) continue;
+        blocks.push({ id, name, input: block.input });
+    }
+    return blocks;
+}
+
+export type ClaudeSdkToolResultBlock = Readonly<{
+    toolUseId: string;
+    output: unknown;
+    isError?: boolean;
+}>;
+
+export function extractToolResultBlocksFromSdkMessage(message: unknown): ClaudeSdkToolResultBlock[] {
+    if (!message || typeof message !== 'object') return [];
+    const record = message as Record<string, unknown>;
+    if (record.type !== 'user' && record.type !== 'assistant') return [];
+    const content = readSdkMessageContent(message);
+    if (!content) return [];
+    const blocks: ClaudeSdkToolResultBlock[] = [];
+    for (const item of content) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+        const block = item as Record<string, unknown>;
+        if (block.type !== 'tool_result') continue;
+        const toolUseId = readNonEmptyString(block.tool_use_id);
+        if (!toolUseId) continue;
+        blocks.push({
+            toolUseId,
+            output: readClaudeSdkToolResultOutput(block.content),
+            ...(typeof block.is_error === 'boolean' ? { isError: block.is_error } : {}),
+        });
+    }
+    return blocks;
+}
 
 export function extractToolUseStartFromStreamEvent(message: unknown): StreamEventToolUseStart | null {
     if (!message || typeof message !== 'object') return null;

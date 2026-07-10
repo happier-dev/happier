@@ -63,6 +63,30 @@ const MAX_LEFTOVER_SLASH_DRAFT_CLEAR_ATTEMPTS = 2;
 export const COMPOSER_CONTENT_MISMATCH_REASON = 'composer_content_mismatch';
 
 /**
+ * Registry fallback for controller-typed slash residue (ported HF-4 / A2-HIGH-1): after a respawn
+ * the persisted own-injected-text registry can fail to match (storage broken, bounded log
+ * evicted), leaving OUR OWN failed `/model`/`/effort` residue classified as a foreign user draft —
+ * permanently deadlocking idle prompt delivery. The controller's command vocabulary is FINITE, so
+ * residue matching it (including the concatenated double-typed form, incident cmq7pyqkj U1) is
+ * provably controller-typed. Anything else — `/compact …`, model args containing `/` — fails safe
+ * to foreign.
+ */
+export function isControllerTypedSlashCommandResidue(text: string | null | undefined): boolean {
+  const trimmed = typeof text === 'string' ? text.trim() : '';
+  if (!trimmed.startsWith('/')) return false;
+  // Split a possible concatenated form into individual commands; every segment must match.
+  const segments = trimmed.split(/(?=\/(?:model|effort)\b)/u).filter((segment) => segment.length > 0);
+  if (segments.length === 0) return false;
+  return segments.every((segment) => {
+    const match = /^\/(model|effort)\s+(\S+)\s*$/u.exec(segment.trim());
+    if (!match) return false;
+    // An argument containing '/' cannot be proven controller-typed (it could swallow a foreign
+    // command); fail safe to foreign.
+    return !match[2].includes('/');
+  });
+}
+
+/**
  * A slash-prefixed composer draft is OUR OWN failed control (a genuine user draft is non-slash —
  * `userDraftPresent` — and is never escaped away). With the picker CLOSED it passes the
  * safe-window check, so it must be detected from the composer content itself.

@@ -3,7 +3,11 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { getClaudeProjectPath, resolveClaudeConfigDirOverride, resolveClaudeProjectId } from './path.js';
-import type { ClaudeSessionBundle, ImportedClaudeSessionHandoffBundle } from './types.js';
+import {
+    ClaudeSessionBundleSchema,
+    type ClaudeSessionBundle,
+    type ImportedClaudeSessionHandoffBundle,
+} from './types.js';
 
 function resolveExternalSessionSourceTranscriptPath(params: Readonly<{
     metadata: Record<string, unknown>;
@@ -109,30 +113,31 @@ export async function exportClaudeSessionBundle(params: Readonly<{
     const transcriptPath = await resolveReadableTranscriptPath(params);
     const transcript = await readFile(transcriptPath, 'utf8');
     return {
-        providerId: 'claude',
+        agentId: 'claude',
         remoteSessionId: params.remoteSessionId,
         transcriptBase64: Buffer.from(transcript, 'utf8').toString('base64'),
     };
 }
 
 export async function importClaudeSessionBundle(params: Readonly<{
-    bundle: ClaudeSessionBundle;
+    bundle: unknown;
     targetPath: string;
     env: NodeJS.ProcessEnv;
     sessionStorageMode?: 'direct' | 'persisted';
 }>): Promise<ImportedClaudeSessionHandoffBundle> {
+    const bundle = ClaudeSessionBundleSchema.parse(params.bundle);
     const explicitClaudeConfigDir = resolveClaudeConfigDirOverride(params.env);
     const resolvedClaudeConfigDir = explicitClaudeConfigDir ?? join(homedir(), '.claude');
     const projectId = resolveClaudeProjectId(params.targetPath);
     const projectDir = getClaudeProjectPath(params.targetPath, resolvedClaudeConfigDir);
+    const transcriptPath = resolveClaudeTranscriptPath(projectDir, bundle.remoteSessionId);
     await mkdir(projectDir, { recursive: true });
 
-    const transcriptPath = resolveClaudeTranscriptPath(projectDir, params.bundle.remoteSessionId);
-    const transcript = Buffer.from(params.bundle.transcriptBase64, 'base64').toString('utf8');
+    const transcript = Buffer.from(bundle.transcriptBase64, 'base64').toString('utf8');
     await writeFile(transcriptPath, transcript, 'utf8');
 
     return {
-        remoteSessionId: params.bundle.remoteSessionId,
+        remoteSessionId: bundle.remoteSessionId,
         directSource: {
             kind: 'claudeConfig',
             configDir: resolvedClaudeConfigDir,
@@ -141,7 +146,7 @@ export async function importClaudeSessionBundle(params: Readonly<{
         resume: {
             directory: params.targetPath,
             agent: 'claude',
-            resume: params.bundle.remoteSessionId,
+            resume: bundle.remoteSessionId,
             environmentVariables: {
                 CLAUDE_CONFIG_DIR: resolvedClaudeConfigDir,
             },

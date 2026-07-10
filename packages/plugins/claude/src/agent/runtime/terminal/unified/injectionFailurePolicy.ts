@@ -1,4 +1,4 @@
-import type { TerminalInputInjectionResult } from '@happier-dev/agents';
+import type { TerminalInputInjectionResult } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 export type ClaudeUnifiedInjectionFailureAction =
   | Readonly<{ kind: 'retry'; retryAfterMs: number }>

@@ -1,8 +1,8 @@
-import { AGENT_MODEL_CONFIG } from '@happier-dev/agents';
+import { AGENT_MODEL_CONFIG } from '@happier-dev/plugin-sdk/experimental/agents';
 
 export type ClaudeSessionModelsState = {
     v: 1;
-    provider: 'claude';
+    agentId: 'claude';
     updatedAt: number;
     currentModelId: string;
     availableModels: Array<{
@@ -43,7 +43,7 @@ export async function resolveClaudeSessionModelsState(params: Readonly<{
 
     return {
         v: 1,
-        provider: 'claude',
+        agentId: 'claude',
         updatedAt,
         currentModelId: params.currentModelId,
         availableModels: models.map((model) => {

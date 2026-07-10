@@ -75,6 +75,10 @@ export interface CanCallToolCallback {
     }): Promise<PermissionResult>;
 }
 
+export interface GetOAuthTokenCallback {
+    (options: { signal: AbortSignal }): Promise<string | null>;
+}
+
 export type QueryPrompt = string | AsyncIterable<SDKMessage>;
 
 export interface QueryOptions {
@@ -93,6 +97,7 @@ export interface QueryOptions {
     resume?: string;
     strictMcpConfig?: boolean;
     canCallTool?: CanCallToolCallback;
+    getOAuthToken?: GetOAuthTokenCallback;
     settingsPath?: string;
     /**
      * Inline JSON for the single `--settings` overlay (e.g. `'{"ultracode":true}'`).

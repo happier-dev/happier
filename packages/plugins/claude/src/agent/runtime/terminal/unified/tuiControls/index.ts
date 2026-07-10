@@ -12,6 +12,12 @@ export {
   type ClaudeTuiControlTelemetrySink,
 } from './telemetry.js';
 export { resolveTargetModeMarker } from './permissionMode.js';
+export {
+  clearUserAuthorizedClaudeComposerDraft,
+  type ClaudeComposerClearRefusalReason,
+  type ClaudeUserAuthorizedComposerClearOptions,
+  type ClaudeUserAuthorizedComposerClearResult,
+} from './composerClear.js';
 export type { ControlAttemptResult } from './outcome.js';
 export {
   CLAUDE_UNIFIED_TUI_RUNTIME_CONTROL_FEATURE_ID,

@@ -1,14 +1,12 @@
 import {
-    CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS,
-    normalizeClaudeRemoteAdvancedOptionsJson,
+    CLAUDE_REMOTE_DEBUG_CATEGORIES,
+    CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS,
+    CLAUDE_SETTING_SOURCES_V2,
+    type ClaudeRemoteDebugCategory,
+    type ClaudeSettingSourceV2,
     normalizeClaudeUnifiedTerminalHost,
-} from '@happier-dev/agents';
-
-const CLAUDE_SETTING_SOURCES_V2 = ['user', 'project', 'local'] as const;
-type ClaudeSettingSourceV2 = typeof CLAUDE_SETTING_SOURCES_V2[number];
-
-const CLAUDE_REMOTE_DEBUG_CATEGORIES = ['api', 'mcp', 'hooks', 'file', '1p'] as const;
-type ClaudeRemoteDebugCategory = typeof CLAUDE_REMOTE_DEBUG_CATEGORIES[number];
+    normalizeClaudeUnifiedTerminalResumeChoice,
+} from '../../protocol/remoteSettings.js';
 
 function normalizeClaudeSettingSourcesV2(raw: unknown): ClaudeSettingSourceV2[] | null {
     if (!Array.isArray(raw)) return null;
@@ -52,14 +50,14 @@ function tryMapSettingSourcesV2ToLegacy(value: readonly ClaudeSettingSourceV2[])
 }
 
 export function buildClaudeRemoteOutgoingMessageMetaExtras(settings: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
-    const readBoolean = <T extends keyof typeof CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS>(key: T): boolean => {
+    const readBoolean = <T extends keyof typeof CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS>(key: T): boolean => {
         const value = settings[key as string];
-        return typeof value === 'boolean' ? value : Boolean(CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS[key]);
+        return typeof value === 'boolean' ? value : Boolean(CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS[key]);
     };
 
-    const readNumber = <T extends keyof typeof CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS>(key: T): number => {
+    const readNumber = <T extends keyof typeof CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS>(key: T): number => {
         const value = settings[key as string];
-        return typeof value === 'number' ? value : Number(CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS[key]);
+        return typeof value === 'number' ? value : Number(CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS[key]);
     };
 
     const normalizedV2 = normalizeClaudeSettingSourcesV2(settings.claudeRemoteSettingSourcesV2);
@@ -72,23 +70,25 @@ export function buildClaudeRemoteOutgoingMessageMetaExtras(settings: Readonly<Re
             ? normalizedV2
             : normalizedLegacy
                 ? (mapLegacyClaudeSettingSourcesToV2(normalizedLegacy)
-                    ?? CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteSettingSourcesV2 as readonly ClaudeSettingSourceV2[])
-                : CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteSettingSourcesV2 as readonly ClaudeSettingSourceV2[];
+                    ?? CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS.claudeRemoteSettingSourcesV2 as readonly ClaudeSettingSourceV2[])
+                : CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS.claudeRemoteSettingSourcesV2 as readonly ClaudeSettingSourceV2[];
     const legacyFromV2 = tryMapSettingSourcesV2ToLegacy(effectiveV2);
 
     const debugCategories =
         normalizeClaudeRemoteDebugCategories(settings.claudeRemoteDebugCategories)
-        ?? CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeRemoteDebugCategories as readonly ClaudeRemoteDebugCategory[];
+        ?? CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS.claudeRemoteDebugCategories as readonly ClaudeRemoteDebugCategory[];
 
     return {
         claudeRemoteAgentSdkEnabled: readBoolean('claudeRemoteAgentSdkEnabled'),
         claudeUnifiedTerminalEnabled: readBoolean('claudeUnifiedTerminalEnabled'),
         claudeUnifiedTerminalHost:
             normalizeClaudeUnifiedTerminalHost(settings.claudeUnifiedTerminalHost)
-            ?? CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeUnifiedTerminalHost,
+            ?? CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS.claudeUnifiedTerminalHost,
+        claudeUnifiedTerminalResumeChoice:
+            normalizeClaudeUnifiedTerminalResumeChoice(settings.claudeUnifiedTerminalResumeChoice)
+            ?? CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS.claudeUnifiedTerminalResumeChoice,
         claudeRemoteSettingSourcesV2: effectiveV2,
         ...(legacyFromV2 ? { claudeRemoteSettingSources: legacyFromV2 } : {}),
-        claudeCodeExperimentalAgentTeamsEnabled: readBoolean('claudeCodeExperimentalAgentTeamsEnabled'),
         claudeLocalPermissionBridgeEnabled: readBoolean('claudeLocalPermissionBridgeEnabled'),
         claudeLocalPermissionBridgeWaitIndefinitely: readBoolean('claudeLocalPermissionBridgeWaitIndefinitely'),
         claudeLocalPermissionBridgeTimeoutSeconds: readNumber('claudeLocalPermissionBridgeTimeoutSeconds'),
@@ -99,6 +99,5 @@ export function buildClaudeRemoteOutgoingMessageMetaExtras(settings: Readonly<Re
         claudeRemoteDebugEnabled: readBoolean('claudeRemoteDebugEnabled'),
         claudeRemoteVerboseEnabled: readBoolean('claudeRemoteVerboseEnabled'),
         claudeRemoteDebugCategories: debugCategories,
-        claudeRemoteAdvancedOptionsJson: normalizeClaudeRemoteAdvancedOptionsJson(settings.claudeRemoteAdvancedOptionsJson),
     };
 }

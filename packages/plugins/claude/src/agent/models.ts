@@ -1,4 +1,4 @@
-import type { AgentModelConfig, AgentModelDescriptor, AgentModelOption } from '@happier-dev/agents';
+import type { AgentModelConfig, AgentModelDescriptor, AgentModelOption } from '@happier-dev/plugin-sdk/experimental/agents';
 
 import { isClaude1mContextOptInModelId, toClaude1mModelId } from './contextWindow.js';
 import {

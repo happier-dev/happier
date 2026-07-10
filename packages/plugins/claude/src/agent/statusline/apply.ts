@@ -37,6 +37,12 @@ export type ClaudeStatuslineRuntimeTruth = Readonly<{
     effortLevel: string | null;
 }>;
 
+export type ClaudeEffectiveModelChange = Readonly<{
+    modelId: string;
+    previousModelId: string | null;
+    eventId: string;
+}>;
+
 function readString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
@@ -66,7 +72,8 @@ function readSessionModelsState(metadata: Readonly<Record<string, unknown>>): Cl
     const state = metadata.sessionModelsV1;
     if (!state || typeof state !== 'object' || Array.isArray(state)) return null;
     const record = state as Record<string, unknown>;
-    if (record.v !== 1 || record.provider !== 'claude') return null;
+    // legacy `provider` state-record read-compat (pre-rename persisted metadata)
+    if (record.v !== 1 || (record.agentId ?? record.provider) !== 'claude') return null;
     return record as unknown as ClaudeSessionModelsState;
 }
 
@@ -99,7 +106,7 @@ function upsertSessionModelsState(params: Readonly<{
 
     const next: ClaudeSessionModelsState = {
         v: 1,
-        provider: 'claude',
+        agentId: 'claude',
         updatedAt: params.nowMs,
         currentModelId: params.modelId,
         availableModels,
@@ -113,19 +120,30 @@ export function createClaudeStatuslineApplier(params: Readonly<{
     readIdentity: () => ClaudeStatuslineIdentity;
     nowMs?: () => number;
     onRuntimeTruth?: (truth: ClaudeStatuslineRuntimeTruth) => void;
+    onModelChanged?: (change: ClaudeEffectiveModelChange) => void;
 }>): Readonly<{
     apply(payload: ClaudeStatuslinePayload): void;
+    applyModelEvidence(input: Readonly<{
+        modelId: string | null;
+        displayName?: string | null | undefined;
+        contextWindowTokens?: number | null | undefined;
+    }>): void;
 }> {
     let lastModelKey: string | null = null;
     let lastCanaryKey: string | null = null;
     let lastRuntimeTruthKey: string | null = null;
+    const publishedModelChangeEventIds = new Set<string>();
     const nowMs = params.nowMs ?? (() => Date.now());
 
-    const maybeAdoptModelAndWindow = (payload: ClaudeStatuslinePayload): void => {
-        const modelId = readString(payload.model?.id);
+    const maybeAdoptModelAndWindow = (input: Readonly<{
+        modelId: string | null;
+        displayName?: string | null | undefined;
+        contextWindowTokens?: number | null | undefined;
+    }>): void => {
+        const modelId = readString(input.modelId);
         if (!modelId) return;
-        const contextWindowTokens = readPositiveTokens(payload.context_window?.context_window_size);
-        const displayName = readString(payload.model?.display_name);
+        const contextWindowTokens = readPositiveTokens(input.contextWindowTokens);
+        const displayName = readString(input.displayName);
 
         // Dedupe: identical payloads (~300ms debounce upstream, but state changes repeat the same
         // model/window) must not spam metadata writes.
@@ -135,13 +153,24 @@ export function createClaudeStatuslineApplier(params: Readonly<{
 
         void params.writeMetadata({
             kind: 'update',
-            handler: (current) => upsertSessionModelsState({
-                current,
-                modelId,
-                displayName,
-                contextWindowTokens,
-                nowMs: nowMs(),
-            }),
+            handler: (current) => {
+                const previousModelId = readSessionModelsState(current)?.currentModelId ?? null;
+                const next = upsertSessionModelsState({
+                    current,
+                    modelId,
+                    displayName,
+                    contextWindowTokens,
+                    nowMs: nowMs(),
+                });
+                if (params.onModelChanged && previousModelId !== null && previousModelId !== modelId) {
+                    const eventId = `claude-model-changed:${previousModelId}:${modelId}`;
+                    if (!publishedModelChangeEventIds.has(eventId)) {
+                        publishedModelChangeEventIds.add(eventId);
+                        params.onModelChanged({ modelId, previousModelId, eventId });
+                    }
+                }
+                return next;
+            },
             reason: 'claude_statusline_model_update',
         }).catch((error) => {
             params.logger.warn('[ClaudeStatusline] session-models metadata update failed', error);
@@ -185,9 +214,16 @@ export function createClaudeStatuslineApplier(params: Readonly<{
                 });
                 return;
             }
-            maybeAdoptModelAndWindow(payload);
+            maybeAdoptModelAndWindow({
+                modelId: payload.model?.id ?? null,
+                displayName: payload.model?.display_name ?? null,
+                contextWindowTokens: payload.context_window?.context_window_size ?? null,
+            });
             maybeFeedRuntimeTruth(payload);
             maybeLogRuntimeCanary(payload);
+        },
+        applyModelEvidence(input) {
+            maybeAdoptModelAndWindow(input);
         },
     };
 }

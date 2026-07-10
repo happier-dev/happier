@@ -8,6 +8,7 @@ import type { ControlAttemptResult } from './outcome.js';
 import {
   isSafeWindowForModeCycle,
   resolveClaudeScreenInFlightSteerVeto,
+  resolveClaudeScreenModeCycleVeto,
   type ClaudeScreenState,
   type ClaudeTuiModeMarker,
 } from '../screenState.js';
@@ -47,6 +48,22 @@ export type TargetModeResolution =
   | Readonly<{ kind: 'launch_only'; mode: string }>;
 
 const DEFAULT_MAX_ATTEMPTS = 6;
+
+function resolveModeCycleWindowVeto(
+  state: ClaudeScreenState,
+  window: PermissionModeCycleWindow | undefined,
+): string | null {
+  return window === 'in_flight_steer'
+    ? resolveClaudeScreenModeCycleVeto(state)
+    : resolveClaudeScreenInFlightSteerVeto(state);
+}
+
+function resolveModeCycleBlockedReason(
+  state: ClaudeScreenState,
+  window: PermissionModeCycleWindow | undefined,
+): string {
+  return resolveModeCycleWindowVeto(state, window) ?? 'unsafe_window';
+}
 
 export function resolveTargetModeMarker(desired: PermissionModeDesired): TargetModeResolution {
   const agentModeId = typeof desired.agentModeId === 'string' ? desired.agentModeId.trim() : '';
@@ -88,7 +105,7 @@ export async function applyPermissionModeControl(
     isSafeWindowForModeCycle(screen)
     || (ctx.window === 'in_flight_steer'
       && screen.generating
-      && resolveClaudeScreenInFlightSteerVeto(screen) === null);
+      && resolveClaudeScreenModeCycleVeto(screen) === null);
 
   const initial = await captureScreenState(port);
   if (initial.kind !== 'state') return captureFailureToResult(initial);
@@ -98,7 +115,11 @@ export async function applyPermissionModeControl(
     // Generation/dialog/draft/unknown: never cycle blindly. Queue for the next safe window unless the
     // screen is wholly unknown (no interactive composer at all).
     if (state.generating || state.inputBoxInteractive) {
-      return { kind: 'scheduled', timing: 'queued_until_safe_window', reason: 'unsafe_window' };
+      return {
+        kind: 'scheduled',
+        timing: 'queued_until_safe_window',
+        reason: resolveModeCycleBlockedReason(state, ctx.window),
+      };
     }
     return { kind: 'failed', reason: 'unsafe_or_unknown_screen' };
   }
@@ -110,7 +131,11 @@ export async function applyPermissionModeControl(
   const visited = new Set<ClaudeTuiModeMarker>([state.modeMarker]);
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     if (!isSafeWindow(state)) {
-      return { kind: 'scheduled', timing: 'queued_until_safe_window', reason: 'safe_window_lost' };
+      return {
+        kind: 'scheduled',
+        timing: 'queued_until_safe_window',
+        reason: resolveModeCycleWindowVeto(state, ctx.window) ?? 'safe_window_lost',
+      };
     }
 
     const sendShiftTab = sendResultToFailure(await port.sendSpecialKey('ShiftTab'));

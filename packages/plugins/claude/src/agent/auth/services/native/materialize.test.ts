@@ -3,11 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE } from './scopes.js';
-import { materializeClaudeCodeNativeAuth } from './materialize.js';
+import {
+    materializeClaudeCodeNativeAuth,
+    resetPendingLazyKeychainSweepKeysForTests,
+} from './materialize.js';
 
 const ORIGINAL_PLATFORM_DESCRIPTOR = Object.getOwnPropertyDescriptor(process, 'platform');
 const PROVENANCE_FILE_NAME = '.happier-claude-connected-service-home.json';
@@ -38,8 +41,37 @@ function createExecFixture(params: Readonly<{ exitCode?: number | null; stderr?:
     } as unknown as ExecRuntimeServiceV1;
 }
 
+function createKeychainSweepExecFixture(params: Readonly<{ dumpStdout: string }>): ExecRuntimeServiceV1 {
+    return {
+        systemTools: {
+            resolve: vi.fn(async () => ({
+                grantId: 'grant-security',
+                toolId: 'claude.macos.security',
+                displayName: 'macOS Keychain security',
+                source: 'system',
+                executablePath: '/usr/bin/security',
+                launch: {
+                    kind: 'binary',
+                    executablePath: '/usr/bin/security',
+                    env: { PATH: '' },
+                },
+                expiresAt: null,
+            })),
+        },
+        run: vi.fn(async (launch: { args?: readonly string[] }) => {
+            if (launch.args?.includes('dump-keychain')) {
+                return { exitCode: 0, signal: null, stdout: params.dumpStdout, stderr: '' };
+            }
+            return { exitCode: 0, signal: null, stdout: '', stderr: '' };
+        }),
+    } as unknown as ExecRuntimeServiceV1;
+}
+
 describe('materializeClaudeCodeNativeAuth', () => {
     beforeEach(() => {
+        // AT-4: clear the module-level lazy-sweep dedupe so a sweep scheduled by an earlier test can
+        // never suppress (dedupe out) a later test's sweep for the same (home, username) — order-safe.
+        resetPendingLazyKeychainSweepKeysForTests();
         if (ORIGINAL_PLATFORM_DESCRIPTOR) {
             Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'linux' });
         }
@@ -81,6 +113,7 @@ describe('materializeClaudeCodeNativeAuth', () => {
             credentialPath: join(claudeConfigDir, '.credentials.json'),
         });
         const credentialFile = JSON.parse(await readFile(join(claudeConfigDir, '.credentials.json'), 'utf8'));
+        expect(credentialFile.claudeAiOauth).not.toHaveProperty('refreshToken');
         expect(credentialFile.claudeAiOauth.scopes).toContain('user:sessions:claude_code');
         await expect(readFile(join(claudeConfigDir, PROVENANCE_FILE_NAME), 'utf8')).resolves.toBeTruthy();
         const provenance = JSON.parse(await readFile(join(claudeConfigDir, PROVENANCE_FILE_NAME), 'utf8'));
@@ -126,6 +159,11 @@ describe('materializeClaudeCodeNativeAuth', () => {
                 providerId: 'claude',
                 serviceId: 'claude-subscription',
                 reason: 'missing_required_scope',
+                credentialRefreshFailure: {
+                    category: 'provider_403',
+                    providerStatus: 403,
+                    providerErrorCode: 'claude_subscription_missing_claude_code_scope',
+                },
             }),
         ]);
         expect(JSON.stringify(result.diagnostics)).not.toContain('secret-placeholder');
@@ -167,10 +205,11 @@ describe('materializeClaudeCodeNativeAuth', () => {
                 severity: 'blocking',
             }),
         ]);
+        expect(result.diagnostics[0]).not.toHaveProperty('credentialRefreshFailure');
         expect(JSON.stringify(result.diagnostics)).not.toContain('secret-placeholder');
     });
 
-    it('writes the matching macOS keychain entry for healthy OAuth records on darwin', async () => {
+    it('removes stale macOS keychain credentials for access-token-only homes on darwin', async () => {
         const exec = createExecFixture();
         Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'darwin' });
 
@@ -202,14 +241,112 @@ describe('materializeClaudeCodeNativeAuth', () => {
         expect(exec.run).toHaveBeenCalledWith(expect.objectContaining({
             kind: 'binary',
             executablePath: '/usr/bin/security',
+            args: expect.arrayContaining(['delete-generic-password', '-a', 'leeroy']),
+        }), expect.objectContaining({ timeoutMs: 10_000 }));
+        expect(exec.run).not.toHaveBeenCalledWith(expect.objectContaining({
             args: expect.arrayContaining(['add-generic-password']),
         }));
     });
 
-    it('fails closed on darwin when the matching macOS keychain write fails', async () => {
+    it('sweeps every stale suffixed Happier-managed macOS keychain service on materialization', async () => {
+        Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'darwin' });
+        const staleService = 'Claude Code-credentials-deadbeef';
+        const exec = createKeychainSweepExecFixture({
+            dumpStdout: [
+                'keychain: "/Users/tester/Library/Keychains/login.keychain-db"',
+                '    "acct"<blob>="tester"',
+                `    "svce"<blob>="${staleService}"`,
+                'keychain: "/Users/tester/Library/Keychains/login.keychain-db"',
+                '    "acct"<blob>="tester"',
+                '    "svce"<blob>="Claude Code-credentials"',
+            ].join('\n'),
+        });
+
+        const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-native-auth-test-'));
+        const record = buildConnectedServiceCredentialRecord({
+            now: 1000,
+            serviceId: 'claude-subscription',
+            profileId: 'oauth',
+            kind: 'oauth',
+            expiresAt: 2000,
+            oauth: {
+                accessToken: 'access-placeholder',
+                refreshToken: 'refresh-placeholder',
+                idToken: null,
+                scope: CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE,
+                tokenType: 'Bearer',
+                providerAccountId: null,
+                providerEmail: null,
+            },
+        });
+
+        const result = await materializeClaudeCodeNativeAuth({
+            exec,
+            record,
+            claudeConfigDir,
+            homeDir: '/Users/tester',
+            username: 'tester',
+        });
+
+        expect(result.status).toBe('materialized');
+        expect(exec.run).not.toHaveBeenCalledWith(expect.objectContaining({
+            args: ['dump-keychain'],
+        }), { timeoutMs: 10_000 });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(exec.run).toHaveBeenCalledWith(expect.objectContaining({
+            args: ['dump-keychain'],
+        }), { timeoutMs: 10_000 });
+        expect(exec.run).toHaveBeenCalledWith(expect.objectContaining({
+            args: ['delete-generic-password', '-a', 'tester', '-s', staleService],
+        }), { timeoutMs: 10_000 });
+    });
+
+    it('skips stable credential materialization and keychain work when provenance fingerprint matches', async () => {
+        Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'darwin' });
+        const exec = createKeychainSweepExecFixture({ dumpStdout: '' });
+        const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-native-auth-test-'));
+        const record = buildConnectedServiceCredentialRecord({
+            now: 1000,
+            serviceId: 'claude-subscription',
+            profileId: 'oauth',
+            kind: 'oauth',
+            expiresAt: 2000,
+            oauth: {
+                accessToken: 'access-placeholder',
+                refreshToken: 'refresh-placeholder',
+                idToken: null,
+                scope: CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE,
+                tokenType: 'Bearer',
+                providerAccountId: null,
+                providerEmail: null,
+            },
+        });
+
+        Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'linux' });
+        await expect(materializeClaudeCodeNativeAuth({ record, claudeConfigDir })).resolves.toMatchObject({
+            status: 'materialized',
+        });
+        Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'darwin' });
+
+        await expect(materializeClaudeCodeNativeAuth({
+            exec,
+            record,
+            claudeConfigDir,
+            homeDir: '/Users/tester',
+            username: 'tester',
+        })).resolves.toMatchObject({
+            status: 'materialized',
+            credentialPath: join(claudeConfigDir, '.credentials.json'),
+        });
+
+        expect(exec.systemTools.resolve).not.toHaveBeenCalled();
+        expect(exec.run).not.toHaveBeenCalled();
+    });
+
+    it('fails closed on darwin when stale macOS keychain cleanup fails before materialization is committed', async () => {
         const exec = createExecFixture({
             exitCode: 1,
-            stderr: 'keychain write failed with access-secret-placeholder',
+            stderr: 'keychain cleanup failed with access-secret-placeholder',
         });
         Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'darwin' });
 
@@ -249,7 +386,7 @@ describe('materializeClaudeCodeNativeAuth', () => {
         await expect(lstat(join(claudeConfigDir, PROVENANCE_FILE_NAME))).rejects.toThrow();
     });
 
-    it('restores previous native auth files when the macOS keychain write fails', async () => {
+    it('restores previous native auth files when stale macOS keychain cleanup fails', async () => {
         const exec = createExecFixture({ exitCode: 1 });
         Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'darwin' });
 

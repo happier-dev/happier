@@ -47,4 +47,16 @@ describe('Claude terminal argv leaf', () => {
             trailingPermissionFlagArgs: ['--permission-mode', 'bypassPermissions'],
         });
     });
+
+    it('treats user-supplied yolo allow flags as managed so callers can add one canonical copy', () => {
+        expect(partitionClaudeTerminalUserArgs([
+            '--allow-dangerously-skip-permissions',
+            '--allow-dangerously-skip-permissions',
+            'prompt text',
+        ])).toEqual({
+            flagArgs: [],
+            positionalArgs: ['prompt text'],
+            trailingPermissionFlagArgs: [],
+        });
+    });
 });

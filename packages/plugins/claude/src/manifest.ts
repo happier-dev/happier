@@ -1,19 +1,21 @@
 import {
+  BackendSurfaceOperationCatalogV1,
   definePluginManifest,
-  type PluginBackendContributionV2,
+  type PluginAgentContributionV2,
+  type PluginHookContributionV2,
   type PluginManifestV2,
   type PluginMcpContributesV1,
+  type PluginAgentSettingsContributionV1,
   type PluginSystemToolContributionV1,
-} from '@happier-dev/plugin-sdk';
-import { BackendSurfaceOperationCatalogV1 } from '@happier-dev/protocol';
-import type { PluginAgentContributionV2, PluginHookContributionV2 } from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/manifest';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { CLAUDE_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
 const CLAUDE_BACKEND_ID = 'claude';
 const SURFACE_OPERATIONS = BackendSurfaceOperationCatalogV1;
-type BackendSurfaceHandlerV1 = NonNullable<PluginBackendContributionV2['surfaceHandlers']>[number];
-type ClaudeAgentCliRuntime = NonNullable<PluginAgentContributionV2['agentCliRuntime']>;
+type BackendSurfaceHandlerV1 = NonNullable<PluginAgentContributionV2['surfaceHandlers']>[number];
+type ClaudeAgentCliRuntime = typeof AGENT_DEFINITION.agentCliRuntime & Readonly<{ kindVersion: 1 }>;
 type ClaudeManualInstallRecipe = NonNullable<
   NonNullable<ClaudeAgentCliRuntime['manualInstallRecipes']>['darwin']
 >[number];
@@ -90,9 +92,9 @@ const CLAUDE_MACOS_SECURITY_SYSTEM_TOOL = Object.freeze({
 type ClaudePluginManifestV2 = Omit<PluginManifestV2, 'contributes'> & Readonly<{
   contributes: Readonly<{
     agents: ReadonlyArray<PluginAgentContributionV2>;
-    backends: ReadonlyArray<PluginBackendContributionV2>;
     hooks: ReadonlyArray<PluginHookContributionV2>;
     mcp: PluginMcpContributesV1;
+    agentSettings: ReadonlyArray<PluginAgentSettingsContributionV1>;
     systemTools: ReadonlyArray<PluginSystemToolContributionV1>;
   }>;
 }>;
@@ -106,10 +108,10 @@ export const PLUGIN_MANIFEST = definePluginManifest({
   displayName: 'claude',
   description: undefined,
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: ['agents', 'backends', 'mcp', 'sessionHooks', 'terminalHost'] },
-  targets: {},
-  capabilities: {
-    permissions: [
+  activationEvents: ['onAgent:claude'],
+  uses: ['agents', 'hooks', 'mcp', 'sessionHooks', 'terminalHost'],
+  entrypoints: { main: './dist/index.js' },
+  permissions: { required: [
       {
         capability: 'terminal.host.control',
         reason: 'Run Claude through the host-owned terminal multiplexer substrate.',
@@ -122,8 +124,7 @@ export const PLUGIN_MANIFEST = definePluginManifest({
         capability: 'session.hooks.control',
         reason: 'Create authenticated Claude session hook bridges for unified terminal runtime events.',
       },
-    ],
-  },
+    ], optional: [] },
   contributes: {
     agents: [
       {
@@ -166,14 +167,7 @@ export const PLUGIN_MANIFEST = definePluginManifest({
           modelSelection: AGENT_DEFINITION.modelConfig.supportsSelection ? 'supported' : 'unsupported',
         },
         ownedBackendIds: [CLAUDE_BACKEND_ID],
-      },
-    ],
-    backends: [
-      {
-        kindVersion: 1,
-        id: CLAUDE_BACKEND_ID,
-        agentId: CLAUDE_BACKEND_ID,
-        engine: { kind: 'custom' },
+        runtime: { kind: 'custom' },
         surfaceHandlers: [
           surfaceHandler({
             id: 'claude.externalSession.resolveSource',
@@ -248,6 +242,30 @@ export const PLUGIN_MANIFEST = definePluginManifest({
             exportName: 'importClaudeSessionBundle',
           }),
         ],
+        surfaces: {
+          externalSession: {
+            sources: [
+              {
+                sourceKind: 'claudeConfig',
+                schema: {
+                  passthrough: true,
+                  fields: [
+                    { name: 'kind', kind: 'literal', value: 'claudeConfig' },
+                    { name: 'configDir', kind: 'string', min: 1, max: 10_000, nullish: true },
+                    { name: 'projectId', kind: 'string', min: 1, max: 2_000, nullish: true },
+                  ],
+                },
+                key: {
+                  segments: [
+                    { kind: 'literal', value: 'claudeConfig' },
+                    { kind: 'field', field: 'configDir' },
+                    { kind: 'field', field: 'projectId' },
+                  ],
+                },
+              },
+            ],
+          },
+        },
         capabilities: {
           executionRun: { supported: true },
           session: {
@@ -266,11 +284,11 @@ export const PLUGIN_MANIFEST = definePluginManifest({
     ],
     hooks: [
       {
-        id: 'backend.resolveRuntimePrerequisites',
+        id: 'agent.resolvePrerequisites',
         hookApiVersion: 1,
         category: 'decision',
-        scope: 'backend',
-        filters: { backendId: CLAUDE_BACKEND_ID },
+        scope: 'agent',
+        filters: { agentId: CLAUDE_BACKEND_ID },
         executionKind: 'decide',
         handler: {
           target: 'plugin',
@@ -278,11 +296,11 @@ export const PLUGIN_MANIFEST = definePluginManifest({
         },
       },
       {
-        id: 'spawn.augmentEnv',
+        id: 'agent.spawnEnv.augment',
         hookApiVersion: 1,
         category: 'augmentation',
         scope: 'daemon',
-        filters: { backendId: CLAUDE_BACKEND_ID },
+        filters: { agentId: CLAUDE_BACKEND_ID },
         executionKind: 'augment',
         handler: {
           target: 'plugin',
@@ -301,10 +319,11 @@ export const PLUGIN_MANIFEST = definePluginManifest({
           permissionGates: [],
           redaction: 'none',
           hidden: false,
-          providerId: CLAUDE_BACKEND_ID,
+          agentId: CLAUDE_BACKEND_ID,
         },
       ],
     },
+    agentSettings: [CLAUDE_AGENT_SETTINGS_CONTRIBUTION],
     systemTools: [CLAUDE_MACOS_SECURITY_SYSTEM_TOOL],
   },
 } satisfies ClaudePluginManifestV2);

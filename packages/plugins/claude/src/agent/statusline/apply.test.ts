@@ -16,6 +16,7 @@ function createHarness(identity?: Readonly<{ providerSessionId?: string | null; 
     });
     const logger = { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() };
     const onRuntimeTruth = vi.fn();
+    const onModelChanged = vi.fn();
     const applier = createClaudeStatuslineApplier({
         logger,
         writeMetadata,
@@ -24,12 +25,14 @@ function createHarness(identity?: Readonly<{ providerSessionId?: string | null; 
             transcriptPath: identity?.transcriptPath ?? null,
         }),
         onRuntimeTruth,
+        onModelChanged,
     });
     return {
         applier,
         writeMetadata,
         logger,
         onRuntimeTruth,
+        onModelChanged,
         readMetadata: () => metadata,
         seedMetadata: (value: MetadataRecord) => {
             metadata = value;
@@ -64,7 +67,7 @@ describe('createClaudeStatuslineApplier', () => {
             availableModels: Array<{ id: string; name: string; contextWindowTokens?: number }>;
         };
         expect(state.v).toBe(1);
-        expect(state.provider).toBe('claude');
+        expect(state.agentId).toBe('claude');
         expect(state.currentModelId).toBe('claude-fable-5');
         const entry = state.availableModels.find((model) => model.id === 'claude-fable-5');
         expect(entry).toMatchObject({ name: 'Fable 5', contextWindowTokens: 1_000_000 });
@@ -79,6 +82,31 @@ describe('createClaudeStatuslineApplier', () => {
         await flush();
 
         expect(harness.writeMetadata).toHaveBeenCalledTimes(1);
+    });
+
+    it('emits one model-changed event when effective model evidence changes the active model', async () => {
+        const harness = createHarness();
+        harness.seedMetadata({
+            sessionModelsV1: {
+                v: 1,
+                agentId: 'claude',
+                updatedAt: 1,
+                currentModelId: 'claude-sonnet-4-6',
+                availableModels: [{ id: 'claude-sonnet-4-6', name: 'Sonnet 4.6' }],
+            },
+        });
+
+        harness.applier.apply(basePayload);
+        harness.applier.apply(basePayload);
+        await flush();
+
+        expect((harness.readMetadata().sessionModelsV1 as { currentModelId: string }).currentModelId)
+            .toBe('claude-fable-5');
+        expect(harness.onModelChanged).toHaveBeenCalledTimes(1);
+        expect(harness.onModelChanged).toHaveBeenCalledWith(expect.objectContaining({
+            modelId: 'claude-fable-5',
+            previousModelId: 'claude-sonnet-4-6',
+        }));
     });
 
     it('writes again when the model or window changes', async () => {
@@ -108,7 +136,7 @@ describe('createClaudeStatuslineApplier', () => {
         harness.seedMetadata({
             sessionModelsV1: {
                 v: 1,
-                provider: 'claude',
+                agentId: 'claude',
                 updatedAt: 1,
                 currentModelId: 'claude-fable-5',
                 availableModels: [{

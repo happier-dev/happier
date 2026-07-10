@@ -1,3 +1,5 @@
+import type { SessionContextUsageSnapshotV1 } from '@happier-dev/plugin-sdk/usage';
+
 export type ClaudeTokenUsage = Readonly<{
     input_tokens?: number;
     output_tokens?: number;
@@ -22,9 +24,10 @@ export type ClaudeUsageObservation = {
         input?: number;
         output?: number;
         billingContext?: 'unknown';
-        costSource?: 'pricing_estimate';
+        costSource?: 'provider_reported' | 'pricing_estimate';
         [key: string]: number | string | undefined;
     } | null;
     contextUsedTokens: number | null;
     contextWindowTokens: number | null;
+    contextSnapshot?: SessionContextUsageSnapshotV1;
 };

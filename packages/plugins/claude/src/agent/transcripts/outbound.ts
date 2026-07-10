@@ -6,10 +6,12 @@ import type {
   RuntimeOutboundTranscriptDispatchPlanV1,
   RuntimeOutboundTranscriptPostSendEffectV1,
   RuntimeOutboundTranscriptToolTraceEventV1,
-} from '@happier-dev/agents';
-import type { SessionMessageRole } from '@happier-dev/protocol';
+  SessionMessageRole,
+} from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import { buildUsageObservationEffect } from '@happier-dev/plugin-sdk/usage';
 
 import { buildClaudeAssistantUsageObservation } from '../usage/buildAssistantObservation.js';
+import { buildClaudeSdkResultUsageObservation } from '../usage/buildSdkResultObservation.js';
 import {
   RawJSONLinesSchema,
   type RawJSONLines,
@@ -230,6 +232,7 @@ function buildContent(body: unknown, meta?: Record<string, unknown>) {
 }
 
 export function createClaudeOutboundTranscriptDispatchFacet(): RuntimeOutboundTranscriptDispatchFacetV1 {
+  let activeModelId: string | null = null;
   return Object.freeze({
     prepareDispatch(input: RuntimeOutboundTranscriptDispatchInputV1): RuntimeOutboundTranscriptDispatchPlanV1 {
       const parsedBody = RawJSONLinesSchema.safeParse(input.body);
@@ -240,18 +243,36 @@ export function createClaudeOutboundTranscriptDispatchFacet(): RuntimeOutboundTr
       const sidechainId = readSidechainId(body);
       const now = input.now ?? Date.now;
       const randomId = input.randomId ?? randomUUID;
+      const localId = buildClaudeJsonlLocalId(body, sidechainId, randomId);
       const postSendEffects: RuntimeOutboundTranscriptPostSendEffectV1[] = [];
 
       if (validBody?.type === 'assistant' && validBody.message?.usage) {
+        activeModelId = readNonEmptyString(validBody.message.model) ?? activeModelId;
         const observation = buildClaudeAssistantUsageObservation({
           modelId: typeof validBody.message.model === 'string' ? validBody.message.model : null,
           usage: validBody.message.usage,
         });
         if (observation) {
-          postSendEffects.push({
-            type: 'usageObservation',
+          postSendEffects.push(buildUsageObservationEffect({ observation, externalKey: localId }));
+        }
+      }
+
+      if (bodyType === 'result') {
+        const resultModelId = readNonEmptyString(input.meta?.modelId) ?? activeModelId;
+        const observation = resultModelId
+          ? buildClaudeSdkResultUsageObservation({
+            modelId: resultModelId,
+            result: body,
+            observedAtMs: now(),
+          })
+          : null;
+        const sessionId = readNonEmptyString(bodyRecord?.session_id ?? bodyRecord?.sessionId);
+        const resultMessageId = readNonEmptyString(bodyRecord?.uuid ?? bodyRecord?.id);
+        if (observation && sessionId && resultMessageId) {
+          postSendEffects.push(buildUsageObservationEffect({
             observation,
-          });
+            externalKey: `claude:${sessionId}:result:${resultMessageId}`,
+          }));
         }
       }
 
@@ -277,7 +298,7 @@ export function createClaudeOutboundTranscriptDispatchFacet(): RuntimeOutboundTr
 
       return {
         content,
-        localId: buildClaudeJsonlLocalId(body, sidechainId, randomId),
+        localId,
         sidechainId,
         messageRole: resolveClaudeMessageRole(body),
         logErrorMessage: '[SOCKET] Failed to commit Claude session message (non-fatal)',

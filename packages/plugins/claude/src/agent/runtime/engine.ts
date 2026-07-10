@@ -1,9 +1,9 @@
 import type {
+    AgentRuntimeV1,
     CreateExecutionRunBackendParamsV1,
     CreateSessionRuntimeParamsV1,
     PluginContextV1,
 } from '@happier-dev/plugin-sdk';
-import type { BundledBackendEngineV1 } from '@happier-dev/plugin-sdk/internal/runtime/session';
 
 import { createClaudeExecutionRunBackend } from '../executionRuns/createClaudeExecutionRunBackend.js';
 import { claudeExternalSessionSurface } from '../surfaces/sessions/external/providerOps.js';
@@ -13,7 +13,7 @@ import { buildClaudeRemoteOutgoingMessageMetaExtras } from './messageMeta.js';
 import { bindClaudeAgentSdkFallbackSession } from './remote/sdk/session.js';
 import { bindClaudeUnifiedTerminalSession } from './terminal/unified/bindSession.js';
 
-const CLAUDE_UNIFIED_TERMINAL_FEATURE_ID = 'providers.claude.unifiedTerminal';
+const CLAUDE_UNIFIED_TERMINAL_FEATURE_ID = 'agents.claude.unifiedTerminal';
 const CLAUDE_UNIFIED_TERMINAL_SETTING_KEY = 'claudeUnifiedTerminalEnabled';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -48,7 +48,7 @@ async function isClaudeUnifiedTerminalSelected(
     return settingsEnabled === true;
 }
 
-export function createClaudeBackendEngine(ctx: PluginContextV1): BundledBackendEngineV1 {
+export function createClaudeBackendEngine(ctx: PluginContextV1): AgentRuntimeV1 {
     return Object.freeze({
         runtimeCore: Object.freeze({
             async createSessionRuntime(sessionParams: CreateSessionRuntimeParamsV1) {

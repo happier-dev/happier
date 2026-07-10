@@ -28,7 +28,7 @@ describe('resolveClaudeSessionModelsState', () => {
         expect(res).toEqual(
             expect.objectContaining({
                 v: 1,
-                provider: 'claude',
+                agentId: 'claude',
                 updatedAt: 456,
                 currentModelId: 'claude-sonnet-4-6',
                 availableModels: expect.arrayContaining([

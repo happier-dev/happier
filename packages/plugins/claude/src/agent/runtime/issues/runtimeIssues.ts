@@ -1,7 +1,9 @@
-import type {
-  SessionRuntimeIssueV1,
-  SessionRuntimeUsageLimitDetailsV1,
-} from '@happier-dev/protocol';
+import {
+  buildSessionRuntimeIssueV1,
+  type BuildSessionRuntimeIssueV1Input,
+  type SessionRuntimeIssueV1,
+  type SessionRuntimeUsageLimitDetailsV1,
+} from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 type ClaudeLimitCategory = NonNullable<SessionRuntimeUsageLimitDetailsV1['limitCategory']>;
 
@@ -94,6 +96,8 @@ function readStatusEvidence(value: unknown): number | null {
   return readHttpStatus(readFirstField(records, [
     'apiErrorStatus',
     'api_error_status',
+    'errorStatus',
+    'error_status',
     'status',
     'statusCode',
     'status_code',
@@ -167,13 +171,15 @@ function createUsageDetails(params: Readonly<{
   };
 }
 
-function withSanitizedPreview(
-  issue: SessionRuntimeIssueV1,
+function buildClaudeIssue(
+  issue: BuildSessionRuntimeIssueV1Input,
   evidence: unknown,
   fallbackMessage?: string | null,
 ): SessionRuntimeIssueV1 {
-  const sanitizedPreview = readPreview(evidence, fallbackMessage);
-  return sanitizedPreview ? { ...issue, sanitizedPreview } : issue;
+  return buildSessionRuntimeIssueV1({
+    ...issue,
+    sanitizedPreview: readPreview(evidence, fallbackMessage),
+  });
 }
 
 export function mapClaudeProviderFailureToUsageDetails(
@@ -204,37 +210,28 @@ export function buildClaudeRuntimeIssue(params: Readonly<{
 }>): SessionRuntimeIssueV1 {
   const usageLimit = mapClaudeProviderFailureToUsageDetails(params.evidence);
   if (usageLimit?.limitCategory === 'capacity') {
-    return withSanitizedPreview({
-      v: 1,
-      scope: 'primary_session',
-      status: 'failed',
+    return buildClaudeIssue({
       code: 'claude.provider.capacity',
-      source: 'provider_status_error',
+      source: 'agent_status_error',
       occurredAt: params.occurredAt,
-      provider: 'claude',
+      agentId: 'claude',
       usageLimit,
     }, params.evidence, params.fallbackMessage);
   }
   if (usageLimit) {
-    return withSanitizedPreview({
-      v: 1,
-      scope: 'primary_session',
-      status: 'failed',
+    return buildClaudeIssue({
       code: 'claude.usage_limit',
       source: 'usage_limit',
       occurredAt: params.occurredAt,
-      provider: 'claude',
+      agentId: 'claude',
       usageLimit,
     }, params.evidence, params.fallbackMessage);
   }
-  return withSanitizedPreview({
-    v: 1,
-    scope: 'primary_session',
-    status: 'failed',
+  return buildClaudeIssue({
     code: 'claude.provider.failure',
-    source: 'provider_session_error',
+    source: 'agent_session_error',
     occurredAt: params.occurredAt,
-    provider: 'claude',
+    agentId: 'claude',
   }, params.evidence, params.fallbackMessage);
 }
 
@@ -242,18 +239,18 @@ export function buildClaudeProcessExitRuntimeIssue(params: Readonly<{
   occurredAt: number;
   exitCode: number | null;
   signal: string | null;
+  turnWasInFlight: boolean;
 }>): SessionRuntimeIssueV1 {
   const exitCode = params.exitCode === null ? '' : ` code ${params.exitCode}`;
   const signal = params.signal ? ` signal ${params.signal}` : '';
-  const fallbackMessage = `Claude unified terminal process exited while a turn was in flight${exitCode}${signal}`;
-  return withSanitizedPreview({
-    v: 1,
-    scope: 'primary_session',
-    status: 'failed',
+  const fallbackMessage = params.turnWasInFlight
+    ? `Claude unified terminal process exited while a turn was in flight${exitCode}${signal}`
+    : `Claude unified terminal process exited while the session was idle${exitCode}${signal}`;
+  return buildClaudeIssue({
     code: 'claude.process_exited',
-    source: 'provider_process_exit',
+    source: 'agent_process_exit',
     occurredAt: params.occurredAt,
-    provider: 'claude',
+    agentId: 'claude',
   }, {
     message: fallbackMessage,
     exitCode: params.exitCode,

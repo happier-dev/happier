@@ -80,4 +80,30 @@ describe('Claude external-session metadata', () => {
 
         await expect(readClaudeJsonlSessionTitle(filePath)).resolves.toBe(queuedPrompt);
     });
+
+    it('prefers bounded Claude title records from the transcript tail and history file', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-title-history-'));
+        const projectDir = join(root, 'projects', 'proj-one');
+        await mkdir(projectDir, { recursive: true });
+
+        const filePath = join(projectDir, 'session-one.jsonl');
+        await writeFile(
+            filePath,
+            [
+                jsonlLine({ type: 'user', uuid: 'first-user', message: { content: 'old first user title' } }),
+                jsonlLine({ type: 'ai-title', title: 'AI generated title' }),
+            ].join(''),
+            'utf8',
+        );
+        await writeFile(
+            join(root, 'history.jsonl'),
+            [
+                jsonlLine({ type: 'custom-title', sessionId: 'other-session', title: 'Wrong session title' }),
+                jsonlLine({ type: 'custom-title', sessionId: 'session-one', title: 'Renamed Claude session' }),
+            ].join(''),
+            'utf8',
+        );
+
+        await expect(readClaudeJsonlSessionTitle(filePath)).resolves.toBe('Renamed Claude session');
+    });
 });

@@ -80,6 +80,7 @@ describe('Claude outbound transcript dispatch', () => {
     });
     expect(plan.postSendEffects).toContainEqual(expect.objectContaining({
       type: 'usageObservation',
+      externalKey: 'claude-jsonl:tool_agent_1:assistant:assistant-1',
       observation: expect.objectContaining({
         provider: 'claude',
         modelId: 'claude-sonnet',
@@ -98,6 +99,70 @@ describe('Claude outbound transcript dispatch', () => {
         kind: 'tool-result',
       }),
     ]);
+  });
+
+  it('publishes one stable session-final observation for a runtime-forwarded Claude SDK result', () => {
+    const facet = createClaudeOutboundTranscriptDispatchFacet();
+    const body = {
+      type: 'result',
+      subtype: 'success',
+      uuid: 'result-1',
+      session_id: 'claude-session-1',
+      result: 'done',
+      num_turns: 2,
+      usage: {
+        input_tokens: 1_000,
+        output_tokens: 200,
+        cache_creation_input_tokens: 50,
+        cache_read_input_tokens: 250,
+        iterations: [{
+          type: 'message',
+          input_tokens: 300,
+          output_tokens: 20,
+          cache_creation_input_tokens: 30,
+          cache_read_input_tokens: 50,
+        }],
+      },
+      modelUsage: {
+        'claude-sonnet-4-6': { contextWindow: 1_000_000 },
+        'claude-opus-4-7': { contextWindow: 2_000_000 },
+      },
+      total_cost_usd: 0.123,
+      duration_ms: 1,
+      duration_api_ms: 1,
+      is_error: false,
+    };
+
+    const plan = facet.prepareDispatch({
+      body,
+      meta: { source: 'claude-agent-sdk-result-usage', modelId: 'claude-sonnet-4-6' },
+      now: () => 1_752_089_600_000,
+    });
+
+    expect(plan.messageRole).toBe('event');
+    expect(plan.postSendEffects ?? []).toContainEqual({
+      type: 'usageObservation',
+      externalKey: 'claude:claude-session-1:result:result-1',
+      observation: expect.objectContaining({
+        provider: 'claude',
+        source: 'claude-sdk-result',
+        scope: 'session_final',
+        modelId: 'claude-sonnet-4-6',
+        contextUsedTokens: 400,
+        contextWindowTokens: 1_000_000,
+        contextSnapshot: expect.objectContaining({
+          usedTokens: 400,
+          windowTokens: 1_000_000,
+          totalProcessedTokens: 1_500,
+          observedAtMs: 1_752_089_600_000,
+          source: 'provider_turn',
+        }),
+        cost: expect.objectContaining({
+          reportedUsd: 0.123,
+          costSource: 'provider_reported',
+        }),
+      }),
+    });
   });
 
   it('projects summary rows as display-title metadata effects', () => {
@@ -155,10 +220,10 @@ describe('Claude outbound transcript dispatch', () => {
         backendId: 'claude',
         agentId: 'claude',
         updatedAt: 1234,
-        primaryItemId: 'todo:claude:tool_use%3Atoolu_task_create_1',
+        primaryItemId: 'task:claude:tool_use%3Atoolu_task_create_1',
         items: [expect.objectContaining({
-          id: 'todo:claude:tool_use%3Atoolu_task_create_1',
-          kind: 'todo',
+          id: 'task:claude:tool_use%3Atoolu_task_create_1',
+          kind: 'task',
           origin: 'vendor',
           status: 'pending',
           title: 'Patch task projection',
@@ -214,9 +279,9 @@ describe('Claude outbound transcript dispatch', () => {
     }));
 
     expect(resolved.value).toEqual(expect.objectContaining({
-      primaryItemId: 'todo:claude:task_real_2',
+      primaryItemId: 'task:claude:task_real_2',
       items: [expect.objectContaining({
-        id: 'todo:claude:task_real_2',
+        id: 'task:claude:task_real_2',
         title: 'Patch task projection',
         status: 'pending',
         vendorRef: 'task_real_2',
@@ -263,7 +328,7 @@ describe('Claude outbound transcript dispatch', () => {
 
     expect(updated.value).toEqual(expect.objectContaining({
       items: [expect.objectContaining({
-        id: 'todo:claude:17',
+        id: 'task:claude:17',
         title: 'Define sequencing',
         status: 'complete',
       })],
@@ -327,9 +392,66 @@ describe('Claude outbound transcript dispatch', () => {
 
     expect(listed.value.items).toEqual([
       expect.objectContaining({ id: 'goal:codex:existing' }),
-      expect.objectContaining({ id: 'todo:claude:task_b', title: 'Ship parser', status: 'pending' }),
-      expect.objectContaining({ id: 'todo:claude:task_a', title: 'Author tests', status: 'complete' }),
+      expect.objectContaining({ id: 'task:claude:task_b', title: 'Ship parser', status: 'pending' }),
+      expect.objectContaining({ id: 'task:claude:task_a', title: 'Author tests', status: 'complete' }),
     ]);
+    // DW1 migration: the pre-DW1 legacy `todo:claude:old_task` row is owned (legacy prefix) and was
+    // replaced by the TaskList snapshot, so it must NOT linger as a duplicate alongside the new ids.
+    expect(listed.value.items.some((next) => (next as { id: string }).id.startsWith('todo:claude:'))).toBe(false);
+  });
+
+  it('migrates a pre-DW1 todo:claude task row to a task:claude row on the next TaskUpdate (no duplicate)', () => {
+    const facet = createClaudeOutboundTranscriptDispatchFacet();
+    const legacyWorkState = {
+      v: 1,
+      backendId: 'claude',
+      agentId: 'claude',
+      updatedAt: 900,
+      primaryItemId: 'todo:claude:legacy_1',
+      items: [
+        {
+          id: 'todo:claude:legacy_1',
+          kind: 'todo',
+          origin: 'vendor',
+          status: 'pending',
+          title: 'Legacy task',
+          backendId: 'claude',
+          agentId: 'claude',
+          vendorRef: 'legacy_1',
+          priority: 'medium',
+          updatedAt: 900,
+        },
+      ],
+    };
+
+    const updated = readWorkStateEffect(facet.prepareDispatch({
+      body: {
+        type: 'assistant',
+        uuid: 'assistant-task-update-legacy',
+        message: {
+          content: [{
+            type: 'tool_use',
+            id: 'toolu_task_update_legacy',
+            name: 'TaskUpdate',
+            input: { taskId: 'legacy_1', status: 'completed' },
+          }],
+        },
+      } satisfies RawJSONLines,
+      metadata: { sessionWorkStateV1: legacyWorkState },
+      now: () => 1002,
+    }));
+
+    // Exactly one Claude row, now classified as a task under the new prefix; no legacy duplicate.
+    expect(updated.value.items).toEqual([
+      expect.objectContaining({
+        id: 'task:claude:legacy_1',
+        kind: 'task',
+        title: 'Legacy task',
+        status: 'complete',
+        vendorRef: 'legacy_1',
+      }),
+    ]);
+    expect(updated.value.primaryItemId).not.toContain('todo:claude:');
   });
 
   it('does not project Claude compact summary artifacts as user text', () => {

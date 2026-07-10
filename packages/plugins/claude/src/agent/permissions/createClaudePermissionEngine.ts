@@ -31,7 +31,7 @@ function normalizeToolInput(input: unknown): Record<string, unknown> {
 function resolveAllowedToolInput(
     toolName: string,
     normalizedInput: Record<string, unknown>,
-    result: Awaited<ReturnType<PluginContextV1['session']['permissions']['requestDecision']>>,
+    result: Awaited<ReturnType<PluginContextV1['sessions']['current']['permissions']['requestDecision']>>,
 ): Record<string, unknown> {
     const baseInput = readToolInputRecord(result.updatedInput) ?? normalizedInput;
     if (!isAskUserQuestionToolName(toolName)) return baseInput;
@@ -55,7 +55,7 @@ function isExitPlanModeToolName(toolName: string): boolean {
 
 function resolveAllowUpdatedPermissions(
     toolName: string,
-    result: Awaited<ReturnType<PluginContextV1['session']['permissions']['requestDecision']>>,
+    result: Awaited<ReturnType<PluginContextV1['sessions']['current']['permissions']['requestDecision']>>,
 ): readonly Readonly<Record<string, unknown>>[] | undefined {
     if (Array.isArray(result.updatedPermissions) && result.updatedPermissions.length > 0) {
         return result.updatedPermissions;
@@ -74,7 +74,7 @@ export function createClaudePermissionEngine(ctx: PluginContextV1): ClaudePermis
         async canCallTool(toolName, input, options = {}) {
             const normalizedInput = normalizeToolInput(input);
             const requestId = resolveRequestId(toolName, options.requestId, options.toolUseId);
-            const result = await ctx.session.permissions.requestDecision({
+            const result = await ctx.sessions.current.permissions.requestDecision({
                 provider: 'claude',
                 requestId,
                 toolCallId: requestId,

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { HAPPIER_CLAUDE_CONFIG_DIR_ENV } from '@happier-dev/plugin-sdk/experimental/envConstants';
 
 /**
  * Statusline forwarder `statusLine` overlay for the Claude unified terminal launch.
@@ -28,7 +29,7 @@ function readEnvString(env: Readonly<Record<string, string | undefined>>, key: s
 }
 
 function resolveClaudeConfigRoot(env: Readonly<Record<string, string | undefined>>): string {
-    return readEnvString(env, 'HAPPIER_CLAUDE_CONFIG_DIR')
+    return readEnvString(env, HAPPIER_CLAUDE_CONFIG_DIR_ENV)
         ?? readEnvString(env, 'CLAUDE_CONFIG_DIR')
         ?? join(readEnvString(env, 'HOME') ?? homedir(), '.claude');
 }

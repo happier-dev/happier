@@ -1,4 +1,4 @@
-import type { SessionAgentStateWriteRequestV1 } from '@happier-dev/agents';
+import type { SessionAgentStateWriteRequestV1 } from '@happier-dev/plugin-sdk/sessions';
 
 const DEFAULT_MIN_PUBLISH_INTERVAL_MS = 1000;
 
@@ -66,6 +66,7 @@ export function createClaudeUnifiedSteerCapabilityPublisher(opts: Readonly<{
             ...(current.capabilities && typeof current.capabilities === 'object'
               ? current.capabilities as Readonly<Record<string, unknown>>
               : {}),
+            terminalComposerClearSupported: true,
             ...(configApplySupported ? { inFlightConfigApplySupported: true } : {}),
             ...fields,
           },
@@ -90,7 +91,8 @@ export function createClaudeUnifiedSteerCapabilityPublisher(opts: Readonly<{
 
   function write(snapshot: ClaudeUnifiedSteerAvailabilitySnapshot): void {
     const reason = resolveReason(snapshot);
-    const key = `${snapshot.available}:${reason ?? ''}`;
+    const terminalComposerDraftPresent = snapshot.reason === 'user_terminal_draft';
+    const key = `${snapshot.available}:${reason ?? ''}:${terminalComposerDraftPresent}`;
     if (key === lastPublishedKey) return;
     lastPublishedKey = key;
     lastPublishAtMs = nowMs();
@@ -98,6 +100,7 @@ export function createClaudeUnifiedSteerCapabilityPublisher(opts: Readonly<{
       inFlightSteerAvailable: snapshot.available,
       inFlightSteerUnavailableReason: reason,
       inFlightSteerStateAt: lastPublishAtMs,
+      terminalComposerDraftPresent,
     });
   }
 

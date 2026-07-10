@@ -8,8 +8,8 @@ import type {
     ExternalSessionSurfaceV1,
     ExternalSessionTranscriptPageV1,
     SessionStateUpdateV1,
-} from '@happier-dev/agents';
-import type { ExternalSessionsSource } from '@happier-dev/protocol';
+    ExternalSessionsSource,
+} from '@happier-dev/plugin-sdk/sessions';
 
 import { listClaudeExternalSessionCandidates as listClaudeJsonlSessionCandidates } from './candidates.js';
 import { resolveClaudeJsonlSessionFile } from './files.js';
@@ -69,7 +69,7 @@ function failed(code: ExternalSessionFailureCodeV1, message: string, retryable?:
 }
 
 function providerUnavailable(message: string) {
-    return failed('provider_unavailable', message, true);
+    return failed('agent_unavailable', message, true);
 }
 
 function buildProviderSessionIdUpdate(providerSessionId: string): SessionStateUpdateV1<'identity.providerSessionId'> {
@@ -198,6 +198,21 @@ async function acquireClaudeJsonlFileFollowLease(params: Readonly<{
     });
     let tailCursor = initialTail.nextCursor;
     const listeners = new Set<Parameters<NonNullable<ExternalSessionFollowLeaseV1['subscribeToTranscriptUpdates']>>[0]>();
+    async function readTailCursor(): Promise<string | null> {
+        return (await readAfterClaudeJsonlExternalSessionTranscript({
+            source: params.source,
+            env: params.env,
+            providerSessionId: params.providerSessionId,
+            cursor: 'tail',
+            maxBytes: CLAUDE_EXTERNAL_SESSION_FOLLOW_MAX_BYTES,
+            maxItems: 1,
+        })).nextCursor;
+    }
+    async function notifyListeners(update: Parameters<Parameters<NonNullable<ExternalSessionFollowLeaseV1['subscribeToTranscriptUpdates']>>[0]>[0]): Promise<void> {
+        await Promise.all([...listeners].map(async (listener) => {
+            await listener(update);
+        }));
+    }
     const handle = await fileFollow.follow({
         path: resolved.filePath,
         startAt: 'end',
@@ -207,6 +222,7 @@ async function acquireClaudeJsonlFileFollowLease(params: Readonly<{
             if (!tailCursor) {
                 return;
             }
+            const fromCursor = tailCursor;
             const update = await readAfterClaudeJsonlExternalSessionTranscript({
                 source: params.source,
                 env: params.env,
@@ -219,13 +235,22 @@ async function acquireClaudeJsonlFileFollowLease(params: Readonly<{
             if (update.items.length === 0 && !update.truncated) {
                 return;
             }
-            await Promise.all([...listeners].map(async (listener) => {
-                await listener({
-                    items: update.items,
-                    nextCursor: update.nextCursor,
-                    truncated: update.truncated,
-                });
-            }));
+            await notifyListeners({
+                items: update.items,
+                fromCursor,
+                nextCursor: update.nextCursor,
+                truncated: update.truncated,
+            });
+        },
+        onReset: async () => {
+            const fromCursor = tailCursor;
+            tailCursor = await readTailCursor() ?? tailCursor;
+            await notifyListeners({
+                items: [],
+                fromCursor,
+                nextCursor: tailCursor,
+                truncated: true,
+            });
         },
         onError: async (error) => {
             await params.runtime?.diagnostics.issue({
@@ -254,8 +279,12 @@ async function acquireClaudeJsonlFileFollowLease(params: Readonly<{
 export function createClaudeExternalSessionSurface(params: Readonly<{
     env?: NodeJS.ProcessEnv;
 }> = {}): ExternalSessionSurfaceV1 {
-    const env = params.env ?? process.env;
-    const validateSourceForOperation = (source: ExternalSessionsSource) => {
+    const readEnv = () => params.env ?? process.env;
+    const validateSourceForOperation = (
+        source: ExternalSessionsSource,
+        operationEnv: NodeJS.ProcessEnv = readEnv(),
+    ) => {
+        const env = operationEnv;
         const validation = validateClaudeExternalSessionSource({ source, env });
         return validation.ok
             ? { ok: true as const, source: validation.source }
@@ -263,11 +292,13 @@ export function createClaudeExternalSessionSurface(params: Readonly<{
     };
 
     const surface: ExternalSessionSurfaceV1 = {
-        resolveSource: ({ source }) => {
+        resolveSource: ({ source, env: requestEnv }) => {
+            const env = requestEnv ?? readEnv();
             const validation = validateClaudeExternalSessionSource({ source, env });
             return validation.ok ? ok({ source: validation.source }) : failed('source_invalid', validation.error);
         },
         listCandidates: async ({ source, cursor, limit, searchTerm, searchMode }) => {
+            const env = readEnv();
             const validation = validateSourceForOperation(source);
             if (!validation.ok) return validation;
             try {
@@ -284,6 +315,7 @@ export function createClaudeExternalSessionSurface(params: Readonly<{
             }
         },
         getActivity: async ({ source, providerSessionId }) => {
+            const env = readEnv();
             const validation = validateSourceForOperation(source);
             if (!validation.ok) return validation;
             const resolved = await resolveClaudeJsonlSessionFile({
@@ -306,6 +338,7 @@ export function createClaudeExternalSessionSurface(params: Readonly<{
             }
         },
         pageTranscript: async ({ source, providerSessionId, direction, cursor, maxBytes, maxItems }) => {
+            const env = readEnv();
             const validation = validateSourceForOperation(source);
             if (!validation.ok) return validation;
             return await safeTranscriptPage(async () => await pageClaudeJsonlExternalSessionTranscript({
@@ -319,6 +352,7 @@ export function createClaudeExternalSessionSurface(params: Readonly<{
             }));
         },
         readAfterTranscript: async ({ source, providerSessionId, cursor, maxBytes, maxItems }) => {
+            const env = readEnv();
             const validation = validateSourceForOperation(source);
             if (!validation.ok) return validation;
             return await safeTranscriptPage(async () => await readAfterClaudeJsonlExternalSessionTranscript({
@@ -331,6 +365,7 @@ export function createClaudeExternalSessionSurface(params: Readonly<{
             }));
         },
         resolveFollowTranscriptPath: async ({ source, providerSessionId }) => {
+            const env = readEnv();
             const validation = validateSourceForOperation(source);
             if (!validation.ok) return validation;
             const resolved = await resolveClaudeJsonlSessionFile({
@@ -343,6 +378,7 @@ export function createClaudeExternalSessionSurface(params: Readonly<{
                 : failed('follow_not_supported', 'Claude external-session transcript file is unavailable.');
         },
         acquireFollowLease: async ({ source, providerSessionId, runtime }) => {
+            const env = readEnv();
             const validation = validateSourceForOperation(source);
             if (!validation.ok) return validation;
             try {
@@ -360,6 +396,7 @@ export function createClaudeExternalSessionSurface(params: Readonly<{
             }
         },
         resolveLinkIdentity: ({ providerSessionId, source, runtimeDescriptor }) => {
+            const env = readEnv();
             const validation = validateSourceForOperation(source);
             if (!validation.ok) return validation;
             return ok(resolveClaudeExternalSessionIdentity({
@@ -369,6 +406,7 @@ export function createClaudeExternalSessionSurface(params: Readonly<{
             }));
         },
         resolveLinkedIdentity: ({ metadata, providerSessionId, source }) => {
+            const env = readEnv();
             if (source.kind !== 'claudeConfig') {
                 return failed('source_invalid', 'provider/source mismatch');
             }
@@ -386,6 +424,7 @@ export function createClaudeExternalSessionSurface(params: Readonly<{
             });
         },
         resolveTakeoverLaunch: async ({ linkedSessionId, providerSessionId, source, metadata }) => {
+            const env = readEnv();
             const validation = validateSourceForOperation(source);
             if (!validation.ok) return validation;
             const configDir = resolveClaudeConfigDir({ source: validation.source, env });

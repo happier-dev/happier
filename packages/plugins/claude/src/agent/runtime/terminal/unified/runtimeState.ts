@@ -1,4 +1,4 @@
-import type { TerminalHostHandle } from '@happier-dev/agents';
+import type { TerminalHostHandle } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 export type ClaudeUnifiedTerminalRuntimeState = {
   activePromptText: string | null;
@@ -10,7 +10,6 @@ export type ClaudeUnifiedTerminalRuntimeState = {
   providerSessionId: string | null;
   providerAccepted: boolean;
   promptNonce: number;
-  terminalOriginPromptNonce: number;
   terminalOriginTurnInFlight: boolean;
   turnInFlight: boolean;
   turnCompleted: boolean;
@@ -27,7 +26,6 @@ export function createClaudeUnifiedTerminalRuntimeState(): ClaudeUnifiedTerminal
     providerSessionId: null,
     providerAccepted: false,
     promptNonce: 0,
-    terminalOriginPromptNonce: 0,
     terminalOriginTurnInFlight: false,
     turnInFlight: false,
     turnCompleted: false,

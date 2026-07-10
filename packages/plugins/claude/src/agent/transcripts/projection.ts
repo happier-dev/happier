@@ -1,10 +1,15 @@
-import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/plugin-sdk/sessions';
 
 import { INTERNAL_CLAUDE_EVENT_TYPES } from './internalEventTypes.js';
 import { parseRawJsonLinesObject } from './parseRawJsonLines.js';
 import { normalizeClaudeToolUseNamesInRawJsonLines } from './toolUseNames.js';
 import type { RawJSONLines } from './rawJsonLines.js';
-import { isClaudeInternalTranscriptMessage } from './visibility.js';
+import {
+    isClaudeInternalTranscriptMessage,
+    readClaudeVisibleCompactSummaryText,
+    readClaudeVisibleLocalCommandOutputText,
+    readClaudeVisibleSlashCommandText,
+} from './visibility.js';
 
 function parseJsonlLineValue(value: unknown): unknown | null {
     if (!value) return null;
@@ -132,6 +137,63 @@ export function projectClaudeJsonlLineToDirectMessages(params: Readonly<{
     }
 
     const normalized = normalizeClaudeToolUseNamesInRawJsonLines(parsed);
+    const compactSummary = readClaudeVisibleCompactSummaryText(normalized);
+    if (compactSummary) {
+        return [
+            {
+                id: stableId,
+                localId: stableId,
+                createdAtMs,
+                raw: {
+                    role: 'agent',
+                    content: {
+                        type: 'output',
+                        data: {
+                            type: 'claude_compact_summary',
+                            text: compactSummary,
+                        },
+                    },
+                },
+            },
+        ];
+    }
+    const slashCommand = readClaudeVisibleSlashCommandText(normalized);
+    if (slashCommand) {
+        return [
+            {
+                id: stableId,
+                localId: stableId,
+                createdAtMs,
+                raw: {
+                    role: 'user',
+                    content: {
+                        type: 'text',
+                        text: slashCommand,
+                    },
+                },
+            },
+        ];
+    }
+    const localCommandOutput = readClaudeVisibleLocalCommandOutputText(normalized);
+    if (localCommandOutput) {
+        return [
+            {
+                id: stableId,
+                localId: stableId,
+                createdAtMs,
+                raw: {
+                    role: 'agent',
+                    content: {
+                        type: 'output',
+                        data: {
+                            type: 'claude_local_command_output',
+                            text: localCommandOutput,
+                        },
+                    },
+                },
+            },
+        ];
+    }
     if (isClaudeInternalTranscriptMessage(normalized)) return [];
     const normalizedForOutput = ensureClaudeOutputMessageRole(normalized);
 

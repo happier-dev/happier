@@ -1,4 +1,5 @@
-import { AGENT_MODEL_CONFIG, type AgentModelDescriptor } from '@happier-dev/agents';
+import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import { AGENT_MODEL_CONFIG, type AgentModelDescriptor } from '@happier-dev/plugin-sdk/experimental/agents';
 
 export type ClaudePreflightModel = Readonly<{
     id: string;
@@ -7,6 +8,19 @@ export type ClaudePreflightModel = Readonly<{
     contextWindowTokens?: number;
     modelOptions?: AgentModelDescriptor['modelOptions'] | undefined;
 }>;
+
+const CLAUDE_CLI_HELP_COMMAND_ARGS = ['--help'] as const;
+const MIN_PREFLIGHT_MODELS_TIMEOUT_MS = 250;
+const PREFLIGHT_OUTPUT_MAX_BYTES = 256 * 1024;
+
+function buildClaudePreflightEnv(env: NodeJS.ProcessEnv | undefined): Readonly<Record<string, string>> {
+    const output: Record<string, string> = {};
+    for (const [key, value] of Object.entries(env ?? {})) {
+        if (typeof value === 'string') output[key] = value;
+    }
+    output.CI = '1';
+    return output;
+}
 
 export async function probeClaudePreflightModels(params: Readonly<{
     cwd: string;
@@ -29,4 +43,30 @@ export async function probeClaudePreflightModels(params: Readonly<{
             ? { modelOptions: model.modelOptions }
             : { modelOptions: undefined }),
     }));
+}
+
+export async function probeClaudePreflightModelsRaw(params: Readonly<{
+    exec: ExecRuntimeServiceV1;
+    cwd: string;
+    timeoutMs: number;
+    env?: NodeJS.ProcessEnv;
+}>): Promise<ClaudePreflightModel[] | null> {
+    const result = await params.exec.run({
+        kind: 'agent-cli',
+        agentId: 'claude',
+        args: CLAUDE_CLI_HELP_COMMAND_ARGS,
+        cwd: params.cwd,
+        env: buildClaudePreflightEnv(params.env),
+    }, {
+        maxStderrBytes: PREFLIGHT_OUTPUT_MAX_BYTES,
+        maxStdoutBytes: PREFLIGHT_OUTPUT_MAX_BYTES,
+        timeoutMs: Math.max(MIN_PREFLIGHT_MODELS_TIMEOUT_MS, params.timeoutMs),
+    });
+    if (result.exitCode !== 0) return null;
+    const helpText = result.stdout.trim() ? result.stdout : result.stderr;
+    return await probeClaudePreflightModels({
+        cwd: params.cwd,
+        timeoutMs: params.timeoutMs,
+        probeHelpText: async () => helpText,
+    });
 }

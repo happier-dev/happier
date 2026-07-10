@@ -1,53 +1,39 @@
+import {
+  toPluginHookObjectContext,
+  toPluginHookPayloadEnvelope,
+} from '@happier-dev/plugin-sdk';
 import type {
+  PluginApi,
   McpServerSpecV1,
   PluginApiHookRegistrationV1,
-  PluginApiMcpDiscoveryProviderRegistrationV1,
-  PluginDisposable,
   PluginHookHandler,
+  RegisterDaemonAuthBridgeV1,
 } from '@happier-dev/plugin-sdk';
-import type { BundledRegisterBackendEngineV1 } from '@happier-dev/plugin-sdk/internal/runtime/session';
 
-import { detectClaudeMcpServers } from './agent/mcp/detectServers.js';
+import { readClaudeMcpConfigServers } from './agent/mcp/configServers.js';
 import { createClaudeBackendEngine } from './agent/runtime/engine.js';
 import {
   augmentClaudeDaemonSpawnEnv,
   resolveClaudeDaemonSpawnPrerequisites,
 } from './agent/lifecycle/spawnHooks.js';
-
-type ClaudePluginApiV1 = Readonly<{
-  registerBackendEngine: (registration: BundledRegisterBackendEngineV1) => PluginDisposable | unknown;
-  registerMcpDiscoveryProvider: (
-    registration: PluginApiMcpDiscoveryProviderRegistrationV1,
-  ) => PluginDisposable | unknown;
-  registerHook?: (
-    registration: PluginApiHookRegistrationV1,
-  ) => PluginDisposable | unknown;
-}>;
+import { PLUGIN_MANIFEST } from './manifest.js';
 
 type ClaudeSpawnPrerequisiteHookEvent = Parameters<typeof resolveClaudeDaemonSpawnPrerequisites>[0];
-type ClaudeSpawnPrerequisiteHookContext = Parameters<typeof resolveClaudeDaemonSpawnPrerequisites>[1];
+type ClaudeSpawnPrerequisiteHookContext = NonNullable<Parameters<typeof resolveClaudeDaemonSpawnPrerequisites>[1]>;
 type ClaudeSpawnEnvHookEvent = Parameters<typeof augmentClaudeDaemonSpawnEnv>[0];
-
-function toHookEvent(value: unknown): ClaudeSpawnPrerequisiteHookEvent {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? { payload: (value as Readonly<{ payload?: unknown }>).payload }
-    : {};
-}
-
-function toSpawnPrerequisiteHookContext(value: unknown): ClaudeSpawnPrerequisiteHookContext {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as ClaudeSpawnPrerequisiteHookContext
-    : undefined;
-}
 
 const resolveClaudeDaemonSpawnPrerequisitesHook: PluginHookHandler = (event, context) =>
   resolveClaudeDaemonSpawnPrerequisites(
-    toHookEvent(event),
-    toSpawnPrerequisiteHookContext(context),
+    toPluginHookPayloadEnvelope<ClaudeSpawnPrerequisiteHookEvent>(event),
+    toPluginHookObjectContext<ClaudeSpawnPrerequisiteHookContext>(context),
   );
 
 const augmentClaudeDaemonSpawnEnvHook: PluginHookHandler = (event) =>
-  augmentClaudeDaemonSpawnEnv(toHookEvent(event) satisfies ClaudeSpawnEnvHookEvent);
+  augmentClaudeDaemonSpawnEnv(toPluginHookPayloadEnvelope<ClaudeSpawnEnvHookEvent>(event));
+
+const refreshClaudeDaemonAuthBridge: RegisterDaemonAuthBridgeV1['refresh'] = async () => {
+  throw new Error('claude-subscription daemon auth bridge is unavailable until the daemon binds registered bridges');
+};
 
 function toRedactedEnvKeys(envKeys: readonly string[]): Readonly<Record<string, string>> | undefined {
   if (envKeys.length === 0) return undefined;
@@ -55,7 +41,7 @@ function toRedactedEnvKeys(envKeys: readonly string[]): Readonly<Record<string, 
 }
 
 function toClaudeMcpServerSpec(
-  server: Awaited<ReturnType<typeof detectClaudeMcpServers>>['servers'][number],
+  server: Awaited<ReturnType<typeof readClaudeMcpConfigServers>>['servers'][number],
 ): McpServerSpecV1 | null {
   if (server.transport === 'stdio' && server.stdio) {
     return {
@@ -85,34 +71,47 @@ function toClaudeMcpServerSpec(
   return null;
 }
 
-export function activate(api: ClaudePluginApiV1): void {
-  api.registerBackendEngine({
-    backendId: 'claude',
+function readClaudeConfigDiscoveryProvider(): typeof PLUGIN_MANIFEST.contributes.mcp.discoveryProviders[number] {
+  const provider = PLUGIN_MANIFEST.contributes.mcp.discoveryProviders.find((entry) => entry.id === 'claude.config');
+  if (!provider) {
+    throw new Error('Claude plugin manifest must declare claude.config MCP discovery provider');
+  }
+  return provider;
+}
+
+export function activate(api: PluginApi): void {
+  api.registerAgentRuntime({
+    agentId: 'claude',
     create: async (ctx) => {
-      ctx.logger.info('[plugins/claude] Creating backend engine');
+      ctx.logger.debug('[plugins/claude] Creating backend engine');
       return createClaudeBackendEngine(ctx);
     },
   });
-  api.registerHook?.({
-    hookId: 'backend.resolveRuntimePrerequisites',
+  api.registerDaemonAuthBridge({
+    serviceId: 'claude-subscription',
+    refresh: refreshClaudeDaemonAuthBridge,
+  });
+  api.registerHook({
+    hookId: 'agent.resolvePrerequisites',
     category: 'decision',
-    scope: 'backend',
-    filters: { backendId: 'claude' },
+    scope: 'agent',
+    filters: { agentId: 'claude' },
     executionKind: 'decide',
     handler: resolveClaudeDaemonSpawnPrerequisitesHook,
   });
-  api.registerHook?.({
-    hookId: 'spawn.augmentEnv',
+  api.registerHook({
+    hookId: 'agent.spawnEnv.augment',
     category: 'augmentation',
     scope: 'daemon',
-    filters: { backendId: 'claude' },
+    filters: { agentId: 'claude' },
     executionKind: 'augment',
     handler: augmentClaudeDaemonSpawnEnvHook,
   });
+  const configDiscoveryProvider = readClaudeConfigDiscoveryProvider();
   api.registerMcpDiscoveryProvider({
-    id: 'claude.config',
+    id: configDiscoveryProvider.id,
     discover: async (input) => {
-      const detected = await detectClaudeMcpServers({
+      const detected = await readClaudeMcpConfigServers({
         directory: input?.directory ?? null,
       });
       return {

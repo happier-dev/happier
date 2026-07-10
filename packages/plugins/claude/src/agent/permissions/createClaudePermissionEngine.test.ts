@@ -3,19 +3,25 @@ import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
 
 import { createClaudePermissionEngine } from './createClaudePermissionEngine.js';
 
+function createContextWithRequestDecision(requestDecision: ReturnType<typeof vi.fn>): PluginContextV1 {
+    return {
+        sessions: {
+            current: {
+                permissions: {
+                    requestDecision,
+                    getMode: () => 'default',
+                },
+            },
+        },
+    } as unknown as PluginContextV1;
+}
+
 function createContextFixture(decision: 'approved' | 'denied' | 'abort') {
     const requestDecision = vi.fn(async () => ({
         decision,
         rationale: decision === 'denied' ? 'Denied by policy' : undefined,
     }));
-    const ctx = {
-        session: {
-            permissions: {
-                requestDecision,
-                getMode: () => 'default',
-            },
-        },
-    } as unknown as PluginContextV1;
+    const ctx = createContextWithRequestDecision(requestDecision);
     return { ctx, requestDecision };
 }
 
@@ -49,14 +55,7 @@ describe('createClaudePermissionEngine', () => {
             decision: 'approved' as const,
             answers: { 'Continue with cleanup?': 'Keep the files' },
         }));
-        const ctx = {
-            session: {
-                permissions: {
-                    requestDecision,
-                    getMode: () => 'default',
-                },
-            },
-        } as unknown as PluginContextV1;
+        const ctx = createContextWithRequestDecision(requestDecision);
         const engine = createClaudePermissionEngine(ctx);
 
         const result = await engine.canCallTool('AskUserQuestion', {
@@ -79,14 +78,7 @@ describe('createClaudePermissionEngine', () => {
             decision: 'approved' as const,
             answers: { 'Remove scratch files?': 'Keep them' },
         }));
-        const ctx = {
-            session: {
-                permissions: {
-                    requestDecision,
-                    getMode: () => 'default',
-                },
-            },
-        } as unknown as PluginContextV1;
+        const ctx = createContextWithRequestDecision(requestDecision);
         const engine = createClaudePermissionEngine(ctx);
 
         const result = await engine.canCallTool('ask_user_question', {
@@ -109,14 +101,7 @@ describe('createClaudePermissionEngine', () => {
             decision: 'approved' as const,
             updatedInput: { command: 'echo safe' },
         }));
-        const ctx = {
-            session: {
-                permissions: {
-                    requestDecision,
-                    getMode: () => 'default',
-                },
-            },
-        } as unknown as PluginContextV1;
+        const ctx = createContextWithRequestDecision(requestDecision);
         const engine = createClaudePermissionEngine(ctx);
 
         const result = await engine.canCallTool('Bash', { command: 'echo unsafe' }, {
@@ -147,11 +132,7 @@ describe('createClaudePermissionEngine', () => {
             decision: 'approved' as const,
             updatedPermissions: [{ type: 'addRules', rules: [{ toolName: 'Bash' }] }],
         }));
-        const ctx = {
-            session: {
-                permissions: { requestDecision, getMode: () => 'default' },
-            },
-        } as unknown as PluginContextV1;
+        const ctx = createContextWithRequestDecision(requestDecision);
         const engine = createClaudePermissionEngine(ctx);
 
         const result = await engine.canCallTool('Bash', { command: 'ls' }, { toolUseId: 'toolu_rule_1' });
@@ -183,11 +164,7 @@ describe('createClaudePermissionEngine', () => {
             decision: 'approved' as const,
             updatedPermissions: [{ type: 'setMode', mode: 'acceptEdits' }],
         }));
-        const ctx = {
-            session: {
-                permissions: { requestDecision, getMode: () => 'default' },
-            },
-        } as unknown as PluginContextV1;
+        const ctx = createContextWithRequestDecision(requestDecision);
         const engine = createClaudePermissionEngine(ctx);
 
         const result = await engine.canCallTool('exit_plan_mode', { plan: 'x' }, {

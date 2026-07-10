@@ -26,15 +26,58 @@ describe('createClaudeUnifiedPromptEchoSuppressor', () => {
     expect(suppressor.consumeAcceptedPromptEcho({ text: 'repeat text', observedAtMs: 6_001 })).toBe(false);
   });
 
-  it('suppresses duplicate transcript evidence for a just-materialized terminal-origin hook prompt', () => {
+  it('suppresses duplicate transcript evidence for a just-materialized terminal-origin hook prompt only by provider row identity', () => {
     const suppressor = createClaudeUnifiedPromptEchoSuppressor({
       terminalPromptDuplicateWindowMs: 5_000,
       nowMs: () => 2_000,
     });
 
-    suppressor.recordMaterializedTerminalPrompt({ text: 'typed directly', materializedAtMs: 2_000 });
+    suppressor.recordMaterializedTerminalPrompt({
+      text: 'typed directly',
+      materializedAtMs: 2_000,
+      agentTurnId: 'terminal-row-1',
+    });
 
-    expect(suppressor.consumeMaterializedTerminalPromptDuplicate({ text: 'typed directly', observedAtMs: 2_100 })).toBe(true);
-    expect(suppressor.consumeMaterializedTerminalPromptDuplicate({ text: 'typed directly', observedAtMs: 2_200 })).toBe(false);
+    expect(suppressor.consumeMaterializedTerminalPromptDuplicate({
+      text: 'typed directly',
+      observedAtMs: 2_100,
+      agentTurnId: 'terminal-row-2',
+    })).toBe(false);
+    expect(suppressor.consumeMaterializedTerminalPromptDuplicate({
+      text: 'typed directly',
+      observedAtMs: 2_200,
+      agentTurnId: 'terminal-row-1',
+    })).toBe(true);
+  });
+
+  it('uses the same prompt identity normalization for accepted multiline attachment scaffolds', () => {
+    const suppressor = createClaudeUnifiedPromptEchoSuppressor({
+      acceptedPromptEchoWindowMs: 5_000,
+      nowMs: () => 1_000,
+    });
+
+    suppressor.recordAcceptedPrompt({
+      text: [
+        'please review the screenshots',
+        'and continue',
+        '',
+        '[attachments]',
+        '- screenshot.png (screenshot.png, image/png, 262290 bytes)',
+        '[/attachments]',
+      ].join('\r\n'),
+      acceptedAtMs: 1_000,
+    });
+
+    expect(suppressor.consumeAcceptedPromptEcho({
+      text: [
+        'please review the screenshots   ',
+        'and continue',
+        '',
+        '[attachments]',
+        '- screenshot.png (screenshot.png, image/png, 262290 bytes)',
+        '[/attachments]',
+      ].join('\n'),
+      observedAtMs: 2_000,
+    })).toBe(true);
   });
 });

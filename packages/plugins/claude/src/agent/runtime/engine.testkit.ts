@@ -7,20 +7,25 @@ import { expect, vi } from 'vitest';
 import type {
   TerminalHostHandle,
   TerminalInputInjectionResult,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk/experimental/runtime/session';
 import type {
   ExecClientHandleV1,
   JsonStreamClientV1,
   PluginEventListenerV1,
   PluginContextV1,
+  RuntimeCancelResultV1,
+  RuntimeConfigUpdateOutcomeV1,
+  RuntimeDisposeReasonV1,
+  RuntimeEventV1,
+  RuntimePermissionResponseOutcomeV1,
+  RuntimeSendResultV1,
+  SessionRuntimeConfigUpdateV1,
+  SessionRuntimeV1,
   TerminalHostRuntimeServiceV1,
   TranscriptFileFollowHandleV1,
   TranscriptFileFollowInputV1,
   TranscriptsRuntimeServiceV1,
 } from '@happier-dev/plugin-sdk';
-import type {
-  InternalRuntimeTurnOperationsEnvelopeV1,
-} from '@happier-dev/plugin-sdk/internal/runtime/session';
 
 const DEFAULT_TEST_FILE_FOLLOW_POLL_INTERVAL_MS = 25;
 
@@ -155,8 +160,14 @@ export function createSessionHooksFixture(): Readonly<{
 export function createSdkExecFixture(): Readonly<{
   spawnClient: ReturnType<typeof vi.fn>;
   written: unknown[];
-  service: PluginContextV1['exec'];
+  service: PluginContextV1['agentRuntime']['exec'];
   emit(record: unknown): Promise<void>;
+  exitWith(result: Readonly<{
+    exitCode: number | null;
+    signal: string | null;
+    stdout?: string;
+    stderr?: string;
+  }>): Promise<void>;
   resolveExit(): Promise<void>;
 }> {
   const listeners = new Set<(record: unknown) => void | Promise<void>>();
@@ -216,9 +227,18 @@ export function createSdkExecFixture(): Readonly<{
     service: {
       // Boundary fixture: Vitest mock has one implementation while the SDK exposes overloads.
       spawnClient,
-    } as unknown as PluginContextV1['exec'],
+    } as unknown as PluginContextV1['agentRuntime']['exec'],
     async emit(record) {
       await Promise.all([...listeners].map((listener) => listener(record)));
+    },
+    async exitWith(result) {
+      resolveExitPromise?.({
+        exitCode: result.exitCode,
+        signal: result.signal,
+        stdout: result.stdout ?? '',
+        stderr: result.stderr ?? '',
+      });
+      await exit;
     },
     async resolveExit() {
       resolveExitPromise?.({
@@ -412,13 +432,18 @@ export function createPluginContextFixture(
     accountUsage?: unknown;
     configValues?: Readonly<Record<string, unknown>>;
     enabledFeatures?: readonly string[];
-    exec?: PluginContextV1['exec'];
+    exec?: PluginContextV1['agentRuntime']['exec'];
     settingsValues?: Readonly<Record<string, unknown>>;
     sessionHooks?: unknown;
     sessionPermissions?: unknown;
     sessionWriteAgentState?: unknown;
+    sessionWriteStateField?: unknown;
     sessionWriteMetadata?: unknown;
+    sessionWriteSystemRecord?: unknown;
+    sessionReadSystemRecord?: unknown;
     sessionSend?: unknown;
+    sessionAuth?: unknown;
+    sessionHasProviderAcceptedUserMessageDelivery?: unknown;
     transcripts?: unknown;
     transcriptFileFollowAllowedPaths?: readonly string[];
     transcriptFileFollowAllowedPathRoots?: readonly string[];
@@ -426,7 +451,7 @@ export function createPluginContextFixture(
 ): PluginContextV1 {
   const configValues = extras?.configValues ?? {};
   const settingsValues = extras?.settingsValues ?? {};
-  const enabledFeatures = new Set(extras?.enabledFeatures ?? ['providers.claude.unifiedTerminal']);
+  const enabledFeatures = new Set(extras?.enabledFeatures ?? ['agents.claude.unifiedTerminal']);
   const sessionHooks = extras?.sessionHooks ?? createSessionHooksFixture().service;
   const sessionPermissions = extras?.sessionPermissions ?? {
     requestDecision: vi.fn(async () => ({ decision: 'approved' })),
@@ -436,6 +461,19 @@ export function createPluginContextFixture(
     allowedPaths: extras?.transcriptFileFollowAllowedPaths,
     allowedPathRoots: extras?.transcriptFileFollowAllowedPathRoots,
   });
+  const currentSession = {
+    permissions: sessionPermissions,
+    ...(extras?.sessionHasProviderAcceptedUserMessageDelivery
+      ? { hasProviderAcceptedUserMessageDelivery: extras.sessionHasProviderAcceptedUserMessageDelivery }
+      : {}),
+    ...(extras?.sessionWriteAgentState ? { writeAgentState: extras.sessionWriteAgentState } : {}),
+    writeStateField: extras?.sessionWriteStateField ?? vi.fn(async () => undefined),
+    ...(extras?.sessionWriteMetadata ? { writeMetadata: extras.sessionWriteMetadata } : {}),
+    ...(extras?.sessionWriteSystemRecord ? { writeSystemRecord: extras.sessionWriteSystemRecord } : {}),
+    ...(extras?.sessionReadSystemRecord ? { readSystemRecord: extras.sessionReadSystemRecord } : {}),
+    ...(extras?.sessionSend ? { send: extras.sessionSend } : {}),
+    ...(extras?.sessionAuth ? { auth: extras.sessionAuth } : {}),
+  };
   // Boundary fixture: these tests exercise the Claude plugin contract and only need SDK services consumed by this runtime.
   return {
     logger: {
@@ -445,7 +483,6 @@ export function createPluginContextFixture(
       debug: vi.fn(),
     },
     config: { values: configValues },
-    exec: extras?.exec ?? createSdkExecFixture().service,
     features: {
       isEnabled: vi.fn((featureId: string) => enabledFeatures.has(featureId)),
     },
@@ -453,36 +490,157 @@ export function createPluginContextFixture(
       get: vi.fn(async (key: string) => settingsValues[key]),
     },
     storage: createPluginStorageFixture(),
-    terminalHost,
     events,
-    ...(extras?.accountUsage ? { accountUsage: extras.accountUsage } : {}),
-    sessionHooks,
-    transcripts,
-    session: {
-      permissions: sessionPermissions,
-      ...(extras?.sessionWriteAgentState ? { writeAgentState: extras.sessionWriteAgentState } : {}),
-      ...(extras?.sessionWriteMetadata ? { writeMetadata: extras.sessionWriteMetadata } : {}),
-      ...(extras?.sessionSend ? { send: extras.sessionSend } : {}),
+    agentRuntime: {
+      exec: extras?.exec ?? createSdkExecFixture().service,
+      terminalHost,
+      sessionHooks,
+      transcripts,
+      accountUsage: extras?.accountUsage ?? {
+        resolveSourceContext: vi.fn(async () => null),
+        recordSnapshot: vi.fn(async () => ({ status: 'recorded', recordId: 'claude-test-usage' })),
+        adoptProvisionalRecord: vi.fn(async () => ({ status: 'adopted', recordId: 'claude-test-usage' })),
+      },
+    },
+    session: currentSession,
+    sessions: {
+      current: currentSession,
     },
   } as unknown as PluginContextV1;
 }
 
-export function expectRuntimeEnvelope(value: unknown): InternalRuntimeTurnOperationsEnvelopeV1 {
+type ClaudeTestRuntimeOperations = Readonly<{
+  beginTurnLifecycle(): void;
+  startOrLoadSession(opts?: Readonly<Record<string, unknown>>): Promise<string | null | Readonly<Record<string, unknown>>>;
+  sendTurnPrompt(prompt: string, meta?: Readonly<{
+    localId?: string | null;
+    localIds?: readonly string[];
+    providerClaimedPendingLocalIds?: readonly string[];
+    userMessageSeq?: number | null;
+    userMessageSeqs?: readonly number[];
+  }>): Promise<void>;
+  steerInFlightTurn(message: string, meta?: Readonly<{
+    localId?: string | null;
+    localIds?: readonly string[];
+    providerClaimedPendingLocalIds?: readonly string[];
+    userMessageSeq?: number | null;
+    userMessageSeqs?: readonly number[];
+  }>): Promise<void>;
+  waitForTurnCompletion(opts?: Readonly<{ timeoutMs?: number | null }>): Promise<void>;
+  subscribeRuntimeEvents(handler: (event: RuntimeEventV1) => void): () => void;
+  respondToPermission(requestId: string, approved: boolean): Promise<RuntimePermissionResponseOutcomeV1>;
+  cancelTurn(): Promise<void>;
+  readSessionIdentity(): Readonly<{ sessionId: string | null }>;
+  updateSessionRuntimeConfig(
+    update: SessionRuntimeConfigUpdateV1 & Readonly<Record<string, unknown>>,
+  ): Promise<RuntimeConfigUpdateOutcomeV1 | void>;
+  resetOrDisposeRuntime(reason?: RuntimeDisposeReasonV1 | Readonly<{ reason?: RuntimeDisposeReasonV1 }>): Promise<void>;
+}>;
+
+type ClaudeTestRuntimeNativeExtras = Partial<ClaudeTestRuntimeOperations>;
+
+type ClaudeTestRuntimeEnvelope = Readonly<{
+  operations: ClaudeTestRuntimeOperations;
+  nativeRuntime: SessionRuntimeV1 & ClaudeTestRuntimeNativeExtras;
+}>;
+
+function readRuntimeNativeExtras(runtime: SessionRuntimeV1): ClaudeTestRuntimeNativeExtras {
+  return runtime as SessionRuntimeV1 & ClaudeTestRuntimeNativeExtras;
+}
+
+function createRuntimeInput(prompt: string): Readonly<{ v: 1; text: string }> {
+  return { v: 1, text: prompt };
+}
+
+function assertAccepted(result: RuntimeSendResultV1): void {
+  if (result.status === 'accepted') return;
+  throw new Error(result.diagnostic ?? `runtime send was not accepted: ${result.status}`);
+}
+
+function expectSessionRuntime(value: unknown): SessionRuntimeV1 {
   expect(value).toMatchObject({
-    operations: {
-      beginTurnLifecycle: expect.any(Function),
-      startOrLoadSession: expect.any(Function),
-      sendTurnPrompt: expect.any(Function),
-      steerInFlightTurn: expect.any(Function),
-      waitForTurnCompletion: expect.any(Function),
-      subscribeRuntimeEvents: expect.any(Function),
-      respondToPermission: expect.any(Function),
-      cancelTurn: expect.any(Function),
-      readSessionIdentity: expect.any(Function),
-      updateSessionRuntimeConfig: expect.any(Function),
-      resetOrDisposeRuntime: expect.any(Function),
+    identity: {
+      read: expect.any(Function),
     },
-    nativeRuntime: expect.any(Object),
+    events: {
+      subscribe: expect.any(Function),
+    },
+    send: expect.any(Function),
+    dispose: expect.any(Function),
   });
-  return value as InternalRuntimeTurnOperationsEnvelopeV1;
+  return value as SessionRuntimeV1;
+}
+
+export function expectRuntimeEnvelope(value: unknown): ClaudeTestRuntimeEnvelope {
+  const runtime = expectSessionRuntime(value);
+  const extras = readRuntimeNativeExtras(runtime);
+  const operations: ClaudeTestRuntimeOperations = {
+    beginTurnLifecycle: () => {
+      extras.beginTurnLifecycle?.();
+    },
+    startOrLoadSession: async (opts) => {
+      if (extras.startOrLoadSession) return await extras.startOrLoadSession(opts);
+      return { sessionId: runtime.identity.read().providerSessionId };
+    },
+    sendTurnPrompt: async (prompt, meta) => {
+      if (extras.sendTurnPrompt) {
+        await extras.sendTurnPrompt(prompt, meta);
+        return;
+      }
+      const result = await runtime.send(createRuntimeInput(prompt));
+      assertAccepted(result);
+    },
+    steerInFlightTurn: async (message, meta) => {
+      if (extras.steerInFlightTurn) {
+        await extras.steerInFlightTurn(message, meta);
+        return;
+      }
+      const result = await runtime.send(createRuntimeInput(message), {
+        deliverAs: 'steer',
+        ...(typeof meta?.userMessageSeq === 'number' && Number.isFinite(meta.userMessageSeq)
+          ? { userMessageSeq: meta.userMessageSeq }
+          : {}),
+      });
+      assertAccepted(result);
+    },
+    waitForTurnCompletion: async (opts) => {
+      await extras.waitForTurnCompletion?.(opts);
+    },
+    subscribeRuntimeEvents: (handler) => runtime.events.subscribe(handler),
+    respondToPermission: async (requestId, approved) => {
+      if (extras.respondToPermission) return await extras.respondToPermission(requestId, approved);
+      const permissions = runtime.permissions;
+      if (permissions?.capability !== 'responds') return { delivered: false, reason: 'unknown_request' };
+      return await permissions.respond({ requestId, approved });
+    },
+    cancelTurn: async () => {
+      if (extras.cancelTurn) {
+        await extras.cancelTurn();
+        return;
+      }
+      const result: RuntimeCancelResultV1 | undefined = await runtime.cancel?.({ reason: 'user' });
+      if (result?.status === 'unsupported' || result?.status === 'unavailable') {
+        throw new Error(result.diagnostic ?? `runtime cancel failed: ${result.status}`);
+      }
+    },
+    readSessionIdentity: () => ({
+      sessionId: runtime.identity.read().providerSessionId,
+    }),
+    updateSessionRuntimeConfig: async (update) => {
+      if (extras.updateSessionRuntimeConfig) return await extras.updateSessionRuntimeConfig(update);
+      return await runtime.updateConfig?.(update);
+    },
+    resetOrDisposeRuntime: async (reason) => {
+      if (extras.resetOrDisposeRuntime) {
+        await extras.resetOrDisposeRuntime(reason);
+        return;
+      }
+      const disposeReason = typeof reason === 'string' ? reason : reason?.reason;
+      await runtime.dispose(disposeReason);
+    },
+  };
+  return {
+    operations,
+    nativeRuntime: runtime,
+  };
 }

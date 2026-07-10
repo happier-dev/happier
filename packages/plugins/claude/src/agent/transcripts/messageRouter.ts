@@ -34,6 +34,8 @@ function messageKey(message: RawJSONLines): string {
         const ts = typeof progressRecord.timestamp === 'string' ? progressRecord.timestamp : '';
         if (ts) return `progress:timestamp:${ts}`;
         return `progress:${JSON.stringify(message)}`;
+    } else if (message.type === 'attachment') {
+        return `attachment:${message.uuid}`;
     }
     throw Error('Unsupported Claude message type');
 }
@@ -139,6 +141,7 @@ export function createMessageRouter(params: Readonly<{
         const key = messageKey(message);
         if (processedMessageKeys.has(key)) return;
         processedMessageKeys.add(key);
+        if (isClaudeInternalTranscriptMessage(message)) return;
         params.logEvent(eventName, message);
         params.onMessage(message);
     }

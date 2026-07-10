@@ -16,13 +16,114 @@ describe('createClaudeUnifiedOwnInjectedTextLog', () => {
     expect(log.matches(null)).toBe(false);
   });
 
-  it('matches any full line of a multiline injection (the composer shows the bottom line)', () => {
-    const log = createClaudeUnifiedOwnInjectedTextLog();
-    log.record('first instruction line\nsecond instruction line');
+  it('matches a recent long prefix residue from a truncated own injection but not stale or short prefixes', () => {
+    let nowMs = 10_000;
+    const log = createClaudeUnifiedOwnInjectedTextLog(undefined, {
+      nowMs: () => nowMs,
+      prefixResidueWindowMs: 5_000,
+    });
+    const longPrompt = `please continue with the full implementation ${'x'.repeat(320)}`;
+    log.record(longPrompt);
 
-    expect(log.matches('second instruction line')).toBe(true);
-    expect(log.matches('first instruction line')).toBe(true);
+    expect(log.matches(longPrompt.slice(0, 280))).toBe(true);
+    expect(log.matches(longPrompt.slice(0, 80))).toBe(false);
+
+    nowMs += 5_001;
+    expect(log.matches(longPrompt.slice(0, 280))).toBe(false);
+  });
+
+  it('matches a short prefix only after a risky terminal write marked it as possible own residue', () => {
+    let nowMs = 10_000;
+    const log = createClaudeUnifiedOwnInjectedTextLog(undefined, {
+      nowMs: () => nowMs,
+      prefixResidueWindowMs: 5_000,
+    });
+    const longPrompt = `please produce the full report ${'x'.repeat(320)}`;
+    const shortResidue = longPrompt.slice(0, 34);
+    log.record(longPrompt);
+
+    expect(log.matches(shortResidue)).toBe(false);
+
+    log.recordPossiblePartialResidue(longPrompt);
+
+    expect(log.matches(shortResidue)).toBe(true);
+    expect(log.matches('please produce a different draft')).toBe(false);
+
+    nowMs += 5_001;
+    expect(log.matches(shortResidue)).toBe(false);
+  });
+
+  it('keeps very short prefix clearing scoped to provider-claimed pending residue', () => {
+    let nowMs = 10_000;
+    const log = createClaudeUnifiedOwnInjectedTextLog(undefined, {
+      nowMs: () => nowMs,
+      prefixResidueWindowMs: 5_000,
+    });
+    const longPrompt = `continue the exact pending message ${'x'.repeat(320)}`;
+    const shortProviderResidue = longPrompt.slice(0, 19);
+    log.record(longPrompt);
+
+    log.recordPossiblePartialResidue(longPrompt);
+    expect(log.matches(shortProviderResidue)).toBe(false);
+
+    log.recordPossiblePartialResidue(longPrompt, { minPrefixChars: 16 });
+    expect(log.matches(shortProviderResidue)).toBe(true);
+    expect(log.matches('continue a different')).toBe(false);
+
+    nowMs += 5_001;
+    expect(log.matches(shortProviderResidue)).toBe(false);
+  });
+
+  it('does not treat one line of a multiline injection as clearable own residue', () => {
+    const log = createClaudeUnifiedOwnInjectedTextLog();
+    const prompt = 'first instruction line\nsecond instruction line';
+    log.record(prompt);
+
+    expect(log.matches(prompt)).toBe(true);
+    expect(log.matches('second instruction line')).toBe(false);
+    expect(log.matches('first instruction line')).toBe(false);
     expect(log.matches('instruction line')).toBe(false);
+  });
+
+  it('does not match a genuine edited draft with a one-letter suffix after a recorded prompt', () => {
+    const log = createClaudeUnifiedOwnInjectedTextLog();
+    const prompt = 'please continue with the refactor';
+    log.record(prompt);
+
+    expect(log.matches(`${prompt} d`)).toBe(false);
+    expect(log.matches(`${prompt}\nd`)).toBe(false);
+  });
+
+  it('matches a recent Claude collapsed paste marker for a recorded multiline injection', () => {
+    let nowMs = 10_000;
+    const log = createClaudeUnifiedOwnInjectedTextLog(undefined, {
+      nowMs: () => nowMs,
+      prefixResidueWindowMs: 5_000,
+    });
+    const prompt = Array.from({ length: 41 }, (_, index) => `line ${index}`).join('\n');
+    log.record(prompt);
+
+    expect(log.matches('[Pasted text #1 +40 lines]')).toBe(true);
+    expect(log.matches('[Pasted text +40 lines]')).toBe(true);
+    expect(log.matches('[Pasted text #1 +39 lines]')).toBe(true);
+    expect(log.matches('[Pasted text #1 +43 lines]')).toBe(true);
+    expect(log.matches('[Pasted text #1 +44 lines]')).toBe(false);
+
+    nowMs += 5_001;
+    expect(log.matches('[Pasted text #1 +40 lines]')).toBe(false);
+  });
+
+  it('keeps large collapsed paste markers matchable through the scaled provider-acceptance wait', () => {
+    let nowMs = 10_000;
+    const log = createClaudeUnifiedOwnInjectedTextLog(undefined, { nowMs: () => nowMs });
+    const prompt = Array.from({ length: 3_663 }, (_, index) => `line ${index}`).join('\n');
+    log.record(prompt);
+
+    nowMs += 181_000;
+    expect(log.matches('[Pasted text #1 +3662 lines]')).toBe(true);
+
+    nowMs += 10 * 60_000;
+    expect(log.matches('[Pasted text #1 +3662 lines]')).toBe(false);
   });
 
   it('matches a soft-wrapped rendering of a recorded text (whitespace-collapse; ported S-2)', () => {

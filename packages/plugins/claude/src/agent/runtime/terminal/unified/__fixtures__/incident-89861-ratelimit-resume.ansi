@@ -1,0 +1,46 @@
+[m  a [39m[49m[29m[28m[27m[25m[25m[1m[24m[22m[1m[23mreal M4 slip[m en route (whole-[38;2;177;185;249m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mdeps[m object in
+[m  7 dep arrays → entry-restore layout effect
+[m  firing every render) — fixed with an
+[m  identity-stability regression test, and the
+[m  smoke recipe corrected for future gates.
+
+[m  Phase-2 unblocked — launching [39m[49m[29m[28m[27m[25m[25m[1m[24m[22m[1m[23mM5
+[m  (bottom-follow host, the biggest remaining
+[m  cluster):
+
+[38;2;255;107;128m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23m⏺[m [39m[49m[29m[28m[27m[25m[25m[1m[24m[22m[1m[23mBash[m(wc -l apps/ui/sources/components/sessions
+[m      /transcript/ChatList.tsx; TS=$(date
+[m      +%Y-%m-%d-%H%M%S) && tar -czf ".project/ba
+[m      ckups/${TS}-pre-m5-transcript.tgz" -C
+[m      app…)
+[38;2;153;153;153m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23m  ⎿  [38;2;255;107;128m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mError: claude-opus-4-8[1m] is temporarily
+[m     [38;2;255;107;128m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23munavailable, so auto mode cannot determine
+[m     [38;2;255;107;128m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mthe safety of Bash right now. Wait briefly
+[m     [38;2;255;107;128m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mand then try this action again. If it keeps
+[m     [38;2;255;107;128m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mfailing, continue with other tasks that
+[m     [38;2;255;107;128m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mdon't require this action and come back to
+[m     [38;2;255;107;128m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mit later. Note: reading files, searching
+[m     [38;2;255;107;128m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mcode, and other read-only operations do not
+[m     [38;2;255;107;128m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mrequire the classifier and can still be
+[m     [38;2;255;107;128m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mused.
+[38;2;153;153;153m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23m  ⎿  [38;2;255;107;128m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mNot logged in · Please run /login
+
+[38;2;153;153;153m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23m✻[m [38;2;153;153;153m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mSautéed for 42m 23s
+
+[38;2;80;80;80m[48;2;55;55;55m[29m[28m[27m[25m[25m[22m[24m[22m[23m❯ [38;2;255;255;255m[48;2;55;55;55m[29m[28m[27m[25m[25m[22m[24m[22m[23mContinue where you left off[39m[48;2;55;55;55m[29m[28m[27m[25m[25m[22m[24m[22m[23m                   
+[38;2;153;153;153m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23m  ⎿  [38;2;255;107;128m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mYou've hit your session limit · resets
+[m     [38;2;255;107;128m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23m1:30pm (Europe/Zurich)
+[m     [38;2;153;153;153m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23m/upgrade to increase your usage limit.
+
+[38;2;153;153;153m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23m✻[m [38;2;153;153;153m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mWorked for 2s
+
+[38;2;80;80;80m[48;2;55;55;55m[29m[28m[27m[25m[25m[22m[24m[22m[23m❯ [38;2;255;255;255m[48;2;55;55;55m[29m[28m[27m[25m[25m[22m[24m[22m[23m/rate-limit-options[39m[48;2;55;55;55m[29m[28m[27m[25m[25m[22m[24m[22m[23m                           
+
+[38;2;177;185;249m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23m────────────────────────────────────────────────
+[m  [38;2;177;185;249m[49m[29m[28m[27m[25m[25m[1m[24m[22m[1m[23mWhat[m [38;2;177;185;249m[49m[29m[28m[27m[25m[25m[1m[24m[22m[1m[23mdo[m [38;2;177;185;249m[49m[29m[28m[27m[25m[25m[1m[24m[22m[1m[23myou[m [38;2;177;185;249m[49m[29m[28m[27m[25m[25m[1m[24m[22m[1m[23mwant[m [38;2;177;185;249m[49m[29m[28m[27m[25m[25m[1m[24m[22m[1m[23mto[m [38;2;177;185;249m[49m[29m[28m[27m[25m[25m[1m[24m[22m[1m[23mdo?
+
+[m  [38;2;177;185;249m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23m❯[m [38;2;153;153;153m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23m1.[m [38;2;177;185;249m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mStop[m [38;2;177;185;249m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mand[m [38;2;177;185;249m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mwait[m [38;2;177;185;249m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mfor[m [38;2;177;185;249m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mlimit[m [38;2;177;185;249m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mto[m [38;2;177;185;249m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23mreset
+[m    [38;2;153;153;153m[49m[29m[28m[27m[25m[25m[22m[24m[22m[23m2.[m Upgrade your plan
+
+[m  [38;2;153;153;153m[49m[29m[28m[27m[25m[25m[22m[24m[22m[3mEnter[m [38;2;153;153;153m[49m[29m[28m[27m[25m[25m[22m[24m[22m[3mto[m [38;2;153;153;153m[49m[29m[28m[27m[25m[25m[22m[24m[22m[3mconfirm[m [38;2;153;153;153m[49m[29m[28m[27m[25m[25m[22m[24m[22m[3m·[m [38;2;153;153;153m[49m[29m[28m[27m[25m[25m[22m[24m[22m[3mEsc[m [38;2;153;153;153m[49m[29m[28m[27m[25m[25m[22m[24m[22m[3mto[m [38;2;153;153;153m[49m[29m[28m[27m[25m[25m[22m[24m[22m[3mcancel
+[m

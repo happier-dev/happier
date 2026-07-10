@@ -1,4 +1,4 @@
-import type { ExternalSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/sessions';
 
 import {
     projectClaudeJsonlLineToRawMessage,

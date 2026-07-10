@@ -1,7 +1,7 @@
 import { chmod, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
 
 import {
@@ -10,9 +10,13 @@ import {
     writeClaudeCodeCredentialsFile,
 } from './credentials.js';
 import type { ClaudeCodeCredentialHealth } from './health.js';
-import { writeClaudeCodeMacOsKeychainCredential } from './keychain.js';
+import {
+    deleteClaudeCodeMacOsKeychainCredential,
+    sweepStaleClaudeCodeMacOsKeychainCredentials,
+} from './keychain.js';
 import {
     buildClaudeCodeNativeAuthProvenance,
+    readClaudeCodeNativeAuthProvenance,
     resolveClaudeCodeNativeAuthProvenancePath,
     writeClaudeCodeNativeAuthProvenance,
 } from './provenance.js';
@@ -24,6 +28,20 @@ export type ClaudeNativeAuthMaterializationDiagnostic = Readonly<{
     serviceId: 'claude-subscription';
     reason: string;
     entryName?: string;
+    credentialRefreshFailure?: Readonly<{
+        category:
+            | 'invalid_grant'
+            | 'invalid_client'
+            | 'provider_401'
+            | 'provider_403'
+            | 'network_error'
+            | 'malformed_response'
+            | 'missing_access_token'
+            | 'missing_refresh_token'
+            | 'unknown';
+        providerStatus?: number;
+        providerErrorCode?: string;
+    }>;
 }>;
 
 export type ClaudeCodeNativeAuthMaterializationResult =
@@ -53,15 +71,48 @@ function diagnosticCodeForHealth(health: ClaudeCodeCredentialHealth): string {
     }
 }
 
+function credentialRefreshFailureForHealth(
+    health: ClaudeCodeCredentialHealth,
+): ClaudeNativeAuthMaterializationDiagnostic['credentialRefreshFailure'] {
+    switch (health.status) {
+        case 'missing_required_scope':
+            return {
+                category: 'provider_403',
+                providerStatus: 403,
+                providerErrorCode: 'claude_subscription_missing_claude_code_scope',
+            };
+        case 'unsupported_credential_kind':
+            return {
+                category: 'missing_refresh_token',
+                providerErrorCode: 'claude_subscription_setup_token_not_supported_for_unified',
+            };
+        case 'missing_access_token':
+            return {
+                category: 'missing_access_token',
+                providerErrorCode: 'claude_subscription_native_auth_materialization_failed',
+            };
+        case 'missing_refresh_token':
+            return {
+                category: 'missing_refresh_token',
+                providerErrorCode: 'claude_subscription_native_auth_materialization_failed',
+            };
+        case 'unsupported_service':
+        case 'ok':
+            return undefined;
+    }
+}
+
 function diagnosticForHealth(
     health: ClaudeCodeCredentialHealth,
 ): ClaudeNativeAuthMaterializationDiagnostic {
+    const credentialRefreshFailure = credentialRefreshFailureForHealth(health);
     return {
         code: diagnosticCodeForHealth(health),
         providerId: 'claude',
         severity: 'blocking',
         serviceId: 'claude-subscription',
         reason: health.status,
+        ...(credentialRefreshFailure ? { credentialRefreshFailure } : {}),
         ...(health.missingScopes.length > 0 ? { entryName: health.missingScopes.join(' ') } : {}),
     };
 }
@@ -106,6 +157,58 @@ type FileRollbackSnapshot = Readonly<{
     mode?: number | undefined;
 }>;
 
+const pendingLazyKeychainSweepKeys = new Set<string>();
+
+/** AT-4: reset the module-level lazy-sweep dedupe between tests (darwin-only path; order-determinism). */
+export function resetPendingLazyKeychainSweepKeysForTests(): void {
+    pendingLazyKeychainSweepKeys.clear();
+}
+
+function lazySweepKey(params: Readonly<{
+    homeDir?: string | null | undefined;
+    username?: string | null | undefined;
+}>): string {
+    return JSON.stringify({
+        homeDir: params.homeDir ?? null,
+        username: params.username ?? null,
+    });
+}
+
+function scheduleLazyStaleKeychainSweep(params: Readonly<{
+    exec: ExecRuntimeServiceV1;
+    username?: string | null | undefined;
+    homeDir?: string | null | undefined;
+}>): void {
+    // CLOSE-9 reversal: the sweep purges EVERY Happier-managed suffixed item for the account (nothing
+    // reads them under proven file-only), so it no longer needs a live-home allow-set. Run it once per
+    // (homeDir, username), deferred + deduped, on the materialization hot path (startup-reconciled).
+    const key = lazySweepKey({
+        homeDir: params.homeDir,
+        username: params.username,
+    });
+    if (pendingLazyKeychainSweepKeys.has(key)) return;
+    pendingLazyKeychainSweepKeys.add(key);
+    const timer = setTimeout(() => {
+        void sweepStaleClaudeCodeMacOsKeychainCredentials({
+            exec: params.exec,
+            username: params.username,
+            homeDir: params.homeDir,
+        }).catch(() => undefined).finally(() => {
+            pendingLazyKeychainSweepKeys.delete(key);
+        });
+    }, 0);
+    timer.unref?.();
+}
+
+async function credentialFileExists(claudeConfigDir: string): Promise<boolean> {
+    try {
+        await lstat(resolveClaudeCodeCredentialsFilePath(claudeConfigDir));
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 async function snapshotFileForRollback(path: string): Promise<FileRollbackSnapshot> {
     try {
         const [contents, stats] = await Promise.all([readFile(path), lstat(path)]);
@@ -146,6 +249,24 @@ export async function materializeClaudeCodeNativeAuth(params: Readonly<{
             diagnostics: [diagnosticForHealth(built.health)],
         };
     }
+    const nextProvenance = buildClaudeCodeNativeAuthProvenance({
+        record: params.record,
+        payload: built.payload,
+    });
+    const existingProvenance = await readClaudeCodeNativeAuthProvenance(params.claudeConfigDir);
+    if (
+        existingProvenance?.credentialProfileId === nextProvenance.credentialProfileId
+        && existingProvenance.credentialCreatedAt === nextProvenance.credentialCreatedAt
+        && existingProvenance.credentialFingerprint === nextProvenance.credentialFingerprint
+        && await credentialFileExists(params.claudeConfigDir)
+    ) {
+        return {
+            status: 'materialized',
+            env: { CLAUDE_CONFIG_DIR: params.claudeConfigDir },
+            diagnostics: [],
+            credentialPath: resolveClaudeCodeCredentialsFilePath(params.claudeConfigDir),
+        };
+    }
     let credentialPath: string;
     const rollbackSnapshots = await Promise.all([
         snapshotFileForRollback(resolveClaudeCodeCredentialsFilePath(params.claudeConfigDir)),
@@ -158,10 +279,7 @@ export async function materializeClaudeCodeNativeAuth(params: Readonly<{
         });
         await writeClaudeCodeNativeAuthProvenance({
             claudeConfigDir: params.claudeConfigDir,
-            provenance: buildClaudeCodeNativeAuthProvenance({
-                record: params.record,
-                payload: built.payload,
-            }),
+            provenance: nextProvenance,
         });
     } catch {
         await restoreFileSnapshots(rollbackSnapshots);
@@ -181,10 +299,14 @@ export async function materializeClaudeCodeNativeAuth(params: Readonly<{
             };
         }
         try {
-            await writeClaudeCodeMacOsKeychainCredential({
+            scheduleLazyStaleKeychainSweep({
+                exec: params.exec,
+                username: params.username,
+                homeDir: params.homeDir,
+            });
+            await deleteClaudeCodeMacOsKeychainCredential({
                 exec: params.exec,
                 claudeConfigDir: params.claudeConfigDir,
-                payload: built.payload,
                 homeDir: params.homeDir,
                 username: params.username,
             });

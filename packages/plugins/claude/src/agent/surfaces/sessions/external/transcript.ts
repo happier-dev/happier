@@ -1,7 +1,7 @@
 import type {
     ExternalSessionsSource,
     ExternalSessionTranscriptRawMessageV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/sessions';
 import { projectClaudeJsonlLineToDirectMessages } from '../../../transcripts/projection.js';
 
 import { resolveClaudeJsonlSessionFile } from './files.js';

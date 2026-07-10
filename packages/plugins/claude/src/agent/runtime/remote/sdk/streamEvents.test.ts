@@ -38,7 +38,23 @@ describe('Claude remote SDK stream event helpers', () => {
                 assistantAutoBackgrounded: true,
                 background_task_id: ' task-1 ',
             },
-        })).toBe(' task-1 ');
+        })).toBe('task-1');
+
+        expect(readClaudeAgentSdkBackgroundTaskId({
+            type: 'user',
+            toolUseResult: {
+                status: 'async_launched',
+                taskId: 'task-2',
+            },
+        })).toBe('task-2');
+
+        expect(readClaudeAgentSdkBackgroundTaskId({
+            type: 'user',
+            tool_use_result: {
+                status: 'async_launched',
+                agentId: ' agent-3 ',
+            },
+        })).toBe('agent-3');
 
         expect(readClaudeAgentSdkBackgroundTaskId({
             type: 'user',
@@ -94,7 +110,27 @@ describe('Claude remote SDK stream event helpers', () => {
         })).toBe(true);
     });
 
-    it('classifies Claude auth failures through the plugin auth runtime adapter', () => {
+    it('keeps provider-owned Claude SDK 401 retries out of runtime auth evidence', () => {
+        expect(hasClaudeAgentSdkRuntimeAuthFailureEvidence({
+            type: 'system',
+            subtype: 'api_error',
+            attempt: 1,
+            max_retries: 11,
+            retry_delay_ms: 1_000,
+            error_status: 401,
+            error: 'Connection error.',
+        })).toBe(false);
+
+        expect(hasClaudeAgentSdkRuntimeAuthFailureEvidence({
+            type: 'system',
+            subtype: 'api_error',
+            attempt: 11,
+            max_retries: 11,
+            retry_delay_ms: 1_000,
+            error_status: 401,
+            error: 'Connection error.',
+        })).toBe(true);
+
         expect(hasClaudeAgentSdkRuntimeAuthFailureEvidence({
             type: 'result',
             subtype: 'error_during_execution',

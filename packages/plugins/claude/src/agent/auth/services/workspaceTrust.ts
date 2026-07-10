@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { HAPPIER_CLAUDE_CONFIG_DIR_ENV } from '@happier-dev/plugin-sdk/experimental/envConstants';
 
 type JsonObject = Record<string, unknown>;
 
@@ -54,7 +55,7 @@ function resolveHomeDir(env: NodeJS.ProcessEnv): string {
 function resolveClaudeRootConfigPathCandidates(env: NodeJS.ProcessEnv): ClaudeRootConfigPathCandidate[] {
     const explicitConfigDir = readString(env.CLAUDE_CONFIG_DIR);
     const homeDir = resolveHomeDir(env);
-    const configuredConfigDir = readString(env.HAPPIER_CLAUDE_CONFIG_DIR) ?? join(homeDir, '.claude');
+    const configuredConfigDir = readString(env[HAPPIER_CLAUDE_CONFIG_DIR_ENV]) ?? join(homeDir, '.claude');
     return dedupeRootConfigPathCandidates([
         ...(explicitConfigDir ? [{
             rootDir: explicitConfigDir,
@@ -104,13 +105,13 @@ async function resolveWorkspaceTrustProjection(params: Readonly<{
         if (!rootConfig) continue;
         const result = readProjectTrustProjection(rootConfig, params.sessionDirectory);
         if (result.projection) return result.projection;
-        // An explicit decline on the override candidate is authoritative: do not
-        // fall through to ambient home/default config dirs.
-        if (result.hasExplicitTrustState && index === 0 && readString(params.sourceEnv.CLAUDE_CONFIG_DIR)) {
+        // An explicit decline is authoritative: do not default trust or fall
+        // through to ambient home/default config dirs.
+        if (result.hasExplicitTrustState) {
             return null;
         }
     }
-    return null;
+    return { hasTrustDialogAccepted: true };
 }
 
 async function writeClaudeRootConfig(params: Readonly<{
@@ -136,16 +137,16 @@ async function writeClaudeRootConfig(params: Readonly<{
 }
 
 /**
- * Projects an already-accepted workspace-trust decision for the session directory
- * from the user's source Claude root config (`.claude.json`) into a materialized
- * connected-service home.
+ * Projects the workspace-trust decision for the session directory into a
+ * materialized connected-service home.
  *
  * Without this, Claude spawned into a freshly materialized `CLAUDE_CONFIG_DIR`
- * re-prompts the interactive workspace-trust dialog for workspaces the user
- * already trusted — which hangs remote/headless sessions. Only the trust
- * projection (`hasTrustDialogAccepted` plus the project-onboarding marker) is
- * carried; no other project config and no account identity is copied into the
- * materialized home.
+ * re-prompts the interactive workspace-trust dialog, which hangs remote/headless
+ * sessions. A Happier-managed session creation is treated as trust for fresh
+ * directories with no source trust state. Explicit declined source trust remains
+ * authoritative. Only the trust projection (`hasTrustDialogAccepted` plus the
+ * project-onboarding marker) is carried; no other project config and no account
+ * identity is copied into the materialized home.
  */
 export async function projectClaudeWorkspaceTrust(params: Readonly<{
     sourceEnv: NodeJS.ProcessEnv;

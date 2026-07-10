@@ -12,8 +12,9 @@ type ClaudeDaemonResolvedTool =
     }>;
 
 type ClaudeDaemonSpawnToolResolutionContext = Readonly<{
-    resolveManagedInstallable(input: Readonly<{
-        installableId: string;
+    resolveSystemTool(input: Readonly<{
+        toolId: string;
+        lookupNames?: readonly string[];
         sourcePreference?: 'system-first' | 'managed-first';
         reason: string;
     }>): Promise<ClaudeDaemonResolvedTool>;
@@ -68,8 +69,9 @@ export async function resolveClaudeDaemonSpawnPrerequisites(
         return denyClaudeCliUnavailable('Claude daemon spawn requires the daemon tool-resolution context.');
     }
 
-    const resolvedTool = await tools.resolveManagedInstallable({
-        installableId: 'claude',
+    const resolvedTool = await tools.resolveSystemTool({
+        toolId: 'claude',
+        lookupNames: ['claude'],
         sourcePreference: 'system-first',
         reason: 'Claude daemon spawn requires the Claude Code CLI command.',
     });

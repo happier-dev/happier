@@ -17,7 +17,6 @@ export type ClaudeCodeNativeAuthVerificationResult = Readonly<{
         | 'missing_credentials_file'
         | 'unsupported_shape'
         | 'missing_access_token'
-        | 'missing_refresh_token'
         | 'missing_required_scope'
         | 'expired'
         | 'credential_fingerprint_mismatch';
@@ -47,17 +46,13 @@ export async function verifyClaudeCodeNativeAuth(params: Readonly<{
     if (!parsed.hasAccessToken) {
         return { status: 'missing_access_token', missingScopes: [], credentialPath };
     }
-    if (!parsed.hasRefreshToken) {
-        return { status: 'missing_refresh_token', missingScopes: [], credentialPath };
-    }
     const missingScopes = findMissingClaudeCodeCredentialScopes(parsed.scopes);
     if (missingScopes.length > 0) {
         return { status: 'missing_required_scope', missingScopes, credentialPath };
     }
     // Real usability gate: a well-formed-but-expired credential must not verify as healthy. A
     // finite expiry at or before now is unusable (the spawn would 401). A null/unknown expiry is
-    // NOT treated as expired — we cannot prove staleness and the refresh coordinator owns unknown
-    // expiry; coercing it to expired would false-reject otherwise-valid credentials.
+    // NOT treated as expired because this verifier cannot prove staleness from an omitted field.
     const now = typeof params.now === 'number' ? params.now : Date.now();
     if (typeof parsed.expiresAt === 'number' && parsed.expiresAt <= now) {
         return { status: 'expired', missingScopes: [], credentialPath };
@@ -73,24 +68,28 @@ export async function verifyClaudeCodeNativeAuth(params: Readonly<{
     ) {
         return { status: 'credential_fingerprint_mismatch', missingScopes: [], credentialPath };
     }
+    // Native/external keychain cross-check as a FALLBACK only. Happier no longer writes a derived
+    // per-config keychain item, so a missing item (or no exec runtime to read one) must not fail:
+    // the file is authoritative. A present item is validated against the file to catch a genuinely
+    // divergent native/external credential — but never demanded to exist.
     if (process.platform === 'darwin') {
         if (!params.exec) {
-            return { status: 'missing_refresh_token', missingScopes: [], credentialPath };
+            return { status: 'ok', missingScopes: [], credentialPath };
         }
         const keychainPayload = await readClaudeCodeMacOsKeychainCredential({
             exec: params.exec,
             claudeConfigDir: params.claudeConfigDir,
             homeDir: params.homeDir,
         });
+        if (!keychainPayload) {
+            return { status: 'ok', missingScopes: [], credentialPath };
+        }
         const keychainParsed = parseClaudeCodeCredentialFile(keychainPayload);
         if (keychainParsed.status !== 'ok') {
-            return { status: 'missing_refresh_token', missingScopes: [], credentialPath };
+            return { status: 'credential_fingerprint_mismatch', missingScopes: [], credentialPath };
         }
         if (!keychainParsed.hasAccessToken) {
             return { status: 'missing_access_token', missingScopes: [], credentialPath };
-        }
-        if (!keychainParsed.hasRefreshToken) {
-            return { status: 'missing_refresh_token', missingScopes: [], credentialPath };
         }
         const missingKeychainScopes = findMissingClaudeCodeCredentialScopes(keychainParsed.scopes);
         if (missingKeychainScopes.length > 0) {

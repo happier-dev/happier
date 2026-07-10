@@ -7,6 +7,20 @@ import type { SDKMessage } from './types.js';
 function createJsonStreamHandle() {
     const listeners = new Set<(record: unknown) => void | Promise<void>>();
     const written: unknown[] = [];
+    let resolveExit: ((result: Readonly<{
+        exitCode: number | null;
+        signal: string | null;
+        stdout: string;
+        stderr: string;
+    }>) => void) | null = null;
+    const exit = new Promise<Readonly<{
+        exitCode: number | null;
+        signal: string | null;
+        stdout: string;
+        stderr: string;
+    }>>((resolve) => {
+        resolveExit = resolve;
+    });
     const client: JsonStreamClientV1 = {
         closed: new Promise(() => undefined),
         subscribe(listener) {
@@ -21,7 +35,7 @@ function createJsonStreamHandle() {
         client,
         process: {
             pid: 123,
-            exit: new Promise(() => undefined),
+            exit,
             async writeStdin() {},
             kill() {},
             async dispose() {},
@@ -38,14 +52,30 @@ function createJsonStreamHandle() {
         async emit(record: unknown) {
             await Promise.all([...listeners].map((listener) => listener(record)));
         },
+        async exitWith(result: Readonly<{
+            exitCode: number | null;
+            signal: string | null;
+            stdout?: string;
+            stderr?: string;
+        }>) {
+            resolveExit?.({
+                exitCode: result.exitCode,
+                signal: result.signal,
+                stdout: result.stdout ?? '',
+                stderr: result.stderr ?? '',
+            });
+            await exit;
+        },
     };
 }
 
 function createContextFixture(stream = createJsonStreamHandle()) {
     const spawnClient = vi.fn(async () => stream.handle);
     const ctx = {
-        exec: {
-            spawnClient,
+        agentRuntime: {
+            exec: {
+                spawnClient,
+            },
         },
     } as unknown as PluginContextV1;
     return { ctx, spawnClient, stream };
@@ -59,7 +89,7 @@ async function* prompt() {
 }
 
 describe('Claude plugin SDK query', () => {
-    it('spawns Claude through ctx.exec json-stream instead of opening a process locally', async () => {
+    it('spawns Claude through ctx.agentRuntime.exec json-stream instead of opening a process locally', async () => {
         const { ctx, spawnClient } = createContextFixture();
 
         query(ctx, {
@@ -202,13 +232,91 @@ describe('Claude plugin SDK query', () => {
         });
     });
 
+    it('answers Claude oauth_token_refresh control requests through the configured OAuth callback', async () => {
+        const { ctx, spawnClient, stream } = createContextFixture();
+        const getOAuthToken = vi.fn(async () => 'fresh-access-token');
+
+        query(ctx, {
+            prompt: prompt(),
+            options: {
+                env: { EXISTING_ENV: 'kept' },
+                getOAuthToken,
+            },
+        });
+        await spawnClient.mock.results[0]?.value;
+
+        expect(spawnClient.mock.calls[0]?.[0].launch.env).toEqual({
+            EXISTING_ENV: 'kept',
+            CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH: '1',
+        });
+
+        await stream.emit({
+            type: 'control_request',
+            request_id: 'oauth-1',
+            request: {
+                subtype: 'oauth_token_refresh',
+            },
+        });
+
+        expect(getOAuthToken).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
+        expect(stream.written).toContainEqual({
+            type: 'control_response',
+            response: {
+                subtype: 'success',
+                request_id: 'oauth-1',
+                response: {
+                    accessToken: 'fresh-access-token',
+                },
+            },
+        });
+    });
+
+    it('requests and resolves Claude live context usage through the SDK control channel', async () => {
+        const { ctx, spawnClient, stream } = createContextFixture();
+        const sdkQuery = query(ctx, { prompt: prompt() });
+        await spawnClient.mock.results[0]?.value;
+
+        const responsePromise = sdkQuery.getContextUsage();
+        await vi.waitFor(() => {
+            expect(stream.written).toContainEqual(expect.objectContaining({
+                type: 'control_request',
+                request_id: expect.any(String),
+                request: { subtype: 'get_context_usage' },
+            }));
+        });
+        const request = stream.written.find((record) =>
+            (record as { request?: { subtype?: string } }).request?.subtype === 'get_context_usage') as {
+                request_id: string;
+            };
+        const response = {
+            totalTokens: 48_000,
+            maxTokens: 200_000,
+            model: 'claude-sonnet-4-6',
+            isAutoCompactEnabled: true,
+            categories: [{ name: 'Messages', tokens: 30_000, color: 'blue' }],
+        };
+
+        await stream.emit({
+            type: 'control_response',
+            response: {
+                subtype: 'success',
+                request_id: request.request_id,
+                response,
+            },
+        });
+
+        await expect(responsePromise).resolves.toEqual(response);
+    });
+
     it('propagates spawn failures to the SDK message iterator', async () => {
         const failure = new Error('spawn failed');
         const ctx = {
-            exec: {
-                spawnClient: vi.fn(async () => {
-                    throw failure;
-                }),
+            agentRuntime: {
+                exec: {
+                    spawnClient: vi.fn(async () => {
+                        throw failure;
+                    }),
+                },
             },
         } as unknown as PluginContextV1;
 
@@ -220,5 +328,26 @@ describe('Claude plugin SDK query', () => {
         });
 
         await expect(sdkQuery.next()).rejects.toThrow('spawn failed');
+    });
+
+    it('propagates failed Claude process exits with stderr to the SDK message iterator', async () => {
+        const { ctx, spawnClient, stream } = createContextFixture();
+
+        const sdkQuery = query(ctx, {
+            prompt: prompt(),
+            options: {
+                cwd: '/tmp/project',
+            },
+        });
+        await spawnClient.mock.results[0]?.value;
+
+        const nextMessage = sdkQuery.next();
+        await stream.exitWith({
+            exitCode: 1,
+            signal: null,
+            stderr: 'Claude Code login expired',
+        });
+
+        await expect(nextMessage).rejects.toThrow('Claude Code login expired');
     });
 });

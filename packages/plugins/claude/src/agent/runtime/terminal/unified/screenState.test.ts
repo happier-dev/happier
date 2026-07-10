@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -7,6 +11,8 @@ import {
   parseClaudeScreenState,
   resolveClaudeScreenInFlightSteerVeto,
 } from './screenState.js';
+
+const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), '__fixtures__');
 
 function ready(screen: string): boolean {
   return isClaudeScreenReadyForInput(parseClaudeScreenState(screen));
@@ -86,6 +92,98 @@ describe('parseClaudeScreenState readiness', () => {
       'Running 6 Explore agents...',
     ].join('\n');
     expect(ready(screen)).toBe(false);
+  });
+
+  it('recognizes Claude heavy-session resume choice as a known blocking dialog', () => {
+    const screen = [
+      'This session is 18h 2m old and 560.4k tokens.',
+      '',
+      '❯ 1. Resume from summary',
+      '  2. Resume full session',
+    ].join('\n');
+    const state = parseClaudeScreenState(screen);
+
+    expect(state.resumeChoiceDialogVisible).toBe(true);
+    expect(state.resumeChoiceDialogOptions).toEqual(['resume_from_summary', 'resume_full_session']);
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
+    expect(isClaudeScreenReadyForInput(state)).toBe(false);
+    expect(isSafeWindowForSlashControl(state)).toBe(false);
+    expect(isSafeWindowForModeCycle(state)).toBe(false);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('resume_choice_dialog');
+  });
+
+  it('recognizes the Fable safeguard pause chooser as a known blocking dialog', () => {
+    const screen = [
+      'Session paused',
+      '',
+      "Fable 5's safeguards flagged this message.",
+      '',
+      '❯ 1. Switch to Opus 4.8',
+      '  2. Edit prompt and retry with Fable 5',
+    ].join('\n');
+    const state = parseClaudeScreenState(screen);
+
+    expect(state.safeguardPauseDialogVisible).toBe(true);
+    expect(state.safeguardPauseDialogOptions).toEqual([
+      { choice: 'switch_model', label: 'Switch to Opus 4.8', modelLabel: 'Opus 4.8' },
+      { choice: 'edit_prompt_and_retry', label: 'Edit prompt and retry with Fable 5', modelLabel: 'Fable 5' },
+    ]);
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
+    expect(isClaudeScreenReadyForInput(state)).toBe(false);
+    expect(isSafeWindowForSlashControl(state)).toBe(false);
+    expect(isSafeWindowForModeCycle(state)).toBe(false);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('safeguard_pause_dialog');
+  });
+
+  it('recognizes the captured Claude usage-limit dialog as provider unavailable, not a composer draft', () => {
+    const incident = readFileSync(join(fixturesDir, 'incident-89861-ratelimit-resume.ansi'), 'utf8');
+    const state = parseClaudeScreenState(incident);
+
+    expect(state).toMatchObject({
+      composerContent: '/rate-limit-options',
+      userDraftPresent: false,
+      usageLimitDialogVisible: true,
+      unrecognizedConfirmationDialogVisible: false,
+      inputBoxInteractive: false,
+    });
+    expect(isClaudeScreenReadyForInput(state)).toBe(false);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('usage_limit_dialog');
+  });
+
+  it('keeps a captured healthy idle composer writable', () => {
+    const healthy = readFileSync(join(fixturesDir, 'healthy-92862-idle.ansi'), 'utf8');
+    const state = parseClaudeScreenState(healthy);
+
+    expect(state).toMatchObject({
+      composerContent: '',
+      userDraftPresent: false,
+      inputBoxInteractive: true,
+    });
+    expect(isClaudeScreenReadyForInput(state)).toBe(true);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBeNull();
+  });
+
+  it('treats Claude resume prefill text as an empty non-draft composer', () => {
+    const state = parseClaudeScreenState('❯ Continue where you left off');
+
+    expect(state.composerContent).toBe('');
+    expect(state.userDraftPresent).toBe(false);
+    expect(isClaudeScreenReadyForInput(state)).toBe(true);
+  });
+
+  it('keeps similar unknown numbered startup dialogs fail-closed', () => {
+    const screen = [
+      'This session is 18h 2m old and 560.4k tokens.',
+      '',
+      '❯ 1. Delete history',
+      '  2. Continue anyway',
+    ].join('\n');
+    const state = parseClaudeScreenState(screen);
+
+    expect(state.resumeChoiceDialogVisible).toBe(false);
+    expect(state.resumeChoiceDialogOptions).toEqual([]);
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(true);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBe('unrecognized_confirmation_dialog');
   });
 });
 
@@ -267,16 +365,31 @@ const CLAUDE_2_1_174_FRESH_PLACEHOLDER = [
 ].join('\n');
 
 describe('parseClaudeScreenState — empty-composer placeholder hint (2.1.174 fresh session)', () => {
-  it('treats the Try "<hint>" placeholder as an EMPTY composer, not a user draft', () => {
+  it('keeps the Try "<hint>" text fail-closed as a draft without style or cursor evidence', () => {
     const state = parseClaudeScreenState(CLAUDE_2_1_174_FRESH_PLACEHOLDER);
-    expect(state.composerContent).toBe('');
-    expect(state.userDraftPresent).toBe(false);
+    expect(state.composerContent).toBe('Try "refactor <filepath>"');
+    expect(state.userDraftPresent).toBe(true);
   });
 
-  it('keeps the placeholder screen ready for input and safe for controls/steering', () => {
-    const state = parseClaudeScreenState(CLAUDE_2_1_174_FRESH_PLACEHOLDER);
+  it('treats the Try "<hint>" placeholder as an EMPTY composer when cursor proves the input is empty', () => {
+    const state = parseClaudeScreenState(CLAUDE_2_1_174_FRESH_PLACEHOLDER, {
+      cursor: { x: 2, y: 6 },
+    });
+    expect(state.composerContent).toBe('');
+    expect(state.userDraftPresent).toBe(false);
     expect(isClaudeScreenReadyForInput(state)).toBe(true);
     expect(isSafeWindowForSlashControl(state)).toBe(true);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBeNull();
+  });
+
+  it('treats a segmented dim placeholder as an EMPTY composer even when spaces reset styling', () => {
+    const segmentedDim = CLAUDE_2_1_174_FRESH_PLACEHOLDER.replace(
+      '❯ Try "refactor <filepath>"',
+      '❯ \x1b[2mstart\x1b[0m \x1b[2mthe\x1b[0m \x1b[2mdev\x1b[0m \x1b[2mserver\x1b[0m \x1b[2mso\x1b[0m \x1b[2mI\x1b[0m \x1b[2mcan\x1b[0m \x1b[2msee\x1b[0m \x1b[2mit\x1b[0m',
+    );
+    const state = parseClaudeScreenState(segmentedDim, { cursor: { x: 2, y: 6 } });
+    expect(state.composerContent).toBe('');
+    expect(state.userDraftPresent).toBe(false);
     expect(resolveClaudeScreenInFlightSteerVeto(state)).toBeNull();
   });
 
@@ -288,12 +401,12 @@ describe('parseClaudeScreenState — empty-composer placeholder hint (2.1.174 fr
     expect(parseClaudeScreenState(typed).userDraftPresent).toBe(true);
   });
 
-  it('treats the typographic-quote placeholder variant as empty as well', () => {
+  it('treats the typographic-quote placeholder variant as empty when cursor proves it', () => {
     const curly = CLAUDE_2_1_174_FRESH_PLACEHOLDER.replace(
       '❯ Try "refactor <filepath>"',
       '❯ Try “fix typecheck errors”',
     );
-    const state = parseClaudeScreenState(curly);
+    const state = parseClaudeScreenState(curly, { cursor: { x: 2, y: 6 } });
     expect(state.userDraftPresent).toBe(false);
     expect(state.composerContent).toBe('');
   });
@@ -580,6 +693,66 @@ describe('parseClaudeScreenState — dim contextual suggestion placeholder (port
       `${ESC}[2m${ESC}[22mcheck the output`,
     );
     const state = parseClaudeScreenState(cancelled);
+    expect(state.userDraftPresent).toBe(true);
+  });
+});
+
+const CLAUDE_2_1_179_TMUX_PLAIN_CONTEXTUAL_SUGGESTION = [
+  '  Called happier (ctrl+o to expand)',
+  '',
+  '● Hi! How can I help you today?',
+  '',
+  '✻ Brewed for 7s',
+  '',
+  '────────────────────────────────────────────────',
+  '❯ what can you help me with',
+  '────────────────────────────────────────────────',
+  '  Sonnet 4.6',
+  '  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents',
+].join('\n');
+
+describe('parseClaudeScreenState — plain contextual suggestion with cursor proof (tmux)', () => {
+  it('treats a plain visible suggestion as an EMPTY composer when the cursor is at the text start', () => {
+    const state = parseClaudeScreenState(CLAUDE_2_1_179_TMUX_PLAIN_CONTEXTUAL_SUGGESTION, {
+      cursor: { x: 2, y: 7 },
+    });
+
+    expect(state.composerContent).toBe('');
+    expect(state.userDraftPresent).toBe(false);
+    expect(isClaudeScreenReadyForInput(state)).toBe(true);
+    expect(resolveClaudeScreenInFlightSteerVeto(state)).toBeNull();
+  });
+
+  it('keeps long plain composer content as a draft even when the cursor is at the text start', () => {
+    const longDraft = `❯ ${'real user draft '.repeat(12)}`;
+    const state = parseClaudeScreenState(longDraft, { cursor: { x: 2, y: 0 } });
+
+    expect(state.composerContent).toBe(longDraft.slice(2).trim());
+    expect(state.userDraftPresent).toBe(true);
+  });
+
+  it('keeps the same plain text fail-closed as a draft without cursor evidence', () => {
+    const state = parseClaudeScreenState(CLAUDE_2_1_179_TMUX_PLAIN_CONTEXTUAL_SUGGESTION);
+
+    expect(state.composerContent).toBe('what can you help me with');
+    expect(state.userDraftPresent).toBe(true);
+  });
+
+  it('still trusts cursor proof when unrelated border styling exists outside the composer line', () => {
+    const styledChrome = CLAUDE_2_1_179_TMUX_PLAIN_CONTEXTUAL_SUGGESTION
+      .replaceAll('────────────────────────────────────────────────', `${ESC}[38;2;136;136;136m────────────────────────────────────────────────${ESC}[m`);
+    const state = parseClaudeScreenState(styledChrome, { cursor: { x: 2, y: 7 } });
+
+    expect(state.composerContent).toBe('');
+    expect(state.userDraftPresent).toBe(false);
+  });
+
+  it('keeps the same plain text a draft when the cursor is after the visible content', () => {
+    const state = parseClaudeScreenState(CLAUDE_2_1_179_TMUX_PLAIN_CONTEXTUAL_SUGGESTION, {
+      cursor: { x: 27, y: 7 },
+    });
+
+    expect(state.composerContent).toBe('what can you help me with');
     expect(state.userDraftPresent).toBe(true);
   });
 });

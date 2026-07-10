@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { mapClaudeRuntimeRateLimitsToUsageObservation } from './usage.js';
+import {
+  mapClaudeRateLimitEventToUsageDetails,
+  mapClaudeRuntimeRateLimitsToUsageObservation,
+} from './usage.js';
 
 describe('mapClaudeRuntimeRateLimitsToUsageObservation', () => {
   it('distinguishes missing statusline rate limits from loaded-empty rate limits', () => {
@@ -37,6 +40,29 @@ describe('mapClaudeRuntimeRateLimitsToUsageObservation', () => {
           source: 'runtimeSignal',
         },
       ],
+    });
+  });
+});
+
+describe('mapClaudeRateLimitEventToUsageDetails', () => {
+  it('maps synthetic Claude assistant API-error rate-limit records that report 429 via error_status', () => {
+    expect(mapClaudeRateLimitEventToUsageDetails({
+      type: 'assistant',
+      uuid: 'api-error-assistant-1',
+      isApiErrorMessage: true,
+      error: {
+        type: 'api_error',
+        message: 'Connection error.',
+        error_status: 429,
+        reset_at: '2026-05-17T12:00:00.000Z',
+      },
+    })).toMatchObject({
+      v: 1,
+      resetAtMs: Date.parse('2026-05-17T12:00:00.000Z'),
+      retryAfterMs: null,
+      quotaScope: 'account',
+      recoverability: 'wait',
+      providerLimitId: 'rate_limit',
     });
   });
 });

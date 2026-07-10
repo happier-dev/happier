@@ -653,3 +653,24 @@ describe('unrecognized confirmation dialogs (P-B fail-closed, incident cmq8y3nlx
     expect(port.sentKeys).toEqual([]);
   });
 });
+
+describe('isControllerTypedSlashCommandResidue (ported HF-4 / A2-HIGH-1)', () => {
+  it('recognizes controller-vocabulary residue including the concatenated double-typed form', async () => {
+    const { isControllerTypedSlashCommandResidue } = await import('./slashControls.js');
+    expect(isControllerTypedSlashCommandResidue('/model sonnet')).toBe(true);
+    expect(isControllerTypedSlashCommandResidue('/effort high')).toBe(true);
+    expect(isControllerTypedSlashCommandResidue('/effort medium/effort medium')).toBe(true);
+    expect(isControllerTypedSlashCommandResidue('  /model opus  ')).toBe(true);
+  });
+
+  it('fails safe to foreign for anything outside the finite controller vocabulary', async () => {
+    const { isControllerTypedSlashCommandResidue } = await import('./slashControls.js');
+    // User-typed commands the controller never types stay foreign drafts.
+    expect(isControllerTypedSlashCommandResidue('/compact focus on tests')).toBe(false);
+    expect(isControllerTypedSlashCommandResidue('/clear')).toBe(false);
+    expect(isControllerTypedSlashCommandResidue('hello world')).toBe(false);
+    expect(isControllerTypedSlashCommandResidue('')).toBe(false);
+    // A model arg containing '/' cannot be proven controller-typed — fail safe.
+    expect(isControllerTypedSlashCommandResidue('/model anthropic/sonnet extra')).toBe(false);
+  });
+});

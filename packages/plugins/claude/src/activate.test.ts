@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { PluginApiHookRegistrationV1 } from '@happier-dev/plugin-sdk';
+import type {
+    PluginApiHookRegistrationV1,
+    RegisterDaemonAuthBridgeV1,
+} from '@happier-dev/plugin-sdk';
 
 import { activate } from './activate.js';
 import {
@@ -36,11 +39,16 @@ describe('activate', () => {
         vi.stubEnv('HOME', root);
         vi.stubEnv('CLAUDE_CONFIG_DIR', configRoot);
 
-        const registerBackendEngine = vi.fn();
+        const registerAgentRuntime = vi.fn();
+        const daemonAuthBridgeRegistrations: RegisterDaemonAuthBridgeV1[] = [];
         const registerMcpDiscoveryProvider = vi.fn();
         const hookRegistrations: PluginApiHookRegistrationV1[] = [];
         activate({
-            registerBackendEngine,
+            registerAgentRuntime,
+            registerDaemonAuthBridge: (registration) => {
+                daemonAuthBridgeRegistrations.push(registration);
+                return { dispose: () => undefined };
+            },
             registerMcpDiscoveryProvider,
             registerHook: (registration) => {
                 hookRegistrations.push(registration);
@@ -48,35 +56,44 @@ describe('activate', () => {
             },
         });
 
-        expect(registerBackendEngine).toHaveBeenCalledWith(expect.objectContaining({
-            backendId: 'claude',
+        expect(registerAgentRuntime).toHaveBeenCalledWith(expect.objectContaining({
+            agentId: 'claude',
             create: expect.any(Function),
         }));
-        const backendRegistration = registerBackendEngine.mock.calls[0]?.[0] as Readonly<{
+        const backendRegistration = registerAgentRuntime.mock.calls[0]?.[0] as Readonly<{
             create: (ctx: unknown) => Promise<unknown>;
         }>;
-        await expect(backendRegistration.create(createPluginContextFixture(
+        const pluginContext = createPluginContextFixture(
             createTerminalHostFixture().service,
             createEventsFixture().service,
-        ))).resolves.toEqual(expect.objectContaining({
+        );
+        await expect(backendRegistration.create(pluginContext)).resolves.toEqual(expect.objectContaining({
             runtimeCore: expect.any(Object),
         }));
+        expect(pluginContext.logger.debug).toHaveBeenCalledWith('[plugins/claude] Creating backend engine');
+        expect(pluginContext.logger.info).not.toHaveBeenCalled();
+        expect(daemonAuthBridgeRegistrations).toEqual([
+            expect.objectContaining({
+                serviceId: 'claude-subscription',
+                refresh: expect.any(Function),
+            }),
+        ]);
         expect(registerMcpDiscoveryProvider).toHaveBeenCalledWith(expect.objectContaining({
             id: 'claude.config',
             discover: expect.any(Function),
         }));
         expect(hookRegistrations.map((registration) => registration.hookId)).toEqual([
-            'backend.resolveRuntimePrerequisites',
-            'spawn.augmentEnv',
+            'agent.resolvePrerequisites',
+            'agent.spawnEnv.augment',
         ]);
         expect(hookRegistrations).toEqual([
             expect.objectContaining({
-                hookId: 'backend.resolveRuntimePrerequisites',
-                filters: { backendId: 'claude' },
+                hookId: 'agent.resolvePrerequisites',
+                filters: { agentId: 'claude' },
             }),
             expect.objectContaining({
-                hookId: 'spawn.augmentEnv',
-                filters: { backendId: 'claude' },
+                hookId: 'agent.spawnEnv.augment',
+                filters: { agentId: 'claude' },
             }),
         ]);
 
@@ -114,10 +131,11 @@ describe('activate', () => {
         vi.stubEnv('HOME', root);
         vi.stubEnv('CLAUDE_CONFIG_DIR', configRoot);
 
-        const registerBackendEngine = vi.fn();
+        const registerAgentRuntime = vi.fn();
         const registerMcpDiscoveryProvider = vi.fn();
         activate({
-            registerBackendEngine,
+            registerAgentRuntime,
+            registerDaemonAuthBridge: vi.fn(),
             registerMcpDiscoveryProvider,
             registerHook: vi.fn(),
         });
@@ -136,6 +154,32 @@ describe('activate', () => {
                 code: 'parse_failed',
                 path: settingsPath,
             }],
+        });
+    });
+
+    it('passes direct activation-hook payloads through to Claude spawn env augmentation', async () => {
+        const hookRegistrations: PluginApiHookRegistrationV1[] = [];
+
+        activate({
+            registerAgentRuntime: vi.fn(),
+            registerDaemonAuthBridge: vi.fn(),
+            registerMcpDiscoveryProvider: vi.fn(),
+            registerHook: (registration) => {
+                hookRegistrations.push(registration);
+                return { dispose: () => undefined };
+            },
+        });
+
+        const envHook = hookRegistrations.find(
+            (registration) => registration.hookId === 'agent.spawnEnv.augment',
+        );
+
+        await expect(Promise.resolve(envHook?.handler({
+            env: {
+                HAPPIER_CLAUDE_CONFIG_DIR: '/tmp/claude-direct',
+            },
+        }))).resolves.toEqual({
+            CLAUDE_CONFIG_DIR: '/tmp/claude-direct',
         });
     });
 });

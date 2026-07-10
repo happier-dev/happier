@@ -15,6 +15,8 @@ import { createFakeControlPort } from './tuiControls/fakeControlPort.js';
 import { CLAUDE_UNIFIED_TUI_RUNTIME_CONTROL_FEATURE_ID } from './tuiControls/index.js';
 
 const IDLE = ['╭─────╮', '│ >   │', '╰─────╯', '  ? for shortcuts'].join('\n');
+const USER_DRAFT = ['╭─────╮', '│ > do not send this yet │', '╰─────╯'].join('\n');
+const ACCEPT_EDITS_IDLE = ['╭─────╮', '│ >   │', '╰─────╯', '  ⏵⏵ accept edits on (shift+tab to cycle)'].join('\n');
 const EFFORT_OK = ['Set reasoning effort to high', '╭─────╮', '│ >   │', '╰─────╯'].join('\n');
 const GENERATING = ['● working', '✶ Forging… (10s · esc to interrupt)', '╭─────╮', '│ >   │', '╰─────╯'].join('\n');
 const GEN_ACCEPT = [
@@ -58,7 +60,7 @@ function buildRuntime(params: Readonly<{
   const events = createEventsFixture();
   const ctx = createPluginContextFixture(terminalHost.service, events.service, {
     enabledFeatures: [
-      'providers.claude.unifiedTerminal',
+      'agents.claude.unifiedTerminal',
       ...(params.featureEnabled ? [CLAUDE_UNIFIED_TUI_RUNTIME_CONTROL_FEATURE_ID] : []),
     ],
     ...(params.sessionSend ? { sessionSend: params.sessionSend } : {}),
@@ -76,6 +78,14 @@ function buildRuntime(params: Readonly<{
   return { envelope, runtime: envelope.operations, fakePort, terminalHost };
 }
 
+type ComposerClearNativeRuntime = Readonly<{
+  clearTerminalComposer?: (request?: Readonly<{ sessionId?: string }>) => Promise<Readonly<{
+    ok: boolean;
+    status: string;
+    sessionId?: string;
+  }>>;
+}>;
+
 describe('Claude Unified TUI runtime control integration (updateSessionRuntimeConfig)', () => {
   it('keeps the legacy requires_interactive_control outcome when the feature is OFF', async () => {
     const configDir = await makeConfigDir();
@@ -91,6 +101,159 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
       });
       expect(outcome).toMatchObject({ status: 'requires_interactive_control' });
       expect(terminalHost.service.controlPort).not.toHaveBeenCalled();
+    } finally {
+      await runtime.resetOrDisposeRuntime().catch(() => undefined);
+    }
+  });
+
+  it('reports permission-mode runtime updates as requiring restart when the feature is OFF', async () => {
+    const configDir = await makeConfigDir();
+    const { runtime, terminalHost } = buildRuntime({
+      featureEnabled: false,
+      controlPortCaptures: [IDLE, ACCEPT_EDITS_IDLE],
+      configDir,
+    });
+    try {
+      await runtime.startOrLoadSession();
+      const outcome = await runtime.updateSessionRuntimeConfig({
+        permissionMode: 'acceptEdits',
+      });
+
+      expect(outcome).toMatchObject({
+        status: 'requires_restart',
+        reason: 'tui_runtime_control_unavailable',
+      });
+      expect(terminalHost.service.controlPort).not.toHaveBeenCalled();
+    } finally {
+      await runtime.resetOrDisposeRuntime().catch(() => undefined);
+    }
+  });
+
+  it('blocks the next canonical pending prompt when runtime config cannot apply before delivery', async () => {
+    const configDir = await makeConfigDir();
+    const { envelope, runtime, terminalHost } = buildRuntime({
+      featureEnabled: false,
+      controlPortCaptures: [IDLE, ACCEPT_EDITS_IDLE],
+      configDir,
+    });
+    const nativeRuntime = envelope.nativeRuntime as unknown as Readonly<{
+      setOnPromptTerminallyRejectedBeforeProvider(
+        handler: (info: Readonly<{
+          localIds?: readonly string[];
+          userMessageSeq: number | null;
+          deliveryBlockedReason?: string;
+        }>) => void,
+      ): void;
+    }>;
+    const rejected: Array<{
+      localIds?: readonly string[];
+      userMessageSeq: number | null;
+      deliveryBlockedReason?: string;
+    }> = [];
+    nativeRuntime.setOnPromptTerminallyRejectedBeforeProvider((info) => rejected.push({ ...info }));
+    try {
+      await runtime.startOrLoadSession();
+      await runtime.updateSessionRuntimeConfig({ permissionMode: 'acceptEdits' });
+
+      await runtime.sendTurnPrompt('prompt requiring acceptEdits', {
+        localId: 'local-runtime-config-blocked',
+        localIds: ['local-runtime-config-blocked'],
+        userMessageSeq: null,
+      });
+
+      expect(terminalHost.service.injectUserPrompt).not.toHaveBeenCalled();
+      expect(rejected).toEqual([{
+        localIds: ['local-runtime-config-blocked'],
+        userMessageSeq: null,
+        deliveryBlockedReason: 'runtime_config_blocked',
+      }]);
+    } finally {
+      await runtime.resetOrDisposeRuntime().catch(() => undefined);
+    }
+  });
+
+  it('does not block prompt delivery when ambient runtime config cannot apply before delivery', async () => {
+    const configDir = await makeConfigDir();
+    const { envelope, runtime, terminalHost } = buildRuntime({
+      featureEnabled: false,
+      controlPortCaptures: [IDLE],
+      configDir,
+    });
+    const nativeRuntime = envelope.nativeRuntime as unknown as Readonly<{
+      setOnPromptTerminallyRejectedBeforeProvider(
+        handler: (info: Readonly<{
+          localIds?: readonly string[];
+          userMessageSeq: number | null;
+          deliveryBlockedReason?: string;
+        }>) => void,
+      ): void;
+    }>;
+    const rejected: Array<{
+      localIds?: readonly string[];
+      userMessageSeq: number | null;
+      deliveryBlockedReason?: string;
+    }> = [];
+    nativeRuntime.setOnPromptTerminallyRejectedBeforeProvider((info) => rejected.push({ ...info }));
+    try {
+      await runtime.startOrLoadSession();
+      await runtime.updateSessionRuntimeConfig({ modelId: 'claude-sonnet-4-6' });
+
+      await runtime.sendTurnPrompt('prompt must not wait for ambient model config', {
+        localId: 'local-ambient-runtime-config',
+        localIds: ['local-ambient-runtime-config'],
+        userMessageSeq: null,
+      });
+
+      expect(terminalHost.service.injectUserPrompt).toHaveBeenCalledTimes(1);
+      expect(rejected).toEqual([]);
+    } finally {
+      await runtime.resetOrDisposeRuntime().catch(() => undefined);
+    }
+  });
+
+  it('keeps active-turn runtime-config user-draft blockers transient', async () => {
+    const configDir = await makeConfigDir();
+    const { envelope, runtime, terminalHost } = buildRuntime({
+      featureEnabled: false,
+      controlPortCaptures: [IDLE, ACCEPT_EDITS_IDLE],
+      configDir,
+    });
+    const nativeRuntime = envelope.nativeRuntime as unknown as Readonly<{
+      observeTerminalLifecycle(observation: unknown): Promise<void>;
+      setOnPromptTerminallyRejectedBeforeProvider(
+        handler: (info: Readonly<{
+          localIds?: readonly string[];
+          userMessageSeq: number | null;
+          deliveryBlockedReason?: string;
+        }>) => void,
+      ): void;
+    }>;
+    const rejected: Array<{
+      localIds?: readonly string[];
+      userMessageSeq: number | null;
+      deliveryBlockedReason?: string;
+    }> = [];
+    nativeRuntime.setOnPromptTerminallyRejectedBeforeProvider((info) => rejected.push({ ...info }));
+    try {
+      await runtime.startOrLoadSession();
+      await runtime.sendTurnPrompt('first prompt');
+      await nativeRuntime.observeTerminalLifecycle({
+        agentId: 'claude',
+        type: 'prompt_submitted',
+        promptText: 'first prompt',
+        observedAtMs: 123,
+        source: 'hook',
+      });
+
+      await runtime.updateSessionRuntimeConfig({ permissionMode: 'acceptEdits' });
+      await runtime.sendTurnPrompt('prompt requiring acceptEdits after turn end', {
+        localId: 'local-active-runtime-config-blocked',
+        localIds: ['local-active-runtime-config-blocked'],
+        userMessageSeq: null,
+      });
+
+      expect(terminalHost.service.injectUserPrompt).toHaveBeenCalledTimes(1);
+      expect(rejected).toEqual([]);
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
     }
@@ -127,6 +290,114 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
     }
   });
 
+  it('applies a metadata-only permission-mode override through verified TUI mode cycling', async () => {
+    const configDir = await makeConfigDir();
+    const sessionSend = vi.fn(async () => ({ ok: true }));
+    const { runtime, fakePort } = buildRuntime({
+      featureEnabled: true,
+      controlPortCaptures: [IDLE, ACCEPT_EDITS_IDLE],
+      configDir,
+      sessionSend,
+    });
+    try {
+      await runtime.startOrLoadSession();
+      const outcome = await runtime.updateSessionRuntimeConfig({
+        permissionMode: 'acceptEdits',
+      });
+
+      expect(outcome).toMatchObject({ status: 'applied' });
+      expect(fakePort?.sentKeys).toEqual(['ShiftTab']);
+      expect(fakePort?.sentLiteral.some((text) => text.startsWith('/permissions'))).toBe(false);
+      expect(sessionSend).toHaveBeenCalledWith(expect.objectContaining({
+        kind: 'sessionEvent',
+        event: expect.objectContaining({
+          type: 'runtime-config-outcome',
+          runtime: 'claude-unified-terminal',
+          status: 'applied',
+          changes: [expect.objectContaining({ key: 'permissionMode', effective: 'acceptEdits' })],
+        }),
+      }));
+    } finally {
+      await runtime.resetOrDisposeRuntime().catch(() => undefined);
+    }
+  });
+
+  it('applies a metadata-only mode-only permission change during generation through the mode-cycle window', async () => {
+    const configDir = await makeConfigDir();
+    const sessionSend = vi.fn(async () => ({ ok: true }));
+    const { runtime, fakePort } = buildRuntime({
+      featureEnabled: true,
+      controlPortCaptures: [GENERATING, GEN_ACCEPT],
+      configDir,
+      sessionSend,
+    });
+    try {
+      await runtime.startOrLoadSession();
+      const outcome = await runtime.updateSessionRuntimeConfig({
+        permissionMode: 'acceptEdits',
+      });
+
+      expect(outcome).toMatchObject({ status: 'applied' });
+      expect(fakePort?.sentKeys).toEqual(['ShiftTab']);
+      expect(sessionSend).toHaveBeenCalledWith(expect.objectContaining({
+        kind: 'sessionEvent',
+        event: expect.objectContaining({
+          type: 'runtime-config-outcome',
+          runtime: 'claude-unified-terminal',
+          status: 'applied',
+          changes: [expect.objectContaining({ key: 'permissionMode', effective: 'acceptEdits' })],
+        }),
+      }));
+    } finally {
+      await runtime.resetOrDisposeRuntime().catch(() => undefined);
+    }
+  });
+
+  it('reports launch-only permission modes as requiring restart through runtime-control outcomes', async () => {
+    const configDir = await makeConfigDir();
+    const { runtime } = buildRuntime({
+      featureEnabled: true,
+      controlPortCaptures: [IDLE],
+      configDir,
+    });
+    try {
+      await runtime.startOrLoadSession();
+      const outcome = await runtime.updateSessionRuntimeConfig({
+        permissionMode: 'read-only',
+      });
+
+      expect(outcome).toMatchObject({
+        status: 'requires_restart',
+        reason: 'mode_not_cycle_reachable:read-only',
+      });
+    } finally {
+      await runtime.resetOrDisposeRuntime().catch(() => undefined);
+    }
+  });
+
+  it('does not apply the retired plural configOptions alias through TUI controls', async () => {
+    const configDir = await makeConfigDir();
+    const { runtime, fakePort } = buildRuntime({
+      featureEnabled: true,
+      controlPortCaptures: [IDLE, IDLE, EFFORT_OK],
+      configDir,
+    });
+    try {
+      await runtime.startOrLoadSession();
+      const outcome = await runtime.updateSessionRuntimeConfig({
+        configOptions: { reasoning_effort: 'high' },
+      });
+
+      expect(outcome).toMatchObject({
+        status: 'requires_interactive_control',
+        reason: 'unknown_directive:configOptions',
+      });
+      expect(fakePort?.sentLiteral).not.toContain('/effort high');
+    } finally {
+      await runtime.resetOrDisposeRuntime().catch(() => undefined);
+    }
+  });
+
   it('falls back to the legacy outcome when the host adapter exposes no control port', async () => {
     const configDir = await makeConfigDir();
     const { runtime } = buildRuntime({
@@ -157,6 +428,78 @@ describe('Claude Unified TUI runtime control integration (updateSessionRuntimeCo
       const outcome = await runtime.updateSessionRuntimeConfig({ fallbackModel: 'claude-haiku-4-5' });
       expect(outcome).toMatchObject({ status: 'requires_interactive_control' });
       expect(fakePort?.sentLiteral).toHaveLength(0);
+    } finally {
+      await runtime.resetOrDisposeRuntime().catch(() => undefined);
+    }
+  });
+});
+
+describe('Claude Unified terminal composer clear runtime control', () => {
+  it('exposes a user-authorized clear control that clears a safe draft with Escape', async () => {
+    const configDir = await makeConfigDir();
+    const { envelope, runtime, fakePort } = buildRuntime({
+      featureEnabled: true,
+      controlPortCaptures: [USER_DRAFT, IDLE],
+      configDir,
+    });
+    try {
+      await runtime.startOrLoadSession();
+      const nativeRuntime = envelope.nativeRuntime as ComposerClearNativeRuntime;
+
+      const result = await nativeRuntime.clearTerminalComposer?.({ sessionId: 'happy-session-1' });
+
+      expect(result).toMatchObject({ ok: true, status: 'cleared', sessionId: 'happy-session-1' });
+      expect(fakePort?.sentKeys).toEqual(['Escape']);
+    } finally {
+      await runtime.resetOrDisposeRuntime().catch(() => undefined);
+    }
+  });
+
+  it('returns unsupported without touching the terminal when TUI runtime control is disabled', async () => {
+    const configDir = await makeConfigDir();
+    const { envelope, runtime, terminalHost } = buildRuntime({
+      featureEnabled: false,
+      controlPortCaptures: [USER_DRAFT, IDLE],
+      configDir,
+    });
+    try {
+      await runtime.startOrLoadSession();
+      const nativeRuntime = envelope.nativeRuntime as ComposerClearNativeRuntime;
+
+      const result = await nativeRuntime.clearTerminalComposer?.({ sessionId: 'happy-session-1' });
+
+      expect(result).toMatchObject({ ok: false, status: 'unsupported' });
+      expect(terminalHost.service.controlPort).not.toHaveBeenCalled();
+    } finally {
+      await runtime.resetOrDisposeRuntime().catch(() => undefined);
+    }
+  });
+
+  it('wakes a prompt that was deferred behind the terminal user draft after clear succeeds', async () => {
+    const configDir = await makeConfigDir();
+    const { envelope, runtime, terminalHost } = buildRuntime({
+      featureEnabled: true,
+      controlPortCaptures: [USER_DRAFT, IDLE],
+      configDir,
+    });
+    (terminalHost.service.captureInputState as ReturnType<typeof vi.fn>).mockResolvedValue({
+      stable: true,
+      currentInput: USER_DRAFT,
+      observedAt: 101,
+    });
+    try {
+      await runtime.sendTurnPrompt('queued after draft');
+      expect(terminalHost.service.injectUserPrompt).not.toHaveBeenCalled();
+
+      const nativeRuntime = envelope.nativeRuntime as ComposerClearNativeRuntime;
+      const result = await nativeRuntime.clearTerminalComposer?.({ sessionId: 'happy-session-1' });
+
+      expect(result).toMatchObject({ ok: true, status: 'cleared' });
+      expect(terminalHost.service.injectUserPrompt).toHaveBeenCalledTimes(1);
+      expect(terminalHost.service.injectUserPrompt).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ text: 'queued after draft' }),
+      );
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
     }

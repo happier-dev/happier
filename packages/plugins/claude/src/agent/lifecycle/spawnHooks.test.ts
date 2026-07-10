@@ -7,18 +7,19 @@ import {
 
 describe('resolveClaudeDaemonSpawnPrerequisites', () => {
     it('resolves Claude through the daemon tool-resolution context', async () => {
-        const resolveManagedInstallable = vi.fn(async () => ({
+        const resolveSystemTool = vi.fn(async () => ({
             ok: true as const,
             command: '/usr/local/bin/claude',
             args: [],
         }));
 
         await expect(resolveClaudeDaemonSpawnPrerequisites({}, {
-            tools: { resolveManagedInstallable },
+            tools: { resolveSystemTool },
         })).resolves.toEqual({ allowed: true });
 
-        expect(resolveManagedInstallable).toHaveBeenCalledWith(expect.objectContaining({
-            installableId: 'claude',
+        expect(resolveSystemTool).toHaveBeenCalledWith(expect.objectContaining({
+            toolId: 'claude',
+            lookupNames: ['claude'],
             sourcePreference: 'system-first',
         }));
     });
@@ -33,7 +34,7 @@ describe('resolveClaudeDaemonSpawnPrerequisites', () => {
     it('returns daemon tool-resolution failures as typed denials', async () => {
         await expect(resolveClaudeDaemonSpawnPrerequisites({}, {
             tools: {
-                resolveManagedInstallable: async () => ({
+                resolveSystemTool: async () => ({
                     ok: false as const,
                     errorMessage: 'Claude CLI is missing',
                 }),

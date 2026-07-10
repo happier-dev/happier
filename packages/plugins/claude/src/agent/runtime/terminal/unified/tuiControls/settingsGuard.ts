@@ -1,14 +1,19 @@
 import {
+  chmod,
   mkdir,
   readFile,
   realpath,
+  rename,
   rm,
   stat,
   writeFile,
   lstat,
 } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { HAPPIER_CLAUDE_CONFIG_DIR_ENV } from '@happier-dev/plugin-sdk/experimental/envConstants';
+import { sleep } from '@happier-dev/plugin-sdk/experimental/timeout';
 
 /**
  * Settings isolation guard for `/model` and `/effort` controls.
@@ -25,6 +30,7 @@ const DEFAULT_TRACKED_FILES = ['settings.json', 'settings.local.json', '.claude.
 const DEFAULT_LOCK_TIMEOUT_MS = 5_000;
 const DEFAULT_LOCK_STALE_MS = 60_000;
 const LOCK_DIR_NAME = '.happier-tui-control.lock';
+const JOURNAL_FILE_NAME = 'settings-journal.json';
 
 function readNonEmpty(value: string | undefined): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
@@ -39,7 +45,7 @@ function readNonEmpty(value: string | undefined): string | null {
 export function resolveClaudeConfigRootFromEnv(env: Readonly<Record<string, string | undefined>>): string {
   const explicit = readNonEmpty(env.CLAUDE_CONFIG_DIR);
   if (explicit) return explicit;
-  const managed = readNonEmpty(env.HAPPIER_CLAUDE_CONFIG_DIR);
+  const managed = readNonEmpty(env[HAPPIER_CLAUDE_CONFIG_DIR_ENV]);
   if (managed) return managed;
   const home = readNonEmpty(env.HOME) ?? readNonEmpty(env.USERPROFILE) ?? homedir();
   return join(home, '.claude');
@@ -52,6 +58,7 @@ export type SettingsGuardSnapshotFile = Readonly<{
   isSymlink: boolean;
   resolvedPath: string;
   content: Buffer | null;
+  mode: number | null;
 }>;
 
 export type SettingsGuardRestoreResult =
@@ -73,19 +80,24 @@ export interface SettingsGuard {
 // snapshot/restore ordering before the cross-process advisory lock dir is even attempted.
 const IN_PROCESS_LOCKS = new Map<string, Promise<void>>();
 
+export function getClaudeSettingsGuardInProcessLockCountForTesting(): number {
+  return IN_PROCESS_LOCKS.size;
+}
+
 async function acquireInProcessLock(key: string): Promise<() => void> {
   const previous = IN_PROCESS_LOCKS.get(key) ?? Promise.resolve();
   let releaseFn: () => void = () => undefined;
   const held = new Promise<void>((resolve) => {
     releaseFn = resolve;
   });
-  IN_PROCESS_LOCKS.set(key, previous.then(() => held));
+  const tail = previous.then(() => held);
+  IN_PROCESS_LOCKS.set(key, tail);
   await previous;
   return () => {
     releaseFn();
     // Drop the registry entry once the chain tail returns to idle so the map does not grow unbounded.
-    void held.then(() => {
-      if (IN_PROCESS_LOCKS.get(key) === held) IN_PROCESS_LOCKS.delete(key);
+    void tail.then(() => {
+      if (IN_PROCESS_LOCKS.get(key) === tail) IN_PROCESS_LOCKS.delete(key);
     });
   };
 }
@@ -107,11 +119,34 @@ async function lstatOrNull(path: string): Promise<Awaited<ReturnType<typeof lsta
   }
 }
 
+async function chmodIfSupported(path: string, mode: number): Promise<void> {
+  if (process.platform === 'win32') return;
+  await chmod(path, mode).catch(() => undefined);
+}
+
+function tempSiblingPath(path: string): string {
+  return join(dirname(path), `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
+}
+
+async function writeFileAtomically(path: string, content: Buffer | string, mode: number | null): Promise<void> {
+  const tempPath = tempSiblingPath(path);
+  const writeMode = mode ?? 0o600;
+  try {
+    await writeFile(tempPath, content, { mode: writeMode });
+    await chmodIfSupported(tempPath, writeMode);
+    await rename(tempPath, path);
+    await chmodIfSupported(path, writeMode);
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
 async function snapshotFile(configDir: string, relPath: string): Promise<SettingsGuardSnapshotFile> {
   const absPath = join(configDir, relPath);
   const link = await lstatOrNull(absPath);
   if (!link) {
-    return { relPath, absPath, existedBefore: false, isSymlink: false, resolvedPath: absPath, content: null };
+    return { relPath, absPath, existedBefore: false, isSymlink: false, resolvedPath: absPath, content: null, mode: null };
   }
   const isSymlink = link.isSymbolicLink();
   let resolvedPath = absPath;
@@ -120,16 +155,22 @@ async function snapshotFile(configDir: string, relPath: string): Promise<Setting
       resolvedPath = await realpath(absPath);
     } catch {
       // Dangling symlink: treat the link target as non-existent content.
-      return { relPath, absPath, existedBefore: true, isSymlink, resolvedPath: absPath, content: null };
+      return { relPath, absPath, existedBefore: true, isSymlink, resolvedPath: absPath, content: null, mode: null };
     }
   }
   let content: Buffer | null = null;
+  let mode: number | null = null;
+  try {
+    mode = (await stat(resolvedPath)).mode & 0o777;
+  } catch {
+    mode = null;
+  }
   try {
     content = await readFile(resolvedPath);
   } catch {
     content = null;
   }
-  return { relPath, absPath, existedBefore: true, isSymlink, resolvedPath, content };
+  return { relPath, absPath, existedBefore: true, isSymlink, resolvedPath, content, mode };
 }
 
 async function restoreFile(file: SettingsGuardSnapshotFile): Promise<SettingsGuardRestoreResult> {
@@ -146,7 +187,7 @@ async function restoreFile(file: SettingsGuardSnapshotFile): Promise<SettingsGua
 
   if (file.content === null) return { ok: true };
 
-  await writeFile(file.resolvedPath, file.content);
+  await writeFileAtomically(file.resolvedPath, file.content, file.mode);
   let after: Buffer;
   try {
     after = await readFile(file.resolvedPath);
@@ -156,6 +197,105 @@ async function restoreFile(file: SettingsGuardSnapshotFile): Promise<SettingsGua
   if (!after.equals(file.content)) {
     return { ok: false, reason: `byte mismatch after restoring ${file.relPath}` };
   }
+  return { ok: true };
+}
+
+type SettingsGuardJournal = Readonly<{
+  version: 1;
+  files: readonly SettingsGuardJournalFile[];
+}>;
+
+type SettingsGuardJournalFile = Readonly<{
+  relPath: string;
+  absPath: string;
+  existedBefore: boolean;
+  isSymlink: boolean;
+  resolvedPath: string;
+  contentBase64: string | null;
+  mode?: number | null;
+}>;
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function parseJournalFile(value: unknown): SettingsGuardSnapshotFile | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  if (
+    typeof record.relPath !== 'string'
+    || typeof record.absPath !== 'string'
+    || typeof record.existedBefore !== 'boolean'
+    || typeof record.isSymlink !== 'boolean'
+    || typeof record.resolvedPath !== 'string'
+    || !(record.contentBase64 === null || typeof record.contentBase64 === 'string')
+  ) {
+    return null;
+  }
+  return {
+    relPath: record.relPath,
+    absPath: record.absPath,
+    existedBefore: record.existedBefore,
+    isSymlink: record.isSymlink,
+    resolvedPath: record.resolvedPath,
+    content: typeof record.contentBase64 === 'string' ? Buffer.from(record.contentBase64, 'base64') : null,
+    mode: typeof record.mode === 'number' && Number.isFinite(record.mode) ? record.mode & 0o777 : null,
+  };
+}
+
+function parseJournal(value: unknown): readonly SettingsGuardSnapshotFile[] | null {
+  const record = asRecord(value);
+  if (!record || record.version !== 1 || !Array.isArray(record.files)) return null;
+  const files: SettingsGuardSnapshotFile[] = [];
+  for (const file of record.files) {
+    const parsed = parseJournalFile(file);
+    if (!parsed) return null;
+    files.push(parsed);
+  }
+  return files;
+}
+
+async function writeJournal(lockDir: string, snapshot: readonly SettingsGuardSnapshotFile[]): Promise<void> {
+  const journal: SettingsGuardJournal = {
+    version: 1,
+    files: snapshot.map((file): SettingsGuardJournalFile => ({
+      relPath: file.relPath,
+      absPath: file.absPath,
+      existedBefore: file.existedBefore,
+      isSymlink: file.isSymlink,
+      resolvedPath: file.resolvedPath,
+      contentBase64: file.content === null ? null : file.content.toString('base64'),
+      mode: file.mode,
+    })),
+  };
+  await writeFileAtomically(join(lockDir, JOURNAL_FILE_NAME), JSON.stringify(journal), 0o600);
+}
+
+async function restoreJournalIfPresent(lockDir: string): Promise<SettingsGuardRestoreResult> {
+  const journalPath = join(lockDir, JOURNAL_FILE_NAME);
+  let raw: string;
+  try {
+    raw = await readFile(journalPath, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { ok: true };
+    return { ok: false, reason: 'failed to read stale settings journal' };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    return { ok: false, reason: 'failed to parse stale settings journal' };
+  }
+
+  const snapshot = parseJournal(parsed);
+  if (!snapshot) return { ok: false, reason: 'invalid stale settings journal' };
+
+  for (const file of snapshot) {
+    const result = await restoreFile(file);
+    if (!result.ok) return result;
+  }
+  await rm(journalPath, { force: true });
   return { ok: true };
 }
 
@@ -169,7 +309,7 @@ export function createClaudeSettingsGuard(params: Readonly<{
 }>): SettingsGuard {
   const configDir = params.configDir;
   const nowMs = params.nowMs ?? Date.now;
-  const wait = params.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const wait = params.wait ?? sleep;
   const lockTimeoutMs = Math.max(1, params.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS);
   const lockStaleMs = Math.max(1, params.lockStaleMs ?? DEFAULT_LOCK_STALE_MS);
   const trackedFiles = params.trackedFiles ?? DEFAULT_TRACKED_FILES;
@@ -186,13 +326,18 @@ export function createClaudeSettingsGuard(params: Readonly<{
         await mkdir(configDir, { recursive: true });
         for (;;) {
           try {
-            await mkdir(lockDir);
+            await mkdir(lockDir, { mode: 0o700 });
+            await chmodIfSupported(lockDir, 0o700);
             lockHeld = true;
             break;
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
             const lockInfo = await lstatOrNull(lockDir);
             if (lockInfo && nowMs() - Number(lockInfo.mtimeMs) > lockStaleMs) {
+              const staleRestore = await restoreJournalIfPresent(lockDir);
+              if (!staleRestore.ok) {
+                throw new Error(`failed to restore stale Claude settings journal for ${configDir}: ${staleRestore.reason}`);
+              }
               await rm(lockDir, { recursive: true, force: true });
               continue;
             }
@@ -210,6 +355,7 @@ export function createClaudeSettingsGuard(params: Readonly<{
       let snapshot: readonly SettingsGuardSnapshotFile[];
       try {
         snapshot = await Promise.all(trackedFiles.map((relPath) => snapshotFile(configDir, relPath)));
+        await writeJournal(lockDir, snapshot);
       } catch (error) {
         if (lockHeld) await rm(lockDir, { recursive: true, force: true }).catch(() => undefined);
         releaseInProcess();
@@ -232,6 +378,7 @@ export function createClaudeSettingsGuard(params: Readonly<{
             const result = await restoreFile(file);
             if (!result.ok) return result;
           }
+          await rm(join(lockDir, JOURNAL_FILE_NAME), { force: true });
           return { ok: true };
         },
         release,

@@ -1,4 +1,5 @@
 export const CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE = 'claude_local_permission_bridge' as const;
+export const CLAUDE_LOCAL_PERMISSION_BRIDGE_STOPPED_REASON = 'Local permission bridge stopped' as const;
 
 type ClaudeLocalPermissionBridgeAgentStateRequest = Readonly<{
     source: typeof CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE;

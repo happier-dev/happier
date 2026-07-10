@@ -98,27 +98,30 @@ describe('verifyClaudeCodeNativeAuth', () => {
     expect(result.status).toBe('credential_fingerprint_mismatch');
   });
 
-  it('fails closed on darwin when the matching keychain entry is missing the refresh token even if the file is healthy', async () => {
+  it('verifies a healthy file on darwin when no derived keychain item exists (nothing writes it)', async () => {
+    // Happier no longer writes a derived keychain item; the read-back must NOT loop on a permanent
+    // fingerprint mismatch against an item nothing produces. A null keychain read = file is authoritative.
     const claudeConfigDir = await writeCredentials(10_000);
     Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'darwin' });
     vi.doMock('./keychain.js', async (importOriginal) => {
       const actual = await importOriginal<typeof import('./keychain.js')>();
       return {
         ...actual,
-        readClaudeCodeMacOsKeychainCredential: vi.fn(async () => ({
-          claudeAiOauth: {
-            accessToken: 'access-token',
-            expiresAt: 10_000,
-            scopes: REQUIRED_SCOPES,
-          },
-        })),
+        readClaudeCodeMacOsKeychainCredential: vi.fn(async () => null),
       };
     });
 
     const { verifyClaudeCodeNativeAuth: verifyUnderDarwin } = await import('./verify.js');
     const result = await verifyUnderDarwin({ claudeConfigDir, now: 1_000, exec: createExecFixture() });
 
-    expect(result.status).toBe('missing_refresh_token');
+    expect(result.status).toBe('ok');
+  });
+
+  it('verifies a healthy file on darwin without an exec runtime (cannot read keychain fallback)', async () => {
+    const claudeConfigDir = await writeCredentials(10_000);
+    Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'darwin' });
+    const result = await verifyClaudeCodeNativeAuth({ claudeConfigDir, now: 1_000 });
+    expect(result.status).toBe('ok');
   });
 
   it('fails closed on darwin when the keychain credential differs from the credential file', async () => {

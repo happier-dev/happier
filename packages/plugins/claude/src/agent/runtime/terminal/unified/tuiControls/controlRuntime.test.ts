@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { TerminalControlPort } from '@happier-dev/agents';
+import type { TerminalControlPort } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 import { captureScreenState } from './controlRuntime.js';
 

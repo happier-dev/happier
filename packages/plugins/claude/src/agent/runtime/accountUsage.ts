@@ -1,5 +1,6 @@
 import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
-import { buildProviderAccountUsageOpaqueLocalCredentialRef } from '@happier-dev/protocol';
+import { buildProviderAccountUsageOpaqueLocalCredentialRef } from '@happier-dev/plugin-sdk/experimental/cloud/usage';
+import { HAPPIER_CLAUDE_CONFIG_DIR_ENV } from '@happier-dev/plugin-sdk/experimental/envConstants';
 
 import {
   mapClaudeRateLimitEventToUsageDetails,
@@ -9,10 +10,15 @@ import { resolveClaudeUsageSubjectRef } from '../auth/services/usage/identity.js
 import {
   mapClaudeRuntimeRateLimitsToProviderAccountUsageSnapshot,
   mapClaudeUsageLimitDetailsToProviderAccountUsageSnapshot,
-  type ClaudeProviderAccountUsageAliasInput,
 } from '../auth/services/usage/snapshot.js';
 
-type ClaudeRuntimeAccountUsageContext = Pick<PluginContextV1, 'accountUsage' | 'logger'>;
+type ClaudeRuntimeAccountUsageContext = Readonly<{
+  agentRuntime: Pick<PluginContextV1['agentRuntime'], 'accountUsage'>;
+  logger: PluginContextV1['logger'];
+}>;
+type ClaudeProviderAccountUsageSourceContext = Awaited<
+  ReturnType<PluginContextV1['agentRuntime']['accountUsage']['resolveSourceContext']>
+>;
 
 type ClaudeRuntimeAccountUsageParams = Readonly<{
   ctx: ClaudeRuntimeAccountUsageContext;
@@ -27,7 +33,7 @@ function readString(value: unknown): string | null {
 }
 
 function readClaudeConfigDir(env: Readonly<Record<string, string>> | null | undefined): string | null {
-  return readString(env?.CLAUDE_CONFIG_DIR) ?? readString(env?.HAPPIER_CLAUDE_CONFIG_DIR);
+  return readString(env?.CLAUDE_CONFIG_DIR) ?? readString(env?.[HAPPIER_CLAUDE_CONFIG_DIR_ENV]);
 }
 
 function hasEnvCredential(env: Readonly<Record<string, string>> | null | undefined): boolean {
@@ -38,10 +44,14 @@ function hasEnvCredential(env: Readonly<Record<string, string>> | null | undefin
   );
 }
 
-function buildRuntimeAlias(params: Readonly<{
+function buildRuntimeIdentity(params: Readonly<{
   sessionId: string;
   launchEnv?: Readonly<Record<string, string>> | null;
-}>): ClaudeProviderAccountUsageAliasInput {
+}>): Readonly<{
+  kind: 'nativeCli' | 'envCredential';
+  sessionId: string;
+  localCredentialRef?: string;
+}> {
   const claudeConfigDir = readClaudeConfigDir(params.launchEnv);
   if (claudeConfigDir) {
     return {
@@ -68,12 +78,19 @@ function buildRuntimeAlias(params: Readonly<{
 }
 
 function buildProvisionalDiscriminator(params: Readonly<{
-  alias: ClaudeProviderAccountUsageAliasInput;
+  identity: ReturnType<typeof buildRuntimeIdentity>;
   sessionId: string;
   launchEnv?: Readonly<Record<string, string>> | null;
+  sourceContext: ClaudeProviderAccountUsageSourceContext;
 }>): string {
+  if (params.sourceContext?.bindingKind === 'group_member' && params.sourceContext.groupId) {
+    return `connected-service-group:${params.sourceContext.serviceId}:${params.sourceContext.groupId}:${params.sourceContext.profileId}`;
+  }
+  if (params.sourceContext?.bindingKind === 'profile') {
+    return `connected-service-profile:${params.sourceContext.serviceId}:${params.sourceContext.profileId}`;
+  }
   const claudeConfigDir = readClaudeConfigDir(params.launchEnv);
-  if (params.alias.kind === 'nativeCli' && claudeConfigDir) {
+  if (params.identity.kind === 'nativeCli' && claudeConfigDir) {
     return `native:${claudeConfigDir}`;
   }
   return `session:${params.sessionId}`;
@@ -82,19 +99,34 @@ function buildProvisionalDiscriminator(params: Readonly<{
 export async function recordClaudeRuntimeProviderAccountUsageSnapshot(
   params: ClaudeRuntimeAccountUsageParams,
 ): Promise<void> {
-  const service = params.ctx.accountUsage;
+  const service = params.ctx.agentRuntime.accountUsage;
   if (!service || typeof service.recordSnapshot !== 'function') return;
 
   const observedAtMs = params.observedAtMs ?? Date.now();
-  const alias = buildRuntimeAlias({
+  const identity = buildRuntimeIdentity({
     sessionId: params.sessionId,
     launchEnv: params.launchEnv,
   });
+  let sourceContext: ClaudeProviderAccountUsageSourceContext = null;
+  if (typeof service.resolveSourceContext === 'function') {
+    try {
+      sourceContext = await service.resolveSourceContext({
+        serviceId: 'claude-subscription',
+        ...(params.launchEnv ? { env: params.launchEnv } : {}),
+      });
+    } catch (error) {
+      params.ctx.logger.debug('Claude runtime provider-account usage source context resolution failed (ignored)', {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+      return;
+    }
+  }
   const subject = resolveClaudeUsageSubjectRef({
     provisionalDiscriminator: buildProvisionalDiscriminator({
-      alias,
+      identity,
       sessionId: params.sessionId,
       launchEnv: params.launchEnv,
+      sourceContext,
     }),
   });
 
@@ -105,7 +137,6 @@ export async function recordClaudeRuntimeProviderAccountUsageSnapshot(
       observation,
       observedAtMs,
       fetchedAtMs: observedAtMs,
-      aliases: [alias],
     })
     : (() => {
       const details = mapClaudeRateLimitEventToUsageDetails(params.evidence);
@@ -115,7 +146,6 @@ export async function recordClaudeRuntimeProviderAccountUsageSnapshot(
         details,
         observedAtMs,
         fetchedAtMs: observedAtMs,
-        aliases: [alias],
       });
     })();
 
@@ -125,6 +155,7 @@ export async function recordClaudeRuntimeProviderAccountUsageSnapshot(
     const result = await service.recordSnapshot({
       sessionId: params.sessionId,
       snapshot,
+      ...(sourceContext ? { source: sourceContext } : {}),
     });
     if (result.status !== 'recorded') {
       params.ctx.logger.debug('Claude runtime provider-account usage snapshot was not recorded', {

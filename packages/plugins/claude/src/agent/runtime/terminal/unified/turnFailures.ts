@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
-import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 import {
   buildClaudeProcessExitRuntimeIssue,
@@ -99,10 +99,11 @@ export function recordClaudeUnifiedProcessExitFailure(params: ClaudeUnifiedFailu
     occurredAt: Date.now(),
     exitCode: params.exitCode,
     signal: params.signal,
+    turnWasInFlight: params.allocateTurnWhenIdle !== true,
   });
   return publishRecordedFailure(
     params,
     issue,
-    issue.sanitizedPreview ?? 'Claude unified terminal process exited while a turn was in flight',
+    issue.sanitizedPreview ?? 'Claude unified terminal process exited',
   );
 }

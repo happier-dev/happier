@@ -28,6 +28,15 @@ export type RawJSONLines =
         [key: string]: unknown;
     }>
     | Readonly<{
+        type: 'result';
+        subtype: string;
+        uuid: string;
+        session_id: string;
+        usage: Readonly<Record<string, unknown>>;
+        modelUsage: Readonly<Record<string, unknown>>;
+        [key: string]: unknown;
+    }>
+    | Readonly<{
         type: 'summary';
         summary: string;
         leafUuid: string;
@@ -41,6 +50,12 @@ export type RawJSONLines =
     | Readonly<{
         type: 'progress';
         uuid?: string;
+        [key: string]: unknown;
+    }>
+    | Readonly<{
+        type: 'attachment';
+        uuid: string;
+        attachment: Readonly<Record<string, unknown>>;
         [key: string]: unknown;
     }>;
 
@@ -115,6 +130,14 @@ function parseRawJsonLines(value: unknown): RawJSONLines | null {
             }
             return value as RawJSONLines;
         }
+        case 'result': {
+            if (!isNonEmptyString(value.subtype)) return null;
+            if (!isNonEmptyString(value.uuid)) return null;
+            if (!isNonEmptyString(value.session_id)) return null;
+            if (!isRecord(value.usage)) return null;
+            if (!isRecord(value.modelUsage)) return null;
+            return value as RawJSONLines;
+        }
         case 'summary': {
             if (!isNonEmptyString(value.summary)) return null;
             if (!isNonEmptyString(value.leafUuid)) return null;
@@ -126,6 +149,11 @@ function parseRawJsonLines(value: unknown): RawJSONLines | null {
         }
         case 'progress': {
             if (value.uuid !== undefined && typeof value.uuid !== 'string') return null;
+            return value as RawJSONLines;
+        }
+        case 'attachment': {
+            if (!isNonEmptyString(value.uuid)) return null;
+            if (!isRecord(value.attachment)) return null;
             return value as RawJSONLines;
         }
         default:
@@ -140,4 +168,3 @@ export const RawJSONLinesSchema = Object.freeze({
         return { success: true, data: parsed };
     },
 });
-

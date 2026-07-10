@@ -1,7 +1,7 @@
 import type {
   TerminalControlPort,
   TerminalControlSendResult,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 import { parseClaudeScreenState, type ClaudeScreenState } from '../screenState.js';
 import type { ControlAttemptResult } from './outcome.js';
@@ -23,13 +23,20 @@ export type CaptureOutcome =
   | Readonly<{ kind: 'state'; state: ClaudeScreenState }>
   | CaptureFailure;
 
+export type SendFailureResult =
+  | Extract<ControlAttemptResult, Readonly<{ kind: 'unsupported' }>>
+  | Extract<ControlAttemptResult, Readonly<{ kind: 'failed' }>>;
+
 export async function captureScreenState(port: TerminalControlPort): Promise<CaptureOutcome> {
   const result = await port.captureScreen();
   switch (result.status) {
     case 'captured':
       // Prefer the styled raw capture when the host produced one (ported S-8): the SGR-dim
       // placeholder walker needs styling info; the parser strips ANSI internally otherwise.
-      return { kind: 'state', state: parseClaudeScreenState(result.capture.styledText ?? result.capture.text) };
+      return {
+        kind: 'state',
+        state: parseClaudeScreenState(result.capture.styledText ?? result.capture.text, { cursor: result.capture.cursor }),
+      };
     case 'host_dead':
       return { kind: 'host_dead', recoverable: result.recoverable };
     case 'unsupported':
@@ -48,7 +55,7 @@ export function captureFailureToResult(capture: CaptureFailure): ControlAttemptR
 }
 
 /** Map a non-`sent` send result to a public control result; returns null when the send succeeded. */
-export function sendResultToFailure(send: TerminalControlSendResult): ControlAttemptResult | null {
+export function sendResultToFailure(send: TerminalControlSendResult): SendFailureResult | null {
   switch (send.status) {
     case 'sent':
       return null;

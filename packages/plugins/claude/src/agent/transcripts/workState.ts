@@ -1,22 +1,38 @@
 import type {
   RuntimeOutboundTranscriptDispatchInputV1,
   RuntimeOutboundTranscriptPostSendEffectV1,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk/experimental/runtime/session';
 import {
   boundSessionWorkStateItemsV1,
   mergeSessionWorkStateMetadataV1,
   readSessionWorkStateV1FromMetadata,
   type SessionWorkStateItemV1,
-  type SessionWorkStateStatusV1,
   type SessionWorkStateV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/experimental/sessions/workState';
+
+import { normalizeClaudeActivityStatusSignal } from '../activityStatus.js';
+import { filterWorkflowOwnedWorkStateItems } from '../workflowRecords/ownedWorkState.js';
+import { resolveClaudeWorkflowOwnedToolUseIds } from '../workflowRecords/ownedWorkStateRegistry.js';
 
 const CLAUDE_WORK_STATE_BACKEND_ID = 'claude';
 const CLAUDE_WORK_STATE_AGENT_ID = 'claude';
-const CLAUDE_TASK_ITEM_ID_PREFIX = 'todo:claude:';
+/**
+ * Canonical id prefix for Claude Task API rows. These are `kind:'task'` items (DW1): the Claude Task
+ * API (`TaskCreate`/`TaskUpdate`/`TaskList`) is a real task list, so it maps to the protocol's `task`
+ * family — matching remote-dev — not to `todo`. `TodoWrite` (a separate, checklist-style tool) is the
+ * only legitimate `todo` source; ../dev does not project it today, so every row here is a task.
+ */
+const CLAUDE_TASK_ITEM_ID_PREFIX = 'task:claude:';
+/**
+ * Legacy prefix these rows were emitted under before DW1 (as `kind:'todo'`). Existing sessions may
+ * still carry `todo:claude:` rows in `metadata.sessionWorkStateV1`. On the next Task API dispatch they
+ * are migrated in-place to the `task:claude:` id + `kind:'task'` (see `readCurrentClaudeTaskItems`),
+ * and the merge owns BOTH prefixes so the stale legacy id is pruned rather than left as a duplicate.
+ */
+const CLAUDE_LEGACY_TASK_ITEM_ID_PREFIX = 'todo:claude:';
 const CLAUDE_TASK_ITEM_LIMIT = 100;
 
-type TaskStatus = SessionWorkStateStatusV1 | 'deleted';
+type TaskStatus = SessionWorkStateItemV1['status'] | 'deleted';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -45,15 +61,18 @@ function buildClaudeTaskItemId(vendorRef: string): string {
 }
 
 function normalizeTaskStatus(value: unknown): TaskStatus | null {
+  // Work-state-only statuses the neutral activity signal does not carry.
   if (value === 'deleted') return 'deleted';
-  if (value === 'completed' || value === 'complete') return 'complete';
-  if (value === 'in_progress' || value === 'active' || value === 'running') return 'active';
-  if (value === 'pending') return 'pending';
   if (value === 'paused') return 'paused';
-  if (value === 'blocked') return 'blocked';
-  if (value === 'cancelled' || value === 'canceled') return 'cancelled';
   if (value === 'unknown') return 'unknown';
-  return null;
+  // Delegate to the single shared Claude activity-status classifier (no parallel status table).
+  const signal = normalizeClaudeActivityStatusSignal(value);
+  // Work-state has no `failed`; provider failures surface as `blocked`.
+  if (signal === 'failed') return 'blocked';
+  // Preserve the prior contract: an unrecognized value maps to null (fall back to previous status),
+  // not a synthesized `unknown`.
+  if (signal === 'unknown') return null;
+  return signal;
 }
 
 function readTaskTitle(record: Record<string, unknown>): string | null {
@@ -174,7 +193,7 @@ function normalizeTaskRecord(params: Readonly<{
   const title = readTaskTitle(task) ?? params.previous?.title ?? vendorRef;
   const item: SessionWorkStateItemV1 = {
     id: buildClaudeTaskItemId(vendorRef),
-    kind: 'todo',
+    kind: 'task',
     origin: 'vendor',
     status: status ?? params.previous?.status ?? 'pending',
     title,
@@ -236,12 +255,43 @@ function buildSnapshot(params: Readonly<{
   };
 }
 
+/**
+ * Migrate a pre-DW1 `todo:claude:` task row to the canonical `task:claude:` id + `kind:'task'`,
+ * preserving its `vendorRef` so the new id stays stable across the legacy row (the vendorRef, not the
+ * encoded id suffix, is the correlation key). Falls back to decoding the legacy id suffix only if the
+ * row somehow carries no `vendorRef`.
+ */
+function migrateLegacyClaudeTaskItem(item: SessionWorkStateItemV1): SessionWorkStateItemV1 {
+  const decodedSuffix = (() => {
+    try {
+      return decodeURIComponent(item.id.slice(CLAUDE_LEGACY_TASK_ITEM_ID_PREFIX.length));
+    } catch {
+      return null;
+    }
+  })();
+  const vendorRef = readString(item.vendorRef) ?? readString(decodedSuffix) ?? item.id;
+  return {
+    ...item,
+    id: buildClaudeTaskItemId(vendorRef),
+    kind: 'task',
+    vendorRef,
+  };
+}
+
 function readCurrentClaudeTaskItems(metadata: unknown): Map<string, SessionWorkStateItemV1> {
   const current = readSessionWorkStateV1FromMetadata(metadata);
   const items = new Map<string, SessionWorkStateItemV1>();
   for (const item of current?.items ?? []) {
     if (item.id.startsWith(CLAUDE_TASK_ITEM_ID_PREFIX)) {
       items.set(item.id, item);
+      continue;
+    }
+    // DW1 migration: reclassify a legacy `todo:claude:` task row as a `task:claude:` task. Keyed by
+    // the migrated id so a later TaskUpdate for the same vendorRef updates this row (no duplicate),
+    // and the legacy id is pruned by the merge (which owns both prefixes).
+    if (item.id.startsWith(CLAUDE_LEGACY_TASK_ITEM_ID_PREFIX)) {
+      const migrated = migrateLegacyClaudeTaskItem(item);
+      items.set(migrated.id, migrated);
     }
   }
   return items;
@@ -369,11 +419,23 @@ export function buildClaudeTaskWorkStatePostSendEffect(
 
   if (!changed) return null;
 
-  const nextOwned = buildSnapshot({ items: items.values(), updatedAt });
+  // CWF4 coherence: a canonical Workflow run's agents live in the durable `activity/workflow_run.v1`
+  // record + the workflow UI surfaces. Drop any task rows the workflow normalizer marked
+  // workflow-owned (by their tool-use `vendorRef`/owning `parentId`) BEFORE the merge, so they do not
+  // ALSO render as top-level task rows. The owned ids come from the per-session workflow runtime via a
+  // narrow registry (no provider-name branch, no Claude-native id matching in the merge). No-op when
+  // no workflow run is active or the session has no registered runtime.
+  const builtSnapshot = buildSnapshot({ items: items.values(), updatedAt });
+  const nextOwned = filterWorkflowOwnedWorkStateItems(
+    builtSnapshot,
+    resolveClaudeWorkflowOwnedToolUseIds(input.sessionId),
+  );
   const mergedMetadata = mergeSessionWorkStateMetadataV1({
     metadata: input.metadata,
     nextOwned,
-    ownedItemIdPrefixes: [CLAUDE_TASK_ITEM_ID_PREFIX],
+    // Own the legacy prefix too so a pre-DW1 `todo:claude:` row (migrated above into a new-id task)
+    // is pruned from the merged set instead of lingering as a duplicate.
+    ownedItemIdPrefixes: [CLAUDE_TASK_ITEM_ID_PREFIX, CLAUDE_LEGACY_TASK_ITEM_ID_PREFIX],
   });
   return {
     type: 'metadataField',

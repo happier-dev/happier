@@ -27,7 +27,7 @@ describe('buildClaudeRuntimeLocalHandoffMetadata', () => {
             claudeSessionId: 'claude-session-1',
             externalSessionV1: {
                 v: 1,
-                providerId: 'claude',
+                agentId: 'claude',
                 machineId: 'machine-1',
                 remoteSessionId: 'claude-session-1',
                 source: {

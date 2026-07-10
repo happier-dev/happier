@@ -1,4 +1,8 @@
-import type { ExternalSessionCandidateV1, ExternalSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionCandidateV1, ExternalSessionsSource } from '@happier-dev/plugin-sdk/sessions';
+import {
+    decodeIndexCursor,
+    encodeIndexCursor,
+} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 import {
     discoverClaudeJsonlSessions,
@@ -6,29 +10,6 @@ import {
     type DiscoveredClaudeJsonlSession,
 } from './files.js';
 import { deriveClaudeExternalSessionActivity, readClaudeJsonlSessionTitle } from './metadata.js';
-
-type IndexCursorV1 = Readonly<{ v: 1; kind: 'index'; offset: number }>;
-
-function encodeIndexCursor(offset: number): string {
-    const cursor: IndexCursorV1 = { v: 1, kind: 'index', offset: Math.max(0, Math.trunc(offset)) };
-    return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
-}
-
-function decodeIndexCursor(raw: string | undefined): number {
-    if (typeof raw !== 'string' || raw.trim().length === 0) return 0;
-    try {
-        const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as unknown;
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return 0;
-        const record = parsed as Record<string, unknown>;
-        if (record.v !== 1 || record.kind !== 'index') return 0;
-        const offset = typeof record.offset === 'number' && Number.isFinite(record.offset)
-            ? Math.trunc(record.offset)
-            : 0;
-        return Math.max(0, offset);
-    } catch {
-        return 0;
-    }
-}
 
 function canSearchClaudeFilename(searchTerm: string): boolean {
     return searchTerm.length > 0
@@ -92,7 +73,7 @@ export async function listClaudeExternalSessionCandidates(params: Readonly<{
     searchIncomplete?: boolean;
 }>> {
     const limit = Math.max(1, Math.trunc(params.limit));
-    const offset = decodeIndexCursor(params.cursor);
+    const offset = decodeIndexCursor(params.cursor) ?? 0;
     const rawSearchTerm = typeof params.searchTerm === 'string' ? params.searchTerm.trim() : '';
     const searchTerm = rawSearchTerm.toLowerCase();
 

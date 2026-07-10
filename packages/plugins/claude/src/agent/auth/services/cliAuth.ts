@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { HAPPIER_CLAUDE_CONFIG_DIR_ENV } from '@happier-dev/plugin-sdk/experimental/envConstants';
 
 type ClaudeCliAuthStatus =
     | Readonly<{
@@ -29,6 +30,19 @@ function readStringField(record: Record<string, unknown>, key: string): string |
     return trimmed.length > 0 ? trimmed : null;
 }
 
+function readObjectField(record: Record<string, unknown> | null | undefined, key: string): Record<string, unknown> | null {
+    if (!record) return null;
+    const value = record[key];
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function readNumberField(record: Record<string, unknown>, key: string): number | null {
+    const value = record[key];
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 function readJsonFileSafe(path: string): unknown | null {
     if (!existsSync(path)) return null;
     try {
@@ -47,9 +61,55 @@ function readEnvString(
 }
 
 function resolveClaudeConfigDir(env: Readonly<Record<string, string | undefined>>): string {
-    return readEnvString(env, 'HAPPIER_CLAUDE_CONFIG_DIR')
+    return readEnvString(env, HAPPIER_CLAUDE_CONFIG_DIR_ENV)
         ?? readEnvString(env, 'CLAUDE_CONFIG_DIR')
         ?? join(homedir(), '.claude');
+}
+
+function readClaudeOauthAccountLabel(record: Record<string, unknown> | null | undefined): string | null {
+    const oauthAccount = readObjectField(record, 'oauthAccount');
+    return oauthAccount
+        ? readStringField(oauthAccount, 'emailAddress')
+            ?? readStringField(oauthAccount, 'email')
+            ?? readStringField(oauthAccount, 'displayName')
+            ?? readStringField(oauthAccount, 'name')
+        : null;
+}
+
+function readClaudeAccountLabel(configDir: string, fallbackRecord: Record<string, unknown>): string | undefined {
+    const rootConfig = readJsonFileSafe(join(configDir, '.claude.json'));
+    const rootRecord = rootConfig && typeof rootConfig === 'object' && !Array.isArray(rootConfig)
+        ? rootConfig as Record<string, unknown>
+        : null;
+    const accountLabel =
+        readClaudeOauthAccountLabel(rootRecord)
+        ?? readClaudeOauthAccountLabel(fallbackRecord)
+        ?? readStringField(fallbackRecord, 'email')
+        ?? readStringField(fallbackRecord, 'accountEmail')
+        ?? readStringField(fallbackRecord, 'userEmail');
+
+    return accountLabel ?? undefined;
+}
+
+function readClaudeCredentialFileState(record: Record<string, unknown>): Readonly<{
+    hasAccessToken: boolean;
+    expiresAt: number | null;
+}> {
+    const currentCredential = readObjectField(record, 'claudeAiOauth');
+    if (currentCredential) {
+        return {
+            hasAccessToken: Boolean(readStringField(currentCredential, 'accessToken')),
+            expiresAt: readNumberField(currentCredential, 'expiresAt'),
+        };
+    }
+
+    const legacyAccessToken = readStringField(record, 'accessToken');
+    const legacyExpiresAt = readStringField(record, 'expiresAt');
+    const legacyExpiryMs = legacyExpiresAt ? Date.parse(legacyExpiresAt) : Number.NaN;
+    return {
+        hasAccessToken: Boolean(legacyAccessToken),
+        expiresAt: Number.isFinite(legacyExpiryMs) ? legacyExpiryMs : null,
+    };
 }
 
 function readClaudeCredentialsStatus(env: Readonly<Record<string, string | undefined>>): ClaudeCliAuthStatus {
@@ -63,29 +123,22 @@ function readClaudeCredentialsStatus(env: Readonly<Record<string, string | undef
         }
 
         const record = parsed as Record<string, unknown>;
-        const accessToken = readStringField(record, 'accessToken');
-        const expiresAt = readStringField(record, 'expiresAt');
-        if (!accessToken) {
+        const credential = readClaudeCredentialFileState(record);
+        if (!credential.hasAccessToken) {
             continue;
         }
 
-        if (expiresAt) {
-            const expiryMs = Date.parse(expiresAt);
-            if (Number.isFinite(expiryMs) && expiryMs <= Date.now()) {
-                expiredCredentialsStatus = {
-                    state: 'logged_out',
-                    reason: 'expired',
-                    source: 'file',
-                    method: 'credentials_file',
-                };
-                continue;
-            }
+        if (credential.expiresAt !== null && credential.expiresAt <= Date.now()) {
+            expiredCredentialsStatus = {
+                state: 'logged_out',
+                reason: 'expired',
+                source: 'file',
+                method: 'credentials_file',
+            };
+            continue;
         }
 
-        const accountLabel =
-            readStringField(record, 'email')
-            ?? readStringField(record, 'accountEmail')
-            ?? readStringField(record, 'userEmail');
+        const accountLabel = readClaudeAccountLabel(configDir, record);
 
         return {
             state: 'logged_in',

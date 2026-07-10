@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
+import { HAPPIER_CLAUDE_CONFIG_DIR_ENV } from '@happier-dev/plugin-sdk/experimental/envConstants';
 
 const CLAUDE_PROJECT_ID_MAX_LENGTH = 120;
 const CLAUDE_PROJECT_ID_HASH_LENGTH = 16;
@@ -40,7 +41,7 @@ export function resolveClaudeConfigDirOverride(env: NodeJS.ProcessEnv): string |
     const explicit = typeof env.CLAUDE_CONFIG_DIR === 'string' ? env.CLAUDE_CONFIG_DIR.trim() : '';
     if (explicit.length > 0) return explicit;
     const happierOverride =
-        typeof env.HAPPIER_CLAUDE_CONFIG_DIR === 'string' ? env.HAPPIER_CLAUDE_CONFIG_DIR.trim() : '';
+        typeof env[HAPPIER_CLAUDE_CONFIG_DIR_ENV] === 'string' ? env[HAPPIER_CLAUDE_CONFIG_DIR_ENV].trim() : '';
     return happierOverride.length > 0 ? happierOverride : null;
 }
 

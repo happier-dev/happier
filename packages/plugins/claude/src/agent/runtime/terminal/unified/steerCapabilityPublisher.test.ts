@@ -57,6 +57,46 @@ describe('createClaudeUnifiedSteerCapabilityPublisher (Seam A)', () => {
 
     expect(captured.capabilities().inFlightSteerAvailable).toBe(false);
     expect(captured.capabilities().inFlightSteerUnavailableReason).toBe('user_terminal_draft');
+    expect(captured.capabilities().terminalComposerClearSupported).toBe(true);
+    expect(captured.capabilities().terminalComposerDraftPresent).toBe(true);
+    publisher.dispose();
+  });
+
+  it('publishes composer clear support and clears draft presence on non-draft snapshots', () => {
+    const captured = capture();
+    const publisher = createClaudeUnifiedSteerCapabilityPublisher({
+      session: captured.session,
+      logger,
+      isCanonicalTurnActive: () => true,
+      nowMs: () => 1234,
+    });
+
+    publisher.publish({ available: false, reason: 'unsafe_window' });
+
+    expect(captured.capabilities().terminalComposerClearSupported).toBe(true);
+    expect(captured.capabilities().terminalComposerDraftPresent).toBe(false);
+    publisher.dispose();
+  });
+
+  it('dedupes on raw composer draft presence, not only the public unavailable reason', () => {
+    const captured = capture();
+    let canonicalActive = false;
+    let now = 100;
+    const publisher = createClaudeUnifiedSteerCapabilityPublisher({
+      session: captured.session,
+      logger,
+      isCanonicalTurnActive: () => canonicalActive,
+      nowMs: () => now,
+      minPublishIntervalMs: 0,
+    });
+
+    publisher.publish({ available: false, reason: 'unsafe_window' });
+    now = 200;
+    publisher.publish({ available: false, reason: 'user_terminal_draft' });
+
+    expect(captured.writes).toBe(2);
+    expect(captured.capabilities().inFlightSteerUnavailableReason).toBe('turn_settling');
+    expect(captured.capabilities().terminalComposerDraftPresent).toBe(true);
     publisher.dispose();
   });
 

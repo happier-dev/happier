@@ -23,6 +23,10 @@ describe('mapRuntimeConfigUpdateToDesired', () => {
       kind: 'desired',
       desired: { ultracode: true },
     });
+    expect(mapRuntimeConfigUpdateToDesired({ permissionMode: 'acceptEdits' }, CONTEXT)).toEqual({
+      kind: 'desired',
+      desired: { permissionMode: 'acceptEdits' },
+    });
     expect(mapRuntimeConfigUpdateToDesired({ modeId: 'plan' }, CONTEXT)).toEqual({
       kind: 'desired',
       desired: { agentModeId: 'plan' },
@@ -47,6 +51,13 @@ describe('mapRuntimeConfigUpdateToDesired', () => {
         { ...CONTEXT, effectiveModelId: 'claude-sonnet-4-6' },
       ),
     ).toEqual({ kind: 'desired', desired: { ultracode: false } });
+  });
+
+  it('does not consume the retired plural configOptions alias', () => {
+    expect(mapRuntimeConfigUpdateToDesired({ configOptions: { reasoning_effort: 'high' } }, CONTEXT)).toEqual({
+      kind: 'not_controllable',
+      reason: 'unknown_directive:configOptions',
+    });
   });
 
   it('fails the whole update over to the legacy path for non-controllable directives', () => {
@@ -93,7 +104,7 @@ describe('createClaudeUnifiedRuntimeConfigOutcomeEmitter', () => {
     expect(sendSessionEvent).toHaveBeenCalledTimes(2);
     expect(sendSessionEvent).toHaveBeenCalledWith(expect.objectContaining({
       type: 'runtime-config-outcome',
-      provider: 'claude',
+      agentId: 'claude',
       runtime: 'claude-unified-terminal',
       status: 'applied',
       timing: 'before_next_prompt',

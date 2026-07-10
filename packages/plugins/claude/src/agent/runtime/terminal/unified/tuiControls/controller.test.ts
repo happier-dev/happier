@@ -77,6 +77,26 @@ describe('createClaudeUnifiedTuiControlController — ordering and aggregation',
     expect(outcome.changes[0]?.status).toBe('applied');
   });
 
+  it('applies metadata-only mode changes through the generating-safe mode-cycle window', async () => {
+    const GEN_ACCEPT = ['● working', '✶ Forging… (12s · esc to interrupt)', '  ⏵⏵ accept edits on (shift+tab to cycle)'].join('\n');
+    const port = createFakeControlPort({ captures: [GENERATING, GEN_ACCEPT] });
+    const controller = await controllerFor(port);
+
+    const outcome = await controller.applyDesiredRuntimeConfig({
+      desired: { permissionMode: 'acceptEdits' },
+      reason: 'out_of_band',
+    });
+
+    expect(outcome.status).toBe('applied');
+    expect(outcome.promptMayProceed).toBe(true);
+    expect(outcome.changes[0]).toMatchObject({
+      key: 'permissionMode',
+      status: 'applied',
+      timing: 'current_window',
+    });
+    expect(port.sentKeys).toEqual(['ShiftTab']);
+  });
+
   it('reports maxThinkingTokens as unsupported without blocking the prompt', async () => {
     const port = createFakeControlPort({ captures: [IDLE] });
     const controller = await controllerFor(port);
@@ -462,7 +482,11 @@ describe('createClaudeUnifiedTuiControlController — type-time own-text registr
 
 describe('createClaudeUnifiedTuiControlController — applyPermissionModeInFlight (lane Q)', () => {
   const GEN_ACCEPT = ['● working', '✶ Forging… (12s · esc to interrupt)', '  ⏵⏵ accept edits on (shift+tab to cycle)'].join('\n');
-  const GEN_PERMISSION_PROMPT = ['✶ Forging… (10s · esc to interrupt)', 'Do you want to proceed?', '1. Yes'].join('\n');
+  const GEN_TRUST_PROMPT = [
+    '✶ Forging… (10s · esc to interrupt)',
+    'Do you trust the files in this folder?',
+    '1. Yes',
+  ].join('\n');
 
   it('applies a permission-mode delta mid-generation via verified ShiftTab (probe Q-A)', async () => {
     const port = createFakeControlPort({ captures: [GENERATING, GEN_ACCEPT] });
@@ -489,7 +513,7 @@ describe('createClaudeUnifiedTuiControlController — applyPermissionModeInFligh
   });
 
   it('reports a blocked apply on a steer-veto screen without pressing keys', async () => {
-    const port = createFakeControlPort({ captures: [GEN_PERMISSION_PROMPT] });
+    const port = createFakeControlPort({ captures: [GEN_TRUST_PROMPT] });
     const controller = await controllerFor(port);
 
     const outcome = await controller.applyPermissionModeInFlight({ permissionMode: 'acceptEdits' });

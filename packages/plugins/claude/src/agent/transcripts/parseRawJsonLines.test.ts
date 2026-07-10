@@ -46,6 +46,20 @@ describe('parseRawJsonLines', () => {
         expect((parsed as { uuid?: unknown })?.uuid).toBe('p1');
     });
 
+    it('parses Claude attachment control rows', () => {
+        const parsed = parseRawJsonLinesObject({
+            type: 'attachment',
+            uuid: 'attachment-1',
+            attachment: {
+                type: 'deferred_tools_delta',
+                itemCount: 1,
+            },
+        });
+
+        expect(parsed?.type).toBe('attachment');
+        expect((parsed as { uuid?: unknown })?.uuid).toBe('attachment-1');
+    });
+
     it('does not drop assistant messages when usage schema changes', () => {
         const parsed = parseRawJsonLinesObject({
             type: 'assistant',
@@ -66,4 +80,3 @@ describe('parseRawJsonLines', () => {
         expect((parsed as { message?: { usage?: unknown } })?.message?.usage).toBeUndefined();
     });
 });
-

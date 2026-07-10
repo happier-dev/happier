@@ -1,5 +1,5 @@
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
-import type { RuntimeEventV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import type { PluginContextV1, RuntimeEventV1 } from '@happier-dev/plugin-sdk';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 export type ClaudeUnifiedRuntimeEventHandler = (event: RuntimeEventV1) => void;
 
@@ -65,6 +65,46 @@ export function publishClaudeUnifiedTurnFailed(params: Readonly<{
       turnId: params.turnId,
       emittedAtMs: params.issue.occurredAt,
       issue: params.issue,
+    },
+  });
+}
+
+export function publishClaudeUnifiedTurnComplete(params: Readonly<{
+  handlers: ReadonlySet<ClaudeUnifiedRuntimeEventHandler>;
+  logger: PluginContextV1['logger'];
+  sessionId: string;
+  turnId: string;
+  emittedAtMs: number;
+}>): void {
+  publishClaudeUnifiedRuntimeEvent({
+    handlers: params.handlers,
+    logger: params.logger,
+    event: {
+      kind: 'turn-complete',
+      sessionId: params.sessionId,
+      turnId: params.turnId,
+      emittedAtMs: params.emittedAtMs,
+    },
+  });
+}
+
+export function publishClaudeUnifiedTurnCancelled(params: Readonly<{
+  handlers: ReadonlySet<ClaudeUnifiedRuntimeEventHandler>;
+  logger: PluginContextV1['logger'];
+  sessionId: string;
+  turnId: string;
+  emittedAtMs: number;
+  reason?: string;
+}>): void {
+  publishClaudeUnifiedRuntimeEvent({
+    handlers: params.handlers,
+    logger: params.logger,
+    event: {
+      kind: 'turn-cancelled',
+      sessionId: params.sessionId,
+      turnId: params.turnId,
+      emittedAtMs: params.emittedAtMs,
+      ...(params.reason ? { reason: params.reason } : {}),
     },
   });
 }

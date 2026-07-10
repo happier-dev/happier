@@ -1,8 +1,10 @@
+import { normalizeClaudeUnifiedPromptIdentityText } from './promptIdentity.js';
+
 export type ClaudeUnifiedPromptEchoSuppressor = Readonly<{
-  recordAcceptedPrompt(input: Readonly<{ text: string; acceptedAtMs?: number }>): void;
-  consumeAcceptedPromptEcho(input: Readonly<{ text: string; observedAtMs?: number }>): boolean;
-  recordMaterializedTerminalPrompt(input: Readonly<{ text: string; materializedAtMs?: number }>): void;
-  consumeMaterializedTerminalPromptDuplicate(input: Readonly<{ text: string; observedAtMs?: number }>): boolean;
+  recordAcceptedPrompt(input: Readonly<{ text: string; acceptedAtMs?: number; agentTurnId?: string | null }>): void;
+  consumeAcceptedPromptEcho(input: Readonly<{ text: string; observedAtMs?: number; agentTurnId?: string | null }>): boolean;
+  recordMaterializedTerminalPrompt(input: Readonly<{ text: string; materializedAtMs?: number; agentTurnId?: string | null }>): void;
+  consumeMaterializedTerminalPromptDuplicate(input: Readonly<{ text: string; observedAtMs?: number; agentTurnId?: string | null }>): boolean;
 }>;
 
 export type ClaudeUnifiedPromptEchoSuppressorOptions = Readonly<{
@@ -14,6 +16,7 @@ export type ClaudeUnifiedPromptEchoSuppressorOptions = Readonly<{
 type PendingPromptText = Readonly<{
   text: string;
   expiresAtMs: number;
+  agentTurnId: string | null;
 }>;
 
 const DEFAULT_ACCEPTED_PROMPT_ECHO_WINDOW_MS = 30_000;
@@ -25,6 +28,12 @@ function normalizeWindowMs(value: number | undefined, fallback: number): number 
 }
 
 function normalizeText(value: string): string | null {
+  const trimmed = normalizeClaudeUnifiedPromptIdentityText(value);
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeProviderTurnId(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
 }
@@ -37,9 +46,21 @@ function pruneExpired(prompts: PendingPromptText[], observedAtMs: number): void 
   }
 }
 
+function promptMatches(
+  prompt: PendingPromptText,
+  input: Readonly<{ text: string; agentTurnId?: string | null }>,
+): boolean {
+  const agentTurnId = normalizeProviderTurnId(input.agentTurnId);
+  if (prompt.agentTurnId || agentTurnId) {
+    return prompt.agentTurnId !== null && agentTurnId !== null && prompt.agentTurnId === agentTurnId;
+  }
+  const text = normalizeText(input.text);
+  return text !== null && prompt.text === text;
+}
+
 function consumeMatchingPrompt(
   prompts: PendingPromptText[],
-  input: Readonly<{ text: string; observedAtMs?: number }>,
+  input: Readonly<{ text: string; observedAtMs?: number; agentTurnId?: string | null }>,
   nowMs: () => number,
 ): boolean {
   const text = normalizeText(input.text);
@@ -49,7 +70,10 @@ function consumeMatchingPrompt(
       ? Math.trunc(input.observedAtMs)
       : nowMs();
   pruneExpired(prompts, observedAtMs);
-  const matchIndex = prompts.findIndex((prompt) => prompt.text === text);
+  const matchIndex = prompts.findIndex((prompt) => promptMatches(prompt, {
+    text,
+    agentTurnId: input.agentTurnId,
+  }));
   if (matchIndex < 0) return false;
   prompts.splice(matchIndex, 1);
   return true;
@@ -82,6 +106,7 @@ export function createClaudeUnifiedPromptEchoSuppressor(
       acceptedPromptEchoes.push({
         text,
         expiresAtMs: acceptedAtMs + acceptedPromptEchoWindowMs,
+        agentTurnId: normalizeProviderTurnId(input.agentTurnId),
       });
     },
     consumeAcceptedPromptEcho(input) {
@@ -98,6 +123,7 @@ export function createClaudeUnifiedPromptEchoSuppressor(
       materializedTerminalPrompts.push({
         text,
         expiresAtMs: materializedAtMs + terminalPromptDuplicateWindowMs,
+        agentTurnId: normalizeProviderTurnId(input.agentTurnId),
       });
     },
     consumeMaterializedTerminalPromptDuplicate(input) {

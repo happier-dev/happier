@@ -2,8 +2,8 @@ import type {
   RuntimeConfigOutcomeChangeKeyV1,
   RuntimeConfigOutcomeStatusV1,
   RuntimeConfigOutcomeTimingV1,
-} from '@happier-dev/protocol';
-import type { RuntimeConfigUpdateOutcomeV1 } from '@happier-dev/agents';
+  RuntimeConfigUpdateOutcomeV1,
+} from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 import { isClaudeUltracodeSupportedModelId } from '../../reasoningEffort.js';
 import { CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID } from './constants.js';
@@ -87,6 +87,12 @@ export function mapRuntimeConfigUpdateToDesired(
       // No TUI control exists for the fallback model; launch-arg only.
       return { kind: 'not_controllable', reason: 'fallback_model_launch_only' };
     }
+    if (key === 'permissionMode') {
+      const permissionMode = readNonEmptyString(value);
+      if (permissionMode === null) continue;
+      desired.permissionMode = permissionMode;
+      continue;
+    }
     if (key === 'configOption') {
       if (typeof value !== 'object' || Array.isArray(value)) {
         return { kind: 'not_controllable', reason: 'malformed_config_option' };
@@ -106,24 +112,6 @@ export function mapRuntimeConfigUpdateToDesired(
         const effort = readNonEmptyString(option.value);
         if (effort === null) return { kind: 'not_controllable', reason: 'malformed_config_option' };
         desired.reasoningEffort = effort;
-      }
-      continue;
-    }
-    if (key === 'configOptions') {
-      if (typeof value !== 'object' || Array.isArray(value)) {
-        return { kind: 'not_controllable', reason: 'malformed_config_options' };
-      }
-      const options = value as Record<string, unknown>;
-      for (const optionId of Object.keys(options)) {
-        if (!CONTROLLABLE_CONFIG_OPTION_IDS.has(optionId)) {
-          return { kind: 'not_controllable', reason: `unknown_config_option:${optionId}` };
-        }
-      }
-      const effort = readNonEmptyString(options.reasoning_effort) ?? readNonEmptyString(options.effort);
-      if (effort !== null) desired.reasoningEffort = effort;
-      const ultracode = readBooleanValue(options.ultracode);
-      if (ultracode !== null) {
-        desired.ultracode = ultracode && isClaudeUltracodeSupportedModelId(context.effectiveModelId);
       }
       continue;
     }
@@ -181,7 +169,7 @@ export type ClaudeUnifiedRuntimeConfigOutcomeChange = Readonly<{
 
 export type ClaudeUnifiedRuntimeConfigOutcomeSessionEvent = Readonly<{
   type: 'runtime-config-outcome';
-  provider: typeof CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID;
+  agentId: typeof CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID;
   runtime: 'claude-unified-terminal';
   status: RuntimeConfigOutcomeStatusV1;
   timing?: RuntimeConfigOutcomeTimingV1;
@@ -263,7 +251,7 @@ export function createClaudeUnifiedRuntimeConfigOutcomeEmitter(params: Readonly<
         }));
         params.sendSessionEvent({
           type: 'runtime-config-outcome',
-          provider: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
+          agentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
           runtime: 'claude-unified-terminal',
           status,
           ...(sharedTiming !== undefined ? { timing: sharedTiming } : {}),

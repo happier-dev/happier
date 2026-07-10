@@ -1,11 +1,11 @@
-import type { HandoffSurfaceV1, SessionStateUpdateV1 } from '@happier-dev/agents';
-import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
+import type { HandoffSurfaceV1, SessionStateUpdateV1 } from '@happier-dev/plugin-sdk';
+import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/plugin-sdk/sessions';
 
 import {
     exportClaudeSessionBundle,
     importClaudeSessionBundle,
 } from './bundle.js';
-import type { ClaudeSessionBundle } from './types.js';
+import { ClaudeSessionBundleSchema } from './types.js';
 
 export const claudeHandoffSurface = {
     exportBundle: async (params) => {
@@ -30,13 +30,13 @@ export const claudeHandoffSurface = {
         }
     },
     importBundle: async (params) => {
-        const bundle = params.bundle as Partial<ClaudeSessionBundle>;
-        if (bundle.providerId !== 'claude') {
-            return { ok: false, code: 'bundle_invalid', message: 'Claude handoff import received unsupported bundle' };
+        const parsedBundle = ClaudeSessionBundleSchema.safeParse(params.bundle);
+        if (!parsedBundle.success) {
+            return { ok: false, code: 'bundle_invalid', message: 'Invalid Claude session handoff bundle' };
         }
         try {
             const imported = await importClaudeSessionBundle({
-                bundle: bundle as ClaudeSessionBundle,
+                bundle: parsedBundle.data,
                 targetPath: params.targetDirectory,
                 env: process.env,
             });

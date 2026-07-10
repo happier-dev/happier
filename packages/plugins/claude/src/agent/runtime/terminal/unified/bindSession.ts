@@ -1,52 +1,27 @@
-import type { TerminalHostPreference } from '@happier-dev/agents';
+import type { TerminalHostPreference } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 import type {
   CreateSessionRuntimeParamsV1,
   PluginContextV1,
+  SessionRuntimeCreateResultV1,
 } from '@happier-dev/plugin-sdk';
-import type {
-  BundledSessionRuntimeCreateResultV1,
-  InternalRuntimeTurnOperationsEnvelopeV1,
-} from '@happier-dev/plugin-sdk/internal/runtime/session';
+import { join } from 'node:path';
 
-import { resolveMetadataStringOverrideV1 } from '@happier-dev/agents';
+import {
+  composeSessionIsolationEnvironment,
+  resolveMetadataStringOverrideV1,
+} from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 import { isolateClaudeRuntimeAuthEnv } from '../../../auth/services/runtime/env.js';
+import { getClaudeProjectPath, resolveClaudeConfigDirOverride } from '../../../surfaces/sessions/handoff/path.js';
 import { resolveClaudePermissionModeFromRuntimeMode } from '../../permissionMode.js';
-import { CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID } from './constants.js';
+import {
+  DEFAULT_CLAUDE_UNIFIED_RESUME_CHOICE,
+  normalizeClaudeUnifiedResumeChoice,
+  type ClaudeUnifiedResumeChoicePolicy,
+} from './resumeChoice/types.js';
 import { createClaudeUnifiedTerminalTurnOperations } from './turnOperations.js';
 
 const DEFAULT_HOST_PREFERENCE: TerminalHostPreference = 'auto';
-
-type HostSessionRuntimeFactoryParams = Readonly<{
-  directory?: string;
-  metadata?: Readonly<Record<string, unknown>>;
-  session?: Readonly<{ sessionId?: string }>;
-  getPermissionMode?: () => unknown;
-  setThinking?: (thinking: boolean) => void;
-}>;
-
-type ClaudeUnifiedTerminalSessionPlan = Readonly<{
-  kind: 'hostSessionRuntimePlan';
-  providerId: typeof CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID;
-  opts: Readonly<Record<string, unknown>>;
-  config: Readonly<{
-    flavor: 'claude';
-    policyAgentId: typeof CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID;
-    backendDisplayName: 'Claude';
-    uiLogPrefix: '[claude]';
-    providerName: 'Claude';
-    waitingForCommandLabel: 'Claude';
-    agentMessageType: 'claude';
-    supportsMcpServers: true;
-    machineMetadata: Readonly<Record<string, unknown>>;
-    terminalDisplay: () => null;
-    shouldRenderTerminalDisplay: () => false;
-    formatPromptErrorMessage: (error: unknown) => string;
-    resolveKeepAliveMode: () => 'terminal';
-    startRuntimeBeforeFirstPrompt: true;
-    createSessionRuntime: (params: HostSessionRuntimeFactoryParams) => Promise<InternalRuntimeTurnOperationsEnvelopeV1>;
-  }>;
-}>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -64,18 +39,16 @@ function readDirectory(sessionParams: CreateSessionRuntimeParamsV1): string {
     ?? process.cwd();
 }
 
-function readHostCredentials(sessionParams: CreateSessionRuntimeParamsV1): unknown {
-  return (sessionParams as CreateSessionRuntimeParamsV1 & Readonly<{
-    credentials?: unknown;
-  }>).credentials;
-}
-
 function readSessionId(sessionParams: CreateSessionRuntimeParamsV1): string {
   return readString(sessionParams.sessionId) ?? `claude-${Date.now().toString(36)}`;
 }
 
 function readEnv(sessionParams: CreateSessionRuntimeParamsV1): Readonly<Record<string, string>> {
-  const source = sessionParams.isolation?.env ?? sessionParams.env ?? {};
+  const source = composeSessionIsolationEnvironment({
+    isolationEnvironment: sessionParams.isolation?.env,
+    environment: sessionParams.env,
+    unsetEnvKeys: sessionParams.isolation?.unsetEnvKeys,
+  });
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(source)) {
     if (typeof value === 'string') env[key] = value;
@@ -89,10 +62,77 @@ function readUnifiedTerminalHostPreference(raw: unknown): TerminalHostPreference
     : DEFAULT_HOST_PREFERENCE;
 }
 
+function readActiveTerminalHostPreference(metadata: Readonly<Record<string, unknown>> | null | undefined): TerminalHostPreference | null {
+  const terminal = isRecord(metadata?.terminal) ? metadata.terminal : null;
+  const mode = terminal?.mode;
+  return mode === 'tmux' || mode === 'zellij' ? mode : null;
+}
+
+function resolveExternalSessionTranscriptPath(params: Readonly<{
+  metadata: Readonly<Record<string, unknown>> | null;
+  providerSessionId: string;
+}>): string | null {
+  const externalSession = isRecord(params.metadata?.externalSessionV1)
+    ? params.metadata.externalSessionV1
+    : null;
+  const source = isRecord(externalSession?.source) ? externalSession.source : null;
+  if (!source || source.kind !== 'claudeConfig') return null;
+  const configDir = readString(source.configDir);
+  const projectId = readString(source.projectId);
+  if (!configDir || !projectId) return null;
+  return join(configDir, 'projects', projectId, `${params.providerSessionId}.jsonl`);
+}
+
+function resolveKnownClaudeTranscriptBinding(params: Readonly<{
+  directory: string;
+  launchEnv: Readonly<Record<string, string>>;
+  metadata: Readonly<Record<string, unknown>> | null;
+}>): Readonly<{ providerSessionId: string; transcriptPath: string }> | null {
+  const providerSessionId = readString(params.metadata?.claudeSessionId);
+  if (!providerSessionId) return null;
+
+  const transcriptPath =
+    resolveExternalSessionTranscriptPath({ metadata: params.metadata, providerSessionId })
+    ?? readString(params.metadata?.claudeTranscriptPath)
+    ?? join(
+      getClaudeProjectPath(
+        params.directory,
+        resolveClaudeConfigDirOverride({ ...params.launchEnv }),
+      ),
+      `${providerSessionId}.jsonl`,
+    );
+
+  return { providerSessionId, transcriptPath };
+}
+
+function resolveExplicitResumeTranscriptBinding(params: Readonly<{
+  directory: string;
+  launchEnv: Readonly<Record<string, string>>;
+  providerSessionId: string | null;
+}>): Readonly<{ providerSessionId: string; transcriptPath: string }> | null {
+  if (!params.providerSessionId) return null;
+
+  return {
+    providerSessionId: params.providerSessionId,
+    transcriptPath: join(
+      getClaudeProjectPath(
+        params.directory,
+        resolveClaudeConfigDirOverride({ ...params.launchEnv }),
+      ),
+      `${params.providerSessionId}.jsonl`,
+    ),
+  };
+}
+
 function resolveHostPreference(params: Readonly<{
   initialMetadata?: Readonly<Record<string, unknown>> | null;
   runtimeMetadata?: Readonly<Record<string, unknown>> | null;
 }>): TerminalHostPreference {
+  const activeHost =
+    readActiveTerminalHostPreference(params.runtimeMetadata)
+    ?? readActiveTerminalHostPreference(params.initialMetadata);
+  if (activeHost) return activeHost;
+
   return readUnifiedTerminalHostPreference(
     params.runtimeMetadata?.claudeUnifiedTerminalHost
       ?? params.initialMetadata?.claudeUnifiedTerminalHost,
@@ -146,62 +186,55 @@ export function resolveUnifiedTerminalPermissionMode(params: Readonly<{
   });
 }
 
-function formatPromptErrorMessage(error: unknown): string {
-  if (error instanceof Error && readString(error.message)) {
-    return error.message.replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gu, 'Bearer [redacted]');
-  }
-  return 'Claude prompt failed';
+export function resolveUnifiedTerminalResumeChoice(params: Readonly<{
+  runtimeMetadata?: Readonly<Record<string, unknown>> | null;
+  initialMetadata?: Readonly<Record<string, unknown>> | null;
+}>): ClaudeUnifiedResumeChoicePolicy {
+  return normalizeClaudeUnifiedResumeChoice(params.runtimeMetadata?.claudeUnifiedTerminalResumeChoice)
+    ?? normalizeClaudeUnifiedResumeChoice(params.initialMetadata?.claudeUnifiedTerminalResumeChoice)
+    ?? DEFAULT_CLAUDE_UNIFIED_RESUME_CHOICE;
 }
 
 export async function bindClaudeUnifiedTerminalSession(params: Readonly<{
   ctx: PluginContextV1;
   sessionParams: CreateSessionRuntimeParamsV1;
-}>): Promise<BundledSessionRuntimeCreateResultV1> {
+}>): Promise<SessionRuntimeCreateResultV1> {
   const directory = readDirectory(params.sessionParams);
   const happierSessionId = readSessionId(params.sessionParams);
   const launchEnv = readEnv(params.sessionParams);
   const initialMetadata = isRecord(params.sessionParams.metadata) ? params.sessionParams.metadata : null;
-  const credentials = readHostCredentials(params.sessionParams);
+  const explicitResumeSessionId = readString(
+    (params.sessionParams as Readonly<Record<string, unknown>>).resume,
+  );
 
-  return {
-    kind: 'hostSessionRuntimePlan',
-    providerId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
-    opts: {
+  return createClaudeUnifiedTerminalTurnOperations({
+    ctx: params.ctx,
+    directory,
+    happierSessionId,
+    hostPreference: resolveHostPreference({
+      initialMetadata,
+      runtimeMetadata: null,
+    }),
+    launchEnv,
+    permissionMode: resolveUnifiedTerminalPermissionMode({
+      permissionMode: readString(params.sessionParams.permissionMode),
+      runtimeMetadata: null,
+      initialMetadata,
+    }),
+    initialWorkflowActivityHeadline: initialMetadata?.sessionWorkflowActivityHeadlineV1,
+    knownProviderSession: resolveExplicitResumeTranscriptBinding({
       directory,
-      backendId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
-      ...(credentials === undefined ? {} : { credentials }),
-    },
-    config: {
-      flavor: 'claude',
-      policyAgentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
-      backendDisplayName: 'Claude',
-      uiLogPrefix: '[claude]',
-      providerName: 'Claude',
-      waitingForCommandLabel: 'Claude',
-      agentMessageType: 'claude',
-      supportsMcpServers: true,
-      machineMetadata: {},
-      terminalDisplay: () => null,
-      shouldRenderTerminalDisplay: () => false,
-      formatPromptErrorMessage,
-      resolveKeepAliveMode: () => 'terminal',
-      startRuntimeBeforeFirstPrompt: true,
-      createSessionRuntime: async (runtimeParams) => createClaudeUnifiedTerminalTurnOperations({
-        ctx: params.ctx,
-        directory: readString(runtimeParams.directory) ?? directory,
-        happierSessionId: readString(runtimeParams.session?.sessionId) ?? happierSessionId,
-        hostPreference: resolveHostPreference({
-          initialMetadata,
-          runtimeMetadata: isRecord(runtimeParams.metadata) ? runtimeParams.metadata : null,
-        }),
+      launchEnv,
+      providerSessionId: explicitResumeSessionId,
+    })
+      ?? resolveKnownClaudeTranscriptBinding({
+        directory,
         launchEnv,
-        permissionMode: resolveUnifiedTerminalPermissionMode({
-          permissionMode: readString(runtimeParams.getPermissionMode?.()) ?? readString(params.sessionParams.permissionMode),
-          runtimeMetadata: isRecord(runtimeParams.metadata) ? runtimeParams.metadata : null,
-          initialMetadata,
-        }),
-        setThinking: runtimeParams.setThinking,
+        metadata: initialMetadata,
       }),
-    },
-  } satisfies ClaudeUnifiedTerminalSessionPlan;
+    resumeChoice: resolveUnifiedTerminalResumeChoice({
+      runtimeMetadata: null,
+      initialMetadata,
+    }),
+  });
 }

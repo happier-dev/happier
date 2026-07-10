@@ -6,6 +6,20 @@ import {
 } from './lifecycle.js';
 
 describe('Claude terminal lifecycle mapping leaf', () => {
+    it('ignores hook-originated task-notification prompt submissions', () => {
+        expect(mapClaudeHookEventToTerminalLifecycleObservation({
+            agentId: 'claude',
+            eventName: 'UserPromptSubmit',
+            turnId: 'claude-turn',
+            promptText: [
+                '<task-notification>',
+                '<task-id>agent-1</task-id>',
+                '<status>completed</status>',
+                '</task-notification>',
+            ].join('\n'),
+        })).toBeNull();
+    });
+
     it('treats Stop hooks as completion candidates only', () => {
         expect(mapClaudeHookEventToTerminalLifecycleObservation({
             agentId: 'claude',

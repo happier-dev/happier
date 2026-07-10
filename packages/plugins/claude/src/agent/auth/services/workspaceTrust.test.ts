@@ -94,7 +94,7 @@ describe('projectClaudeWorkspaceTrust', () => {
         });
     });
 
-    it('does not write anything when the workspace has no accepted trust state', async () => {
+    it('defaults a managed session directory to trusted when the source has no trust state', async () => {
         const sourceDir = join(root, 'source-config');
         const targetDir = join(root, 'target-config');
         const sessionDirectory = join(root, 'workspace');
@@ -108,7 +108,9 @@ describe('projectClaudeWorkspaceTrust', () => {
             sessionDirectory,
         });
 
-        expect(await readRootConfig(targetDir)).toBeNull();
+        expect(await readRootConfig(targetDir)).toMatchObject({
+            projects: { [sessionDirectory]: { hasTrustDialogAccepted: true } },
+        });
     });
 
     it('honors an explicit declined trust state on the override candidate without falling through', async () => {

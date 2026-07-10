@@ -4,7 +4,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ExternalSessionFileFollowInputV1, ExternalSessionSurfaceV1 } from '@happier-dev/agents';
+import type { ExternalSessionFileFollowInputV1, ExternalSessionSurfaceV1 } from '@happier-dev/plugin-sdk/sessions';
+
+const COLD_EXTERNAL_SESSION_IMPORT_TIMEOUT_MS = 30_000;
 
 type ClaudeExternalSessionSurfaceFactory = (params?: Readonly<{
     env?: NodeJS.ProcessEnv;
@@ -55,7 +57,7 @@ describe('Claude external-session provider operation policy', () => {
             directory: null,
             configDir: '/home/user/.claude',
         })).toBeNull();
-    });
+    }, COLD_EXTERNAL_SESSION_IMPORT_TIMEOUT_MS);
 
     it('lists and pages Claude JSONL sessions through the plugin-owned external-session surface', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-external-'));
@@ -170,7 +172,7 @@ describe('Claude external-session provider operation policy', () => {
                 },
             },
         });
-    });
+    }, COLD_EXTERNAL_SESSION_IMPORT_TIMEOUT_MS);
 
     it('canonicalizes persisted linked Claude sources to the configured config dir', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-linked-source-'));
@@ -203,7 +205,7 @@ describe('Claude external-session provider operation policy', () => {
                 },
             },
         });
-    });
+    }, COLD_EXTERNAL_SESSION_IMPORT_TIMEOUT_MS);
 
     it('follows Claude JSONL external sessions through runtime file-follow without local timer polling', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-file-follow-'));
@@ -287,8 +289,112 @@ describe('Claude external-session provider operation policy', () => {
         });
 
         expect(JSON.stringify(events)).toContain('live response');
+        expect(events).toEqual([
+            expect.objectContaining({
+                fromCursor: expect.any(String),
+                nextCursor: expect.any(String),
+            }),
+        ]);
         await leaseResult.value.release();
         expect(close).toHaveBeenCalledWith({ finalDrain: true });
+    });
+
+    it('treats file-follow resets as external-session truncation boundaries', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-file-follow-reset-'));
+        const configDir = join(root, '.claude');
+        const projectId = 'project-file-follow-reset';
+        const remoteSessionId = 'claude-session-file-follow-reset';
+        const transcriptDir = join(configDir, 'projects', projectId);
+        await mkdir(transcriptDir, { recursive: true });
+        const transcriptPath = join(transcriptDir, `${remoteSessionId}.jsonl`);
+        await writeFile(transcriptPath, [
+            JSON.stringify({
+                type: 'user',
+                uuid: 'initial-user',
+                timestamp: '2026-06-08T00:00:00.000Z',
+                cwd: root,
+                message: { content: 'initial prompt' },
+            }),
+        ].join('\n') + '\n', 'utf8');
+        const realTranscriptPath = await realpath(transcriptPath);
+
+        const externalSessionLeaf = await import('./index.js');
+        const createSurface = readClaudeExternalSessionSurfaceFactory(externalSessionLeaf);
+        expect(createSurface).toEqual(expect.any(Function));
+        if (!createSurface) return;
+
+        let followInput: ExternalSessionFileFollowInputV1 | null = null;
+        const fileFollow = {
+            follow: vi.fn(async (input) => {
+                followInput = input;
+                return {
+                    id: 'follow-1',
+                    drainNow: vi.fn(async () => undefined),
+                    close: vi.fn(async () => undefined),
+                };
+            }),
+        };
+        const surface = createSurface({ env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir } });
+        const source = { kind: 'claudeConfig' as const, configDir, projectId };
+
+        const leaseResult = await surface.acquireFollowLease?.({
+            source,
+            providerSessionId: remoteSessionId,
+            reason: 'attached_view',
+            runtime: {
+                signal: new AbortController().signal,
+                transcripts: { fileFollow },
+                diagnostics: { issue: vi.fn() },
+            },
+        });
+        expect(leaseResult).toMatchObject({ ok: true });
+        expect(fileFollow.follow).toHaveBeenCalledWith(expect.objectContaining({
+            path: realTranscriptPath,
+            onReset: expect.any(Function),
+        }));
+        if (!leaseResult?.ok || !followInput) return;
+
+        const events: unknown[] = [];
+        leaseResult.value.subscribeToTranscriptUpdates?.((event) => {
+            events.push(event);
+        });
+
+        await writeFile(transcriptPath, [
+            JSON.stringify({
+                type: 'assistant',
+                uuid: 'replayed-assistant',
+                timestamp: '2026-06-08T00:00:01.000Z',
+                message: { content: [{ type: 'text', text: 'replayed after reset' }] },
+            }),
+        ].join('\n') + '\n', 'utf8');
+        await followInput.onReset?.({ reason: 'truncated' });
+
+        const liveRow = {
+            type: 'assistant',
+            uuid: 'assistant-after-reset',
+            timestamp: '2026-06-08T00:00:02.000Z',
+            message: {
+                content: [{ type: 'text', text: 'live response after reset' }],
+            },
+        };
+        await appendFile(transcriptPath, `${JSON.stringify(liveRow)}\n`, 'utf8');
+        await followInput.onLine({
+            line: JSON.stringify(liveRow),
+            sourcePath: realTranscriptPath,
+            sequence: 1,
+        });
+
+        expect(events).toEqual([
+            expect.objectContaining({
+                items: [],
+                truncated: true,
+            }),
+            expect.objectContaining({
+                truncated: false,
+            }),
+        ]);
+        expect(JSON.stringify(events)).not.toContain('replayed after reset');
+        expect(JSON.stringify(events)).toContain('live response after reset');
     });
 
     it('keeps the plugin external-session leaf free of legacy feature vocabulary', async () => {

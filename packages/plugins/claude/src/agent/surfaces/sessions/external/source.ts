@@ -2,7 +2,9 @@ import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import type { ExternalSessionsSource } from '@happier-dev/protocol';
+import { expandHomePath } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/sessions';
+import { HAPPIER_CLAUDE_CONFIG_DIR_ENV } from '@happier-dev/plugin-sdk/experimental/envConstants';
 
 export type ClaudeExternalSessionSourceValidationResult =
     | Readonly<{ ok: true; source: ExternalSessionsSource }>
@@ -13,10 +15,7 @@ function sourceValidationError(error: string): ClaudeExternalSessionSourceValida
 }
 
 export function expandClaudeConfigDirHome(raw: string): string {
-    const trimmed = raw.trim();
-    if (trimmed === '~') return homedir();
-    if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) return join(homedir(), trimmed.slice(2));
-    return trimmed;
+    return expandHomePath(raw);
 }
 
 export function canonicalizeClaudeConfigDir(raw: string): string {
@@ -30,8 +29,8 @@ export function canonicalizeClaudeConfigDir(raw: string): string {
 
 export function resolveConfiguredClaudeConfigDir(params: Readonly<{ env: NodeJS.ProcessEnv }>): string {
     const fromEnv =
-        typeof params.env.HAPPIER_CLAUDE_CONFIG_DIR === 'string' && params.env.HAPPIER_CLAUDE_CONFIG_DIR.trim().length > 0
-            ? params.env.HAPPIER_CLAUDE_CONFIG_DIR.trim()
+        typeof params.env[HAPPIER_CLAUDE_CONFIG_DIR_ENV] === 'string' && params.env[HAPPIER_CLAUDE_CONFIG_DIR_ENV].trim().length > 0
+            ? params.env[HAPPIER_CLAUDE_CONFIG_DIR_ENV].trim()
             : typeof params.env.CLAUDE_CONFIG_DIR === 'string'
                 ? params.env.CLAUDE_CONFIG_DIR.trim()
                 : '';

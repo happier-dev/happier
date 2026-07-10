@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
     ProviderAccountUsageSnapshotV1Schema,
     buildProviderAccountUsageRecordId,
-    buildConnectedServiceCredentialRecord,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/experimental/cloud/usage';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 import { createClaudeSubscriptionQuotaFetcher } from '../quota/subscriptionFetcher.js';
 import { mapClaudeRuntimeRateLimitsToUsageObservation } from '../runtime/usage.js';
@@ -39,7 +39,6 @@ describe('Claude provider account usage snapshots', () => {
             observation,
             observedAtMs: 1_768_000_000_000,
             fetchedAtMs: 1_768_000_000_000,
-            aliases: [{ kind: 'nativeCli', localCredentialRef: 'claude-code' }],
             accountLabel: 'alice@example.com',
         });
 
@@ -55,12 +54,6 @@ describe('Claude provider account usage snapshots', () => {
                 id: 'claude-account-1',
             },
             accountLabel: 'alice@example.com',
-            aliases: [{
-                kind: 'nativeCli',
-                providerId: 'claude',
-                localCredentialRef: 'claude-code',
-                accountSubjectId: 'claude-account-1',
-            }],
             meters: [expect.objectContaining({
                 meterId: 'five_hour',
                 utilizationPct: 70,
@@ -135,12 +128,6 @@ describe('Claude provider account usage snapshots', () => {
                 id: 'subscription-1',
             },
             accountLabel: 'alice@example.com',
-            aliases: [{
-                kind: 'connectedServiceProfile',
-                serviceId: 'claude-subscription',
-                profileId: 'work',
-                accountSubjectId: 'subscription-1',
-            }],
         });
     });
 
@@ -164,7 +151,6 @@ describe('Claude provider account usage snapshots', () => {
             observation,
             observedAtMs: 1_000,
             fetchedAtMs: 1_000,
-            aliases: [{ kind: 'nativeCli', localCredentialRef: 'claude-code' }],
             accountLabel: 'same@example.com',
         });
         const connectedSnapshot = moduleRecord.mapClaudeRuntimeRateLimitsToProviderAccountUsageSnapshot({
@@ -175,11 +161,6 @@ describe('Claude provider account usage snapshots', () => {
             observation,
             observedAtMs: 1_000,
             fetchedAtMs: 1_000,
-            aliases: [{
-                kind: 'connectedServiceProfile',
-                serviceId: 'claude-subscription',
-                profileId: 'work',
-            }],
             accountLabel: 'same@example.com',
         });
 

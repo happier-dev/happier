@@ -16,6 +16,10 @@ const ALLOWED_RELATIVE_IMPORT_EXTENSIONS = new Set([
   '.sass',
   '.scss',
 ]);
+const DISALLOWED_FIRST_PARTY_RUNTIME_IMPORTS = [
+  ['@happier-dev', 'agents'].join('/'),
+  ['@happier-dev', 'protocol'].join('/'),
+] as const;
 
 function listProductionTypeScriptFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -69,32 +73,28 @@ describe('Claude plugin ESM imports', () => {
     expect(violations).toEqual([]);
   });
 
-  it('does not import Claude executable message-meta shaping from the shared agents package', () => {
+  it('keeps production source on the public plugin SDK instead of direct shared package imports', () => {
     const violations = listProductionTypeScriptFiles(SOURCE_ROOT).flatMap((path) => {
       const sourceText = readFileSync(path, 'utf8');
       const sourceFile = ts.createSourceFile(path, sourceText, ts.ScriptTarget.Latest, true);
-      const fileViolations: string[] = [];
+      const importViolations: string[] = [];
 
       function visit(node: ts.Node): void {
         if (
           ts.isImportDeclaration(node)
           && node.moduleSpecifier
           && ts.isStringLiteral(node.moduleSpecifier)
-          && node.moduleSpecifier.text === '@happier-dev/agents'
-          && node.importClause?.namedBindings
-          && ts.isNamedImports(node.importClause.namedBindings)
+          && DISALLOWED_FIRST_PARTY_RUNTIME_IMPORTS.includes(
+            node.moduleSpecifier.text as typeof DISALLOWED_FIRST_PARTY_RUNTIME_IMPORTS[number],
+          )
         ) {
-          for (const element of node.importClause.namedBindings.elements) {
-            if (element.name.text === 'buildClaudeRemoteOutgoingMessageMetaExtras') {
-              fileViolations.push(relative(SOURCE_ROOT, path));
-            }
-          }
+          importViolations.push(`${relative(SOURCE_ROOT, path)} -> ${node.moduleSpecifier.text}`);
         }
         ts.forEachChild(node, visit);
       }
 
       visit(sourceFile);
-      return fileViolations;
+      return importViolations;
     });
 
     expect(violations).toEqual([]);

@@ -92,7 +92,24 @@ describe('applyPermissionModeControl — verified ShiftTab cycling (B11)', () =>
   it('queues until a safe window when Claude is generating', async () => {
     const port = createFakeControlPort({ captures: [GENERATING] });
     const result = await applyPermissionModeControl(ctxFor(port), { permissionMode: 'acceptEdits' });
-    expect(result).toMatchObject({ kind: 'scheduled', timing: 'queued_until_safe_window' });
+    expect(result).toMatchObject({ kind: 'scheduled', timing: 'queued_until_safe_window', reason: 'unsafe_window' });
+    expect(port.sentKeys).toHaveLength(0);
+  });
+
+  it('reports the exact blocker reason when a known prompt blocks the default mode-cycle window', async () => {
+    const GENERATING_PERMISSION_PROMPT = [
+      '✶ Forging… (10s · esc to interrupt)',
+      'Do you want to proceed?',
+      '1. Yes',
+      '  ? for shortcuts',
+    ].join('\n');
+    const port = createFakeControlPort({ captures: [GENERATING_PERMISSION_PROMPT] });
+    const result = await applyPermissionModeControl(ctxFor(port), { permissionMode: 'acceptEdits' });
+    expect(result).toMatchObject({
+      kind: 'scheduled',
+      timing: 'queued_until_safe_window',
+      reason: 'permission_prompt',
+    });
     expect(port.sentKeys).toHaveLength(0);
   });
 });
@@ -107,10 +124,17 @@ describe('applyPermissionModeControl — in_flight_steer window (lane Q, probe Q
     '╭─────╮', '│ >   │', '╰─────╯',
     '  ⏵⏵ accept edits on (shift+tab to cycle)',
   ].join('\n');
-  const GENERATING_PERMISSION_PROMPT = [
+  const GENERATING_PERMISSION_PROMPT_DEFAULT = [
     '✶ Forging… (10s · esc to interrupt)',
     'Do you want to proceed?',
     '1. Yes',
+    '  ? for shortcuts',
+  ].join('\n');
+  const GENERATING_PERMISSION_PROMPT_ACCEPT = [
+    '✶ Forging… (10s · esc to interrupt)',
+    'Do you want to proceed?',
+    '1. Yes',
+    '  ⏵⏵ accept edits on (shift+tab to cycle)',
   ].join('\n');
 
   it('cycles and verifies the marker mid-generation when the steer window is allowed', async () => {
@@ -125,16 +149,18 @@ describe('applyPermissionModeControl — in_flight_steer window (lane Q, probe Q
     expect(port.sentKeys).toEqual(['ShiftTab']);
   });
 
-  it('still defers when a steer veto state is visible (permission prompt) even in the steer window', async () => {
-    const port = createFakeControlPort({ captures: [GENERATING_PERMISSION_PROMPT] });
+  it('allows mode cycling through a permission prompt in the mode-cycle window', async () => {
+    const port = createFakeControlPort({
+      captures: [GENERATING_PERMISSION_PROMPT_DEFAULT, GENERATING_PERMISSION_PROMPT_ACCEPT],
+    });
 
     const result = await applyPermissionModeControl(
       { ...ctxFor(port), window: 'in_flight_steer' },
       { permissionMode: 'acceptEdits' },
     );
 
-    expect(result).toMatchObject({ kind: 'scheduled', timing: 'queued_until_safe_window' });
-    expect(port.sentKeys).toHaveLength(0);
+    expect(result).toMatchObject({ kind: 'applied', effective: 'acceptEdits', timing: 'current_window' });
+    expect(port.sentKeys).toEqual(['ShiftTab']);
   });
 
   it('default window keeps deferring on generating screens (no behavior change)', async () => {
@@ -143,6 +169,27 @@ describe('applyPermissionModeControl — in_flight_steer window (lane Q, probe Q
     const result = await applyPermissionModeControl(ctxFor(port), { permissionMode: 'acceptEdits' });
 
     expect(result).toMatchObject({ kind: 'scheduled', timing: 'queued_until_safe_window' });
+    expect(port.sentKeys).toHaveLength(0);
+  });
+
+  it('keeps non-permission prompt blockers deferred in the mode-cycle window with exact reasons', async () => {
+    const GENERATING_TRUST_PROMPT = [
+      '✶ Forging… (10s · esc to interrupt)',
+      'Do you trust the files in this folder?',
+      '1. Yes',
+    ].join('\n');
+    const port = createFakeControlPort({ captures: [GENERATING_TRUST_PROMPT] });
+
+    const result = await applyPermissionModeControl(
+      { ...ctxFor(port), window: 'in_flight_steer' },
+      { permissionMode: 'acceptEdits' },
+    );
+
+    expect(result).toMatchObject({
+      kind: 'scheduled',
+      timing: 'queued_until_safe_window',
+      reason: 'trust_prompt',
+    });
     expect(port.sentKeys).toHaveLength(0);
   });
 });

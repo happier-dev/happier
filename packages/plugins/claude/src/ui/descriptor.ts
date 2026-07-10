@@ -1,4 +1,4 @@
-import { CLAUDE_PROVIDER_SETTINGS_DESCRIPTOR } from './settings/descriptor.js';
+import { CLAUDE_AGENT_SETTINGS_DESCRIPTOR } from './settings/descriptor.js';
 
 export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
   kind: 'plugin.ui.v1',
@@ -44,6 +44,7 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
     },
     picker: {
       iconName: 'sparkles-outline',
+      iconScale: 1.1,
       cliGlyphTokenId: 'agentGlyph.claude',
       cliGlyphScale: 1.0,
       profileCompatibilityGlyphScale: 1.14,
@@ -54,9 +55,32 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
     },
     icon: { assetId: 'claude' },
   },
-  settings: CLAUDE_PROVIDER_SETTINGS_DESCRIPTOR,
+  settings: CLAUDE_AGENT_SETTINGS_DESCRIPTOR,
   behavior: {
     descriptorId: 'claude.uiBehavior.v1',
+    // Capability-driven editable-goal gating. Unlike Codex (which gates on the app-server backend
+    // mode), Claude's native `/goal` support is capability-driven. Two provider-derived signals make
+    // the goal chip available (no provider-name branching in generic UI):
+    //  1. Session-level `/goal` capability — `metadata.slashCommands` includes `goal` (published on
+    //     every Claude launcher path). Present BEFORE any goal item is derived, so the chip can be the
+    //     first-goal entry point on a fresh ACTIVE session (the goal item only appears after a native
+    //     `goal_status`, which is never emitted until a goal is set). Resolves the chicken-and-egg.
+    //  2. A persisted goal item carrying `goalCapabilities.canEdit` — the resumable/detached fallback.
+    workState: {
+      editableGoals: {
+        providerId: 'claude',
+        capabilityDriven: true,
+        sessionCapability: {
+          path: ['slashCommands'],
+          includesValue: 'goal',
+        },
+        persistedGoalSnapshot: {
+          path: ['sessionWorkStateV1'],
+          itemKind: 'goal',
+          providerFields: ['agentId', 'backendId'],
+        },
+      },
+    },
     sessionComposer: {
       nonSteerableWhileBusy: {
         reason: 'provider_config_change_refused',
@@ -65,9 +89,49 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
         freshModelOverride: true,
       },
     },
+    contextWindow: {
+      defaultTokens: 200_000,
+      modelRules: [
+        {
+          idSuffix: '[1m]',
+          descriptionIncludesAny: ['1 million', '1m context'],
+          tokens: 1_000_000,
+        },
+      ],
+      observedUsageBumpTokens: [200_000, 1_000_000],
+      trustObservedUsageBeyondKnown: true,
+    },
     externalSessions: {
       browseDescriptorId: 'claude.externalSessions.browse.v1',
       sessionHandoffDescriptorId: 'claude.sessionHandoff.v1',
+      supportsBackgroundFollow: true,
+      sessionHandoff: {
+        clearMetadataKeys: [
+          'claudeTranscriptPath',
+          'claudeLastCheckpointId',
+          'claudeLastAssistantUuid',
+        ],
+      },
+      browse: {
+        order: 20,
+        sourceOptions: [
+          {
+            key: 'claude:default',
+            labelKey: 'externalSessions.browseSourceClaudeDefault',
+            source: { kind: 'claudeConfig' },
+          },
+        ],
+        compatibleSource: {
+          sourceKind: 'claudeConfig',
+          optionalFields: ['configDir', 'projectId'],
+        },
+        linkEnsureRequestExtras: {
+          sourceFromCandidate: {
+            sourceKind: 'claudeConfig',
+            optionalFields: ['configDir', 'projectId'],
+          },
+        },
+      },
     },
   },
   session: {

@@ -1,30 +1,47 @@
-import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
 const repoRoot = fileURLToPath(new URL('../../../../../../../../', import.meta.url));
 
-const remainingHostRuntimeFiles = [
-  'apps/cli/src/backends/claude/runtime/remote/createLaunchController.ts',
-  'apps/cli/src/backends/claude/runtime/terminal/createLaunchController.ts',
-] as const;
-
-const streamLoopFile = 'apps/cli/src/backends/claude/remote/sdk/runClaudeAgentSdkStreamLoop.ts';
+const claudeHostBackendTree = 'apps/cli/src/backends/claude';
 
 describe('Claude runtime auth host import closure', () => {
-  it('does not keep legacy host terminal or remote launch controllers', () => {
-    for (const file of remainingHostRuntimeFiles) {
-      expect(existsSync(new URL(file, `file://${repoRoot}`)), file).toBe(false);
-    }
+  it('does not keep a legacy Claude host backend tree', () => {
+    expect(existsSync(new URL(claudeHostBackendTree, `file://${repoRoot}`))).toBe(false);
   });
 
-  it('keeps the remaining host SDK stream loop on plugin-owned runtime auth classification', async () => {
-    const source = await readFile(new URL(streamLoopFile, `file://${repoRoot}`), 'utf8');
+  it('keeps Claude plugin source imports inside the plugin and public package boundaries', () => {
+    const srcRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
+    const files: string[] = [];
+    const visit = (dir: string): void => {
+      for (const entry of readdirSync(dir)) {
+        const fullPath = join(dir, entry);
+        const metadata = statSync(fullPath);
+        if (metadata.isDirectory()) {
+          if (entry === 'dist' || entry === 'node_modules') continue;
+          visit(fullPath);
+          continue;
+        }
+        if (entry.endsWith('.ts')) files.push(fullPath);
+      }
+    };
+    visit(srcRoot);
 
-    expect(source).not.toContain('../../connectedServices/mapClaudeRateLimitEventToUsageDetails');
-    expect(source).not.toContain('../../connectedServices/createClaudeConnectedServiceRuntimeAuthAdapter');
-    expect(source).toContain('@happier-dev/plugins-claude/agent/auth/services/runtime');
+    const forbiddenImports = files.flatMap((filePath) => {
+      const source = readFileSync(filePath, 'utf8');
+      const matches = source.matchAll(/\b(?:import|export)\s+(?:type\s+)?(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]/gu);
+      return Array.from(matches, (match) => String(match[1] ?? '')).filter((specifier) =>
+        specifier.startsWith('@/') ||
+        specifier.startsWith('apps/') ||
+        specifier.startsWith('@happier-dev/')
+          && !specifier.startsWith('@happier-dev/plugin-sdk')
+          && !specifier.startsWith('@happier-dev/protocol')
+      ).map((specifier) => `${relative(srcRoot, filePath)} -> ${specifier}`);
+    });
+
+    expect(forbiddenImports).toEqual([]);
   });
 });

@@ -36,21 +36,35 @@ function createJsonStreamHandle() {
         async emit(record: unknown) {
             await Promise.all([...listeners].map((listener) => listener(record)));
         },
+        listenerCount() {
+            return listeners.size;
+        },
     };
 }
 
 function createContextFixture(stream = createJsonStreamHandle()) {
     const requestDecision = vi.fn(async () => ({ decision: 'approved' as const }));
+    const writeStateField = vi.fn(async () => undefined);
     const spawnClient = vi.fn(async () => stream.handle);
-    const ctx = {
-        exec: {
-            spawnClient,
+    const currentSession = {
+        writeStateField,
+        permissions: {
+            requestDecision,
+            getMode: () => 'default',
         },
-        session: {
-            permissions: {
-                requestDecision,
-                getMode: () => 'default',
+    };
+    const ctx = {
+        agentRuntime: {
+            exec: {
+                spawnClient,
             },
+        },
+        logger: {
+            debug: vi.fn(),
+        },
+        session: currentSession,
+        sessions: {
+            current: currentSession,
         },
     } as unknown as PluginContextV1;
     return { ctx, requestDecision, spawnClient, stream };
@@ -71,6 +85,57 @@ async function waitForCondition(predicate: () => boolean, label: string): Promis
 }
 
 describe('createClaudeExecutionRunBackend', () => {
+    it('does not advertise synthetic execution-run ids as resumable provider identities', async () => {
+        const { ctx, stream } = createContextFixture();
+        const backend = createClaudeExecutionRunBackend({
+            ctx,
+            executionRunParams: {
+                backendId: 'claude',
+                cwd: '/tmp/project',
+                runId: 'run_1',
+            },
+        });
+
+        await expect(backend.readResumeSupport()).resolves.toBe(false);
+        await expect(backend.readResumeSupport({ captureReplay: true })).resolves.toBe(false);
+
+        const provision = backend.provisionSession({ initialPrompt: 'review this' });
+        await waitForCondition(() => stream.listenerCount() > 0, 'Claude SDK stream subscription');
+
+        await stream.emit({
+            type: 'system',
+            subtype: 'init',
+            session_id: 'claude-provider-session-1',
+        } satisfies SDKMessage);
+        await stream.emit({
+            type: 'result',
+            subtype: 'success',
+            num_turns: 1,
+            total_cost_usd: 0,
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: false,
+            session_id: 'claude-provider-session-1',
+        } satisfies SDKMessage);
+
+        await expect(provision).resolves.toEqual({ sessionId: 'claude-execution-run:run_1' });
+        expect(ctx.sessions.current.writeStateField).toHaveBeenCalledWith({
+            fieldId: 'identity.providerSessionId',
+            value: {
+                metadataKey: 'claudeSessionId',
+                value: 'claude-provider-session-1',
+            },
+            reason: 'claude-agent-sdk-session-id',
+        });
+        expect(ctx.sessions.current.writeStateField).not.toHaveBeenCalledWith(expect.objectContaining({
+            fieldId: 'identity.providerSessionId',
+            value: expect.objectContaining({
+                value: 'claude-execution-run:run_1',
+            }),
+        }));
+        await backend.dispose();
+    });
+
     it('drives execution runs through the shared turn-operations adapter', async () => {
         const { ctx, requestDecision, spawnClient, stream } = createContextFixture();
 
@@ -91,6 +156,7 @@ describe('createClaudeExecutionRunBackend', () => {
         });
         await flushMicrotasks();
         await waitForCondition(() => spawnClient.mock.calls.length > 0, 'Claude SDK spawn');
+        await waitForCondition(() => stream.listenerCount() > 0, 'Claude SDK stream subscription');
 
         expect(provisionSettled).toBe(false);
         expect(spawnClient).toHaveBeenCalledWith(expect.objectContaining({

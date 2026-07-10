@@ -2,8 +2,8 @@ import type {
   RuntimeConfigOutcomeChangeKeyV1,
   RuntimeConfigOutcomeStatusV1,
   RuntimeConfigOutcomeTimingV1,
-} from '@happier-dev/protocol';
-import type { TerminalControlPort } from '@happier-dev/agents';
+  TerminalControlPort,
+} from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 import type { ClaudeTuiModeMarker } from '../screenState.js';
 import type { SettingsGuard } from './settingsGuard.js';
@@ -18,7 +18,7 @@ import type { ClaudeTuiControlTelemetrySink } from './telemetry.js';
  * registered in `packages/protocol/src/features/catalog.ts` (fail-closed, default OFF).
  */
 export const CLAUDE_UNIFIED_TUI_RUNTIME_CONTROL_FEATURE_ID =
-  'providers.claude.unifiedTerminal.tuiRuntimeControl' as const;
+  'agents.claude.unifiedTerminal.tuiRuntimeControl' as const;
 
 export type ClaudeUnifiedTuiRuntimeControlFeatureId =
   typeof CLAUDE_UNIFIED_TUI_RUNTIME_CONTROL_FEATURE_ID;

@@ -1,15 +1,15 @@
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
+import type { PluginContextV1, TypedEventV1 } from '@happier-dev/plugin-sdk';
 import {
   SESSION_PROVIDER_HOOK_EVENT_ID_V1,
   SESSION_PROVIDER_TRANSCRIPT_EVENT_ID_V1,
-  type TypedEventV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 import type { ClaudeTerminalLifecycleObservation } from '../lifecycle.js';
 import {
   mapClaudeHookEventToTerminalLifecycleObservation,
   mapClaudeTranscriptEventToTerminalLifecycleObservation,
 } from '../lifecycle.js';
+import { readSessionHookSidechainAgentId } from '../../../hooks/sidechain.js';
 import { CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID } from './constants.js';
 
 export const CLAUDE_UNIFIED_PROVIDER_HOOK_EVENT_ID = SESSION_PROVIDER_HOOK_EVENT_ID_V1;
@@ -38,6 +38,33 @@ function readTimestampMs(value: unknown): number | null {
   if (typeof value !== 'string' || value.trim().length === 0) return null;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function readCompactBoundaryProviderEventId(
+  payload: Record<string, unknown>,
+  nested: Record<string, unknown>,
+  happierSessionId: string,
+): string | null {
+  const providerSessionId = readString(payload.providerSessionId)
+    ?? readString(payload.provider_session_id)
+    ?? readString(nested.session_id)
+    ?? readString(nested.sessionId)
+    ?? readString(payload.sessionId)
+    ?? happierSessionId;
+  const rawId = readString(nested.uuid)
+    ?? readString(nested.id)
+    ?? readString(payload.uuid)
+    ?? readString(payload.id)
+    ?? readString(payload.turnId)
+    ?? readString(nested.turnId);
+  if (rawId) return `claude:compact_boundary:${providerSessionId}:${rawId}`;
+  const timestampMs = readTimestampMs(nested.timestamp)
+    ?? readTimestampMs(nested.observedAtMs)
+    ?? readTimestampMs(nested.observed_at_ms)
+    ?? readTimestampMs(payload.timestamp)
+    ?? readTimestampMs(payload.observedAtMs)
+    ?? readTimestampMs(payload.observed_at_ms);
+  return timestampMs === null ? null : `claude:compact_boundary:${providerSessionId}:ts-${timestampMs}`;
 }
 
 function readNestedPayload(payload: Record<string, unknown>): Record<string, unknown> {
@@ -75,6 +102,39 @@ function readHookObservation(
     ?? readString(nested.hookEventName);
   if (!eventName) return null;
 
+  // Sidechain (subagent) hooks must never drive the PRIMARY turn lifecycle (ported R-11,
+  // incident cmq8171vw: subagent Stop/StopFailure terminalized the parent canonical turn).
+  // Non-terminal sidechain tool/prompt hooks flow through only as runtime-activity evidence.
+  // StopFailure still flows through — attributed — for the account-usage carve-out (HF-3).
+  const rawSidechainAgentId = readSessionHookSidechainAgentId(nested);
+  // Tolerated flat payload shapes reuse `agentId` as a provider-id alias; that is never a
+  // sidechain marker.
+  const sidechainAgentId = rawSidechainAgentId === CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID ? null : rawSidechainAgentId;
+  if (sidechainAgentId && eventName !== 'StopFailure') {
+    if (
+      eventName === 'PreToolUse'
+      || eventName === 'PostToolUse'
+      || eventName === 'UserPromptSubmit'
+      || eventName === 'Notification'
+    ) {
+      return {
+        type: 'sidechain_activity',
+        agentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
+        source: 'hook',
+        sidechainAgentId,
+      };
+    }
+    if (eventName === 'Stop' || eventName === 'SessionEnd') {
+      return {
+        type: 'sidechain_terminal',
+        agentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
+        source: 'hook',
+        sidechainAgentId,
+      };
+    }
+    return null;
+  }
+
   const detail = readString(payload.detail)
     ?? readString(nested.detail)
     ?? readString(nested.last_assistant_message)
@@ -102,6 +162,7 @@ function readHookObservation(
     evidence: nested,
     ...(promptText ? { promptText } : {}),
     ...(typeof observedAtMs === 'number' ? { observedAtMs } : {}),
+    ...(sidechainAgentId ? { sidechainAgentId } : {}),
   });
 }
 
@@ -139,6 +200,31 @@ function readTranscriptObservation(
     });
   }
 
+  if (kind === 'queued_command') {
+    const text = readString(payload.text)
+      ?? readString(payload.promptText)
+      ?? readString(payload.prompt_text)
+      ?? readString(payload.prompt)
+      ?? readString(nested.text)
+      ?? readString(nested.promptText)
+      ?? readString(nested.prompt_text)
+      ?? readString(nested.prompt);
+    if (!text) return null;
+    const observedAtMs = readTimestampMs(payload.observedAtMs)
+      ?? readTimestampMs(payload.observed_at_ms)
+      ?? readTimestampMs(payload.timestamp)
+      ?? readTimestampMs(nested.observedAtMs)
+      ?? readTimestampMs(nested.observed_at_ms)
+      ?? readTimestampMs(nested.timestamp);
+    return mapClaudeTranscriptEventToTerminalLifecycleObservation({
+      agentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
+      kind: 'queued_command',
+      text,
+      turnId: readString(payload.turnId) ?? readString(nested.turnId),
+      ...(typeof observedAtMs === 'number' ? { observedAtMs } : {}),
+    });
+  }
+
   if (kind === 'assistant_stop') {
     return mapClaudeTranscriptEventToTerminalLifecycleObservation({
       agentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
@@ -147,6 +233,14 @@ function readTranscriptObservation(
         ?? readString(payload.stop_reason)
         ?? readString(nested.stopReason)
         ?? readString(nested.stop_reason),
+      turnId: readString(payload.turnId) ?? readString(nested.turnId),
+    });
+  }
+
+  if (kind === 'assistant_api_error') {
+    return mapClaudeTranscriptEventToTerminalLifecycleObservation({
+      agentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
+      kind,
       turnId: readString(payload.turnId) ?? readString(nested.turnId),
     });
   }
@@ -160,10 +254,12 @@ function readTranscriptObservation(
   }
 
   if (kind === 'compact_boundary') {
+    const agentEventId = readCompactBoundaryProviderEventId(payload, nested, happierSessionId);
     return mapClaudeTranscriptEventToTerminalLifecycleObservation({
       agentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
       kind,
       turnId: readString(payload.turnId) ?? readString(nested.turnId),
+      ...(agentEventId ? { agentEventId } : {}),
     });
   }
 

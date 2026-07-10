@@ -1,7 +1,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { ExternalSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/sessions';
 
 import { resolveClaudeConfigDir } from './source.js';
 

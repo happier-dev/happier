@@ -26,9 +26,17 @@
       "types": "./dist/agent/hooks/protocol.d.ts",
       "default": "./dist/agent/hooks/protocol.js"
     },
-    "./agent/subagents/teams": {
-      "types": "./dist/agent/subagents/teams/index.d.ts",
-      "default": "./dist/agent/subagents/teams/index.js"
+    "./protocol/remoteSettings": {
+      "types": "./dist/protocol/remoteSettings.d.ts",
+      "default": "./dist/protocol/remoteSettings.js"
+    },
+    "./agent/auth/services/cloud/refreshBridge": {
+      "types": "./dist/agent/auth/services/cloud/refreshBridge.d.ts",
+      "default": "./dist/agent/auth/services/cloud/refreshBridge.js"
+    },
+    "./agent/auth/services/native/credentials": {
+      "types": "./dist/agent/auth/services/native/credentials.d.ts",
+      "default": "./dist/agent/auth/services/native/credentials.js"
     },
     "./agent/auth/services/quota/subscriptionFetcher": {
       "types": "./dist/agent/auth/services/quota/subscriptionFetcher.d.ts",
@@ -49,6 +57,10 @@
     "./agent/runtime/reasoningEffort": {
       "types": "./dist/agent/runtime/reasoningEffort.d.ts",
       "default": "./dist/agent/runtime/reasoningEffort.js"
+    },
+    "./agent/permissions/requestSource": {
+      "types": "./dist/agent/permissions/requestSource.d.ts",
+      "default": "./dist/agent/permissions/requestSource.js"
     },
     "./agent/promptAssets": {
       "types": "./dist/agent/promptAssets/index.d.ts",
@@ -77,14 +89,14 @@
     "package.json"
   ],
   "scripts": {
+    "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node ../../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
     "test": "vitest run",
     "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@happier-dev/agents": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
-    "@happier-dev/protocol": "0.0.0"
+    "zod": "4.3.6"
   },
   "devDependencies": {
     "typescript": "^5.9.2",

@@ -9,9 +9,9 @@ function delay(ms: number): Promise<void> {
 }
 
 async function waitForCondition(predicate: () => boolean, label: string): Promise<void> {
-    for (let index = 0; index < 20; index += 1) {
+    for (let index = 0; index < 100; index += 1) {
         if (predicate()) return;
-        await Promise.resolve();
+        await delay(1);
     }
     throw new Error(`Timed out waiting for ${label}`);
 }
@@ -49,6 +49,7 @@ function createJsonStreamHandle() {
         dispose,
         handle,
         written,
+        listenerCount: () => listeners.size,
         async emit(record: unknown) {
             await Promise.all([...listeners].map((listener) => listener(record)));
         },
@@ -57,16 +58,26 @@ function createJsonStreamHandle() {
 
 function createContextFixture(stream = createJsonStreamHandle()) {
     const spawnClient = vi.fn(async () => stream.handle);
+    const currentSession = {
+        permissions: {
+            requestDecision: vi.fn(),
+            getMode: () => 'default',
+        },
+        writeStateField: vi.fn(async () => undefined),
+    };
     return {
         ctx: {
-            session: {
-                permissions: {
-                    requestDecision: vi.fn(),
-                    getMode: () => 'default',
-                },
+            session: currentSession,
+            sessions: {
+                current: currentSession,
             },
-            exec: {
-                spawnClient,
+            logger: {
+                debug: vi.fn(),
+            },
+            agentRuntime: {
+                exec: {
+                    spawnClient,
+                },
             },
         } as unknown as PluginContextV1,
         spawnClient,
@@ -105,6 +116,28 @@ describe('createClaudeExecutionRunBackend default SDK runtime', () => {
         expect(stream.dispose).toHaveBeenCalled();
     });
 
+    it('applies the execution-run model before the first SDK query', async () => {
+        const { ctx, spawnClient, stream } = createContextFixture();
+        const backend = createClaudeExecutionRunBackend({
+            ctx,
+            executionRunParams: {
+                backendId: 'claude',
+                cwd: '/tmp/project',
+                runId: 'run_1',
+                modelId: 'claude-opus-test',
+            },
+        });
+
+        await backend.sendPrompt('claude-execution-run:run_1', 'review this');
+
+        expect(spawnClient.mock.calls[0]?.[0].launch.args).toEqual(expect.arrayContaining([
+            '--model',
+            'claude-opus-test',
+        ]));
+        await backend.dispose();
+        expect(stream.dispose).toHaveBeenCalled();
+    });
+
     it('emits each SDK stream message once', async () => {
         const assistantMessage = {
             type: 'assistant',
@@ -138,6 +171,7 @@ describe('createClaudeExecutionRunBackend default SDK runtime', () => {
         });
 
         await backend.sendPrompt('claude-execution-run:run_1', 'review this');
+        await waitForCondition(() => stream.listenerCount() > 0, 'Claude SDK stream subscription');
         await stream.emit(assistantMessage);
         await stream.emit(resultMessage);
         await backend.waitForTurnCompletion?.();
@@ -148,7 +182,7 @@ describe('createClaudeExecutionRunBackend default SDK runtime', () => {
                 sessionId: 'claude-execution-run:run_1',
                 turnId: 'claude-agent-sdk-turn-1',
                 delta: {
-                    provider: 'claude',
+                    agentId: 'claude',
                     message: assistantMessage,
                 },
             }),
@@ -157,7 +191,7 @@ describe('createClaudeExecutionRunBackend default SDK runtime', () => {
                 sessionId: 'claude-provider-session-1',
                 turnId: 'claude-agent-sdk-turn-1',
                 summary: {
-                    provider: 'claude',
+                    agentId: 'claude',
                     result: null,
                 },
             }),

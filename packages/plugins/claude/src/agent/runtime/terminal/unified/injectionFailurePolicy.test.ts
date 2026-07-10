@@ -1,4 +1,4 @@
-import type { TerminalInputInjectionResult } from '@happier-dev/agents';
+import type { TerminalInputInjectionResult } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 import { describe, expect, it } from 'vitest';
 
 import { classifyClaudeUnifiedInjectionFailure } from './injectionFailurePolicy.js';

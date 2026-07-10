@@ -1,4 +1,4 @@
-import type { AIBackendProfile } from '@happier-dev/protocol';
+import type { AIBackendProfile } from '@happier-dev/plugin-sdk/manifest';
 
 export const CLAUDE_BUILT_IN_BACKEND_PROFILES = [
   {

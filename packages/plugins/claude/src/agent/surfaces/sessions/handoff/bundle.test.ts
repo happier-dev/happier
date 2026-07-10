@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -30,7 +30,7 @@ describe('Claude handoff bundle leaf', () => {
         });
 
         expect(bundle).toEqual({
-            providerId: 'claude',
+            agentId: 'claude',
             remoteSessionId: 'session-1',
             transcriptBase64: Buffer.from('{"type":"assistant","text":"live"}\n', 'utf8').toString('base64'),
         });
@@ -44,7 +44,7 @@ describe('Claude handoff bundle leaf', () => {
 
         const result = await importClaudeSessionBundle({
             bundle: {
-                providerId: 'claude',
+                agentId: 'claude',
                 remoteSessionId: 'session-2',
                 transcriptBase64: Buffer.from('{"type":"assistant","text":"imported"}\n', 'utf8').toString('base64'),
             },
@@ -75,12 +75,30 @@ describe('Claude handoff bundle leaf', () => {
     it('rejects remote session ids with path separators', async () => {
         await expect(importClaudeSessionBundle({
             bundle: {
-                providerId: 'claude',
+                agentId: 'claude',
                 remoteSessionId: '../escape',
                 transcriptBase64: Buffer.from('{}\n', 'utf8').toString('base64'),
             },
             targetPath: '/tmp/workspace',
             env: {},
         })).rejects.toThrow(/remoteSessionId|session id|path/i);
+    });
+
+    it('rejects malformed bundles before creating target directories', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-handoff-invalid-'));
+        const targetPath = join(root, 'workspace');
+        const configDir = join(root, '.claude-target');
+        await mkdir(targetPath, { recursive: true });
+
+        await expect(importClaudeSessionBundle({
+            bundle: {
+                agentId: 'claude',
+                remoteSessionId: 'session-missing-transcript',
+            },
+            targetPath,
+            env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
+        })).rejects.toThrow(/bundle|transcript/i);
+
+        await expect(access(join(configDir, 'projects'))).rejects.toThrow();
     });
 });

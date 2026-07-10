@@ -1,5 +1,4 @@
-import type { PermissionIntent } from '@happier-dev/agents';
-import { parsePermissionIntentAlias } from '@happier-dev/agents';
+import { parsePermissionIntentAlias } from '@happier-dev/plugin-sdk/experimental/acp';
 
 export type ClaudeProviderPermissionMode =
     | 'default'
@@ -13,6 +12,8 @@ export type ClaudePermissionModeInput = Readonly<{
     permissionMode: string;
     agentModeId?: string | null | undefined;
 }>;
+
+type PermissionIntent = NonNullable<ReturnType<typeof parsePermissionIntentAlias>>;
 
 export function mapToClaudePermissionMode(mode: string | null | undefined): ClaudeProviderPermissionMode {
     if (mode === 'yolo') return 'bypassPermissions';

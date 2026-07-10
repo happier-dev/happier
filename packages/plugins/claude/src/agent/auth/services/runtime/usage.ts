@@ -1,4 +1,4 @@
-import type { ConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceLimitCategoryV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 import {
   parseClaudeProviderTimestampMs,
@@ -194,6 +194,27 @@ function containsRateLimitEvidence(value: unknown): boolean {
   ].some(containsRateLimitEvidence);
 }
 
+function containsTransientThrottleEvidence(value: unknown): boolean {
+  if (typeof value === 'string') {
+    return /temporarily\s+limiting\s+requests/iu.test(value)
+      || /not\s+your\s+usage\s+limit/iu.test(value);
+  }
+  if (Array.isArray(value)) return value.some(containsTransientThrottleEvidence);
+  if (!isRecord(value)) return false;
+  return [
+    value.error,
+    value.code,
+    value.type,
+    value.kind,
+    value.message,
+    value.detail,
+    value.details,
+    value.description,
+    value.text,
+    value.content,
+  ].some(containsTransientThrottleEvidence);
+}
+
 function containsProviderCapacityEvidence(value: unknown): boolean {
   if (typeof value === 'string') {
     return /\b529\b/u.test(value) || /\boverloaded(?:_error)?\b/iu.test(value);
@@ -216,6 +237,7 @@ function containsProviderCapacityEvidence(value: unknown): boolean {
 
 function readSyntheticProviderLimitId(records: readonly Record<string, unknown>[]): string | undefined {
   if (records.some(containsProviderCapacityEvidence)) return 'server_overloaded';
+  if (records.some(containsTransientThrottleEvidence)) return 'transient';
   for (const names of [
     ['providerLimitId', 'provider_limit_id', 'limit', 'limitType', 'limit_type'],
     ['code', 'error', 'type', 'kind'],
@@ -269,22 +291,25 @@ function mapSyntheticClaudeApiErrorToUsageDetails(
   const status = readHttpStatus(readFirstField(records, [
     'apiErrorStatus',
     'api_error_status',
+    'errorStatus',
+    'error_status',
     'status',
     'statusCode',
     'status_code',
   ]));
   const hasRateLimitEvidence = containsRateLimitEvidence(record);
+  const hasTransientThrottleEvidence = containsTransientThrottleEvidence(record);
   const hasProviderCapacityEvidence = status === 529 || containsProviderCapacityEvidence(record);
   const hasCompatibleStatus = status === null || status === 429 || status === 529;
   const isAssistantApiError =
     (record.type === 'assistant' || record.type === 'assistant_response')
     && record.isApiErrorMessage === true
-    && (hasRateLimitEvidence || hasProviderCapacityEvidence || status === 429)
+    && (hasRateLimitEvidence || hasTransientThrottleEvidence || hasProviderCapacityEvidence || status === 429)
     && hasCompatibleStatus;
   const isResultApiError =
     record.type === 'result'
     && hasCompatibleStatus
-    && (status === 429 || hasRateLimitEvidence || hasProviderCapacityEvidence)
+    && (status === 429 || hasRateLimitEvidence || hasTransientThrottleEvidence || hasProviderCapacityEvidence)
     && (
       status === 429
       || status === 529
@@ -297,14 +322,20 @@ function mapSyntheticClaudeApiErrorToUsageDetails(
   const timing = parseClaudeUsageLimitReset({ body: record, nowMs: Date.now() });
   const resetAtMs = readSyntheticResetAtMs(records) ?? timing.resetAtMs;
   const retryAfterMs = readSyntheticRetryAfterMs(records) ?? timing.retryAfterMs;
-  const providerLimitId = hasProviderCapacityEvidence ? 'server_overloaded' : readSyntheticProviderLimitId(records);
+  const providerLimitId = hasProviderCapacityEvidence
+    ? 'server_overloaded'
+    : readSyntheticProviderLimitId(records) ?? (status === 429 ? 'rate_limit' : undefined);
 
   return {
     v: 1,
     resetAtMs,
     retryAfterMs,
-    ...(hasProviderCapacityEvidence ? { limitCategory: 'capacity' as const } : {}),
-    quotaScope: hasProviderCapacityEvidence ? 'provider' : 'account',
+    ...(hasProviderCapacityEvidence
+      ? { limitCategory: 'capacity' as const }
+      : hasTransientThrottleEvidence
+        ? { limitCategory: 'rate_limit' as const }
+        : {}),
+    quotaScope: hasProviderCapacityEvidence || hasTransientThrottleEvidence ? 'provider' : 'account',
     recoverability: 'wait',
     ...(providerLimitId ? { providerLimitId } : {}),
     planType: null,

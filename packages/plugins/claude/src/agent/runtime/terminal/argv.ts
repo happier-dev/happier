@@ -11,6 +11,8 @@ export type ClaudeTerminalUserArgPartition = Readonly<{
     trailingPermissionFlagArgs: string[];
 }>;
 
+export const CLAUDE_TERMINAL_YOLO_ALLOW_FLAG = '--allow-dangerously-skip-permissions';
+
 const FLAGS_WITH_VALUE = new Set<string>([
     '--model',
     '--effort',
@@ -149,6 +151,9 @@ export function partitionClaudeTerminalUserArgs(args: readonly string[] | undefi
 
     for (let index = 0; index < args.length; index += 1) {
         const arg = args[index];
+        if (arg === CLAUDE_TERMINAL_YOLO_ALLOW_FLAG) {
+            continue;
+        }
         if (arg === '--dangerously-skip-permissions') {
             trailingPermissionFlagArgs = ['--permission-mode', 'bypassPermissions'];
             continue;

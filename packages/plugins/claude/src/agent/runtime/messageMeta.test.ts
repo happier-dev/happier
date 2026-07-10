@@ -12,7 +12,7 @@ describe('buildClaudeRemoteOutgoingMessageMetaExtras', () => {
             claudeRemoteAgentSdkEnabled: true,
             claudeUnifiedTerminalEnabled: false,
             claudeUnifiedTerminalHost: 'auto',
-            claudeCodeExperimentalAgentTeamsEnabled: false,
+            claudeUnifiedTerminalResumeChoice: 'ask_every_time',
             claudeLocalPermissionBridgeEnabled: true,
             claudeLocalPermissionBridgeWaitIndefinitely: true,
             claudeLocalPermissionBridgeTimeoutSeconds: 600,
@@ -23,7 +23,6 @@ describe('buildClaudeRemoteOutgoingMessageMetaExtras', () => {
             claudeRemoteDebugEnabled: false,
             claudeRemoteVerboseEnabled: false,
             claudeRemoteDebugCategories: [],
-            claudeRemoteAdvancedOptionsJson: '',
             claudeRemoteSettingSourcesV2: ['user', 'project', 'local'],
         });
         expect(extras.claudeRemoteSettingSources).toBeUndefined();
@@ -34,6 +33,7 @@ describe('buildClaudeRemoteOutgoingMessageMetaExtras', () => {
             claudeRemoteAgentSdkEnabled: false,
             claudeUnifiedTerminalEnabled: true,
             claudeUnifiedTerminalHost: 'zellij',
+            claudeUnifiedTerminalResumeChoice: 'resume_full_session',
             claudeLocalPermissionBridgeEnabled: false,
             claudeLocalPermissionBridgeWaitIndefinitely: false,
             claudeLocalPermissionBridgeTimeoutSeconds: 42,
@@ -41,13 +41,13 @@ describe('buildClaudeRemoteOutgoingMessageMetaExtras', () => {
             claudeRemoteDebugEnabled: true,
             claudeRemoteVerboseEnabled: true,
             claudeRemoteDebugCategories: ['mcp', 'api', 'api', 'bogus', 'file'],
-            claudeRemoteAdvancedOptionsJson: '{ "beta": true }',
         });
 
         expect(extras).toMatchObject({
             claudeRemoteAgentSdkEnabled: false,
             claudeUnifiedTerminalEnabled: true,
             claudeUnifiedTerminalHost: 'zellij',
+            claudeUnifiedTerminalResumeChoice: 'resume_full_session',
             claudeLocalPermissionBridgeEnabled: false,
             claudeLocalPermissionBridgeWaitIndefinitely: false,
             claudeLocalPermissionBridgeTimeoutSeconds: 42,
@@ -55,7 +55,6 @@ describe('buildClaudeRemoteOutgoingMessageMetaExtras', () => {
             claudeRemoteDebugEnabled: true,
             claudeRemoteVerboseEnabled: true,
             claudeRemoteDebugCategories: ['api', 'mcp', 'file'],
-            claudeRemoteAdvancedOptionsJson: '{"beta":true}',
         });
     });
 
@@ -63,10 +62,12 @@ describe('buildClaudeRemoteOutgoingMessageMetaExtras', () => {
         const extras = buildClaudeRemoteOutgoingMessageMetaExtras({
             claudeUnifiedTerminalEnabled: 'true',
             claudeUnifiedTerminalHost: 'screen',
+            claudeUnifiedTerminalResumeChoice: 'skip_dialog',
         });
 
         expect(extras.claudeUnifiedTerminalEnabled).toBe(false);
         expect(extras.claudeUnifiedTerminalHost).toBe('auto');
+        expect(extras.claudeUnifiedTerminalResumeChoice).toBe('ask_every_time');
     });
 
     it('maps legacy Claude setting-source values into the canonical V2 field', () => {

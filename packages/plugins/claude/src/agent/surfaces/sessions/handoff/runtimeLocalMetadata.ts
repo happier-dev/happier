@@ -1,8 +1,10 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import type { ExternalSessionsSource } from '@happier-dev/protocol';
-import { buildProviderSessionIdSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import {
+    buildProviderSessionIdSessionMetadata,
+    type ExternalSessionsSource,
+} from '@happier-dev/plugin-sdk/sessions';
 
 import { resolveClaudeConfigDirOverride, resolveClaudeProjectId } from './path.js';
 
@@ -19,7 +21,7 @@ export type ClaudeRuntimeLocalHandoffMetadata = Readonly<Partial<{
     claudeSessionId: string;
     externalSessionV1: Readonly<{
         v: 1;
-        providerId: 'claude';
+        agentId: 'claude';
         machineId: string;
         remoteSessionId: string;
         source: ExternalSessionsSource;
@@ -80,7 +82,7 @@ export function buildClaudeRuntimeLocalHandoffMetadata(params: Readonly<{
     const machineId = normalizeOptionalString(params.metadata.machineId) ?? '';
     runtimeLocalMetadata.externalSessionV1 = {
         v: 1,
-        providerId: 'claude',
+        agentId: 'claude',
         machineId,
         remoteSessionId: vendorResumeId,
         source: {
