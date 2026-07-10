@@ -2,7 +2,7 @@ import {
   ReviewScmScopeV1Schema,
   type ReviewScmScopeV1,
 } from '@happier-dev/plugin-sdk';
-import type { ReviewStartInput } from '@happier-dev/protocol';
+import type { ReviewStartInput } from '@happier-dev/plugin-sdk/reviews';
 
 import { normalizeCodeRabbitReviewStartInput } from './startInput.js';
 

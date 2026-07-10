@@ -1,7 +1,7 @@
 import {
   ReviewStartInputSchema,
   type ReviewStartInput,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/reviews';
 
 function readRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)

@@ -79,6 +79,58 @@ describe('mapCodeRabbitReviewComments', () => {
     });
   });
 
+  it('uses the canonical review fingerprint without embedding the raw comment body', async () => {
+    const created: unknown[] = [];
+    await mapCodeRabbitReviewComments({
+      projectId: 'project-1',
+      runId: 'run-1',
+      findings: [{
+        id: 'finding-1',
+        title: 'Title',
+        severity: 'high',
+        category: 'security',
+        filePath: 'src/auth.ts',
+        startLine: 42,
+        summary: 'Validate redirect destinations before use.',
+      }],
+      comments: {
+        resolveSnapshot: async ({ finding }) => textSnapshot(finding.filePath ?? 'src/auth.ts'),
+        create: async (request) => {
+          created.push(request);
+          return {
+            comment: {
+              commentId: 'comment-1',
+              runId: 'run-1',
+              state: 'proposed',
+              body: request.body,
+              anchor: request.anchor,
+              snapshot: request.snapshot,
+              evidence: [],
+              createdBy: { kind: 'plugin', pluginId: 'review-coderabbit' },
+              createdAt: 1,
+              updatedAt: 1,
+              serverRevision: 1,
+              metadata: {},
+              edits: [],
+            },
+          };
+        },
+      },
+    });
+
+    const fingerprint = (created[0] as {
+      fingerprint?: { normalizedMessageHash?: string };
+    }).fingerprint;
+
+    expect(created[0]).toMatchObject({
+      fingerprint: {
+        ruleId: 'security',
+      },
+    });
+    expect(fingerprint?.normalizedMessageHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(fingerprint)).not.toContain('Validate redirect destinations before use.');
+  });
+
   it('does not synthesize placeholder snapshots when no snapshot can be resolved', async () => {
     const created: unknown[] = [];
     const comments = await mapCodeRabbitReviewComments({

@@ -11,7 +11,7 @@ describe('CodeRabbit review descriptor', () => {
     expect(coderabbitReviewDescriptor.capabilities.executionRun.supported).toBe(true);
     expect(coderabbitReviewDescriptor.capabilities.executionRun.review.directCommentWrite).toBe(false);
 
-    const backend = PLUGIN_MANIFEST.contributes.backends[0];
+    const backend = PLUGIN_MANIFEST.contributes.agents[0];
     expect(backend?.id).toBe('coderabbit');
     expect(backend?.capabilities.session.supported).toBe(false);
     expect(backend?.capabilities.executionRun.review.intents).toContain('review');

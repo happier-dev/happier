@@ -37,11 +37,13 @@ function createPluginContextFixture(params?: Readonly<{
     dispose: vi.fn(async () => undefined),
   };
   const ctx = {
-    exec: {
-      systemTools: {
-        resolve: vi.fn(async () => grant),
+    agentRuntime: {
+      exec: {
+        systemTools: {
+          resolve: vi.fn(async () => grant),
+        },
+        spawn: vi.fn(async () => processHandle),
       },
-      spawn: vi.fn(async () => processHandle),
     },
   } as unknown as PluginContextV1;
 
@@ -106,7 +108,7 @@ describe('CodeRabbit Windows command shim routing', () => {
     await expect(backend.provisionSession({ initialPrompt: 'Review this change.' }))
       .resolves.toEqual({ sessionId: expect.stringMatching(/^coderabbit_/) });
 
-    expect(ctx.exec.systemTools.resolve).toHaveBeenCalledWith(expect.objectContaining({
+    expect(ctx.agentRuntime.exec.systemTools.resolve).toHaveBeenCalledWith(expect.objectContaining({
       toolId: 'coderabbit',
       preferredPath: cmdPath,
       preferredCommand: null,

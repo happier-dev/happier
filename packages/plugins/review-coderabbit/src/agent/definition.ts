@@ -1,0 +1,61 @@
+const CODERABBIT_AGENT_ID = 'coderabbit';
+
+// IMPORTANT: this must stay JSON-serializable (data-only).
+export const AGENT_DEFINITION = Object.freeze({
+  id: CODERABBIT_AGENT_ID,
+  core: {
+    id: CODERABBIT_AGENT_ID,
+    cliSubcommand: 'coderabbit',
+    detectKey: 'coderabbit',
+    flavorAliases: [],
+    cloudConnect: null,
+    connectedServices: null,
+    resume: { vendorResume: 'unsupported' },
+    sessionStorage: { direct: false, persisted: false },
+    sessionCapabilities: {
+      sessionListing: 'unsupported',
+      sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
+      sessionRollback: { conversation: 'unsupported' },
+    },
+    handoff: { vendorStateTransfer: 'unsupported' },
+    tools: { delivery: 'unsupported', support: 'unsupported' },
+  },
+  sessionModeDescriptor: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },
+  sessionModesKind: 'none',
+  modelConfig: {
+    supportsSelection: false,
+    nonAcpApplyScope: 'next_prompt',
+    dynamicProbe: 'static-only',
+    defaultMode: 'review',
+    allowedModes: ['review'],
+  },
+  authProbeConfig: {
+    agentId: CODERABBIT_AGENT_ID,
+    binaryNames: ['coderabbit'],
+    statusCommand: null,
+    parser: 'unknown',
+    backgroundChecks: 'safe',
+    envVars: ['CODERABBIT_API_KEY'],
+  },
+  localCli: {
+    agentId: CODERABBIT_AGENT_ID,
+    detectKey: 'coderabbit',
+    machineLoginKey: 'coderabbit',
+    supportKind: 'status_only',
+    loginLaunch: null,
+  },
+  agentCliRuntime: {
+    id: CODERABBIT_AGENT_ID,
+    title: 'CodeRabbit',
+    binaryName: 'coderabbit',
+    knownUserBinDirSuffixes: null,
+    sourcePreferenceDefault: 'system-first',
+    managedInstall: null,
+    manualInstallKind: 'command',
+    manualInstallRecipes: null,
+    acceptsJavaScriptFileOverride: false,
+    installGuideUrl: null,
+    docsUrl: null,
+  },
+  agentSettings: null,
+});

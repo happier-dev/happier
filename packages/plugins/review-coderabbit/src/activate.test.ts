@@ -5,16 +5,16 @@ import { activate } from './activate.js';
 
 describe('activate', () => {
   it('registers the CodeRabbit review-only execution-run backend engine', async () => {
-    const registerBackendEngine = vi.fn();
+    const registerAgentRuntime = vi.fn();
 
-    activate({ registerBackendEngine });
+    activate({ registerAgentRuntime });
 
-    expect(registerBackendEngine).toHaveBeenCalledWith(expect.objectContaining({
-      backendId: 'coderabbit',
+    expect(registerAgentRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: 'coderabbit',
       create: expect.any(Function),
     }));
 
-    const registration = registerBackendEngine.mock.calls[0]?.[0] as {
+    const registration = registerAgentRuntime.mock.calls[0]?.[0] as {
       create: (ctx: PluginContextV1) => Promise<{
         runtimeCore?: {
           createSessionRuntime: (params: unknown) => Promise<unknown>;

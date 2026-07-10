@@ -116,11 +116,13 @@ function createPluginContextFixture(params?: Readonly<{
     likelyMinified: false,
   }));
   const ctx = {
-    exec: {
-      systemTools: {
-        resolve: vi.fn(async () => grant),
+    agentRuntime: {
+      exec: {
+        systemTools: {
+          resolve: vi.fn(async () => grant),
+        },
+        spawn: vi.fn(async () => processHandle),
       },
-      spawn: vi.fn(async () => processHandle),
     },
     fs: {
       readText,
@@ -235,8 +237,8 @@ describe('createCodeRabbitExecutionRunBackend', () => {
 
     await expect(backend.provisionSession({ initialPrompt: 'Review this change.' }))
       .rejects.toThrow(/source-control repository/i);
-    expect(ctx.exec.systemTools.resolve).not.toHaveBeenCalled();
-    expect(ctx.exec.spawn).not.toHaveBeenCalled();
+    expect(ctx.agentRuntime.exec.systemTools.resolve).not.toHaveBeenCalled();
+    expect(ctx.agentRuntime.exec.spawn).not.toHaveBeenCalled();
   });
 
   it('resolves CodeRabbit through host system-tool grants and spawns the granted launch', async () => {
@@ -280,13 +282,13 @@ describe('createCodeRabbitExecutionRunBackend', () => {
     unsubscribe();
     await backend.dispose();
 
-    expect(ctx.exec.systemTools.resolve).toHaveBeenCalledWith(expect.objectContaining({
+    expect(ctx.agentRuntime.exec.systemTools.resolve).toHaveBeenCalledWith(expect.objectContaining({
       toolId: 'coderabbit',
       purpose: 'run CodeRabbit review',
       cwd: '/workspace',
       preferredPath: '/usr/local/bin/coderabbit',
     }));
-    expect(ctx.exec.spawn).toHaveBeenCalledWith(expect.objectContaining({
+    expect(ctx.agentRuntime.exec.spawn).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'binary',
       executablePath: '/usr/local/bin/coderabbit',
       cwd: '/workspace',
@@ -357,9 +359,49 @@ describe('createCodeRabbitExecutionRunBackend', () => {
     const message = failure instanceof Error ? failure.message : String(failure);
 
     expect(message).toContain('CodeRabbit exited with code 2');
-    expect(message).toContain('[redacted]');
+    expect(message).toContain('[REDACTED]');
     expect(message).not.toContain(secret);
     expect(message).not.toContain(`CODERABBIT_API_KEY=${secret}`);
+  });
+
+  it('uses canonical diagnostics redaction for CodeRabbit failure diagnostics', async () => {
+    const { ctx } = createPluginContextFixture({
+      exit: Promise.resolve({
+        exitCode: 2,
+        signal: null,
+        stdout: '',
+        stderr: 'Authorization: Bearer visible-token\ncookie: session=visible-cookie',
+      }),
+    });
+    const backend = createCodeRabbitExecutionRunBackend({
+      ctx,
+      executionRunParams: {
+        cwd: '/workspace',
+        runId: 'run-canonical-redaction',
+        start: {
+          intentInput: {
+            engineIds: ['coderabbit'],
+            instructions: 'Review this change.',
+            changeType: 'uncommitted',
+            base: { kind: 'none' },
+            scmReviewScope: createSupportedScmReviewScope(['src/auth.ts']),
+          },
+        },
+      } as never,
+    });
+
+    let failure: unknown;
+    try {
+      await backend.provisionSession({ initialPrompt: 'Review this change.' });
+    } catch (error) {
+      failure = error;
+    }
+    const message = failure instanceof Error ? failure.message : String(failure);
+
+    expect(message).toContain('authorization: bearer [REDACTED]');
+    expect(message).toContain('cookie: [REDACTED]');
+    expect(message).not.toContain('visible-token');
+    expect(message).not.toContain('visible-cookie');
   });
 
   it('converts CodeRabbit plain stdout into generic review JSON output', async () => {
@@ -509,6 +551,58 @@ describe('createCodeRabbitExecutionRunBackend', () => {
     }));
   });
 
+  it('still returns review output when comment persistence fails', async () => {
+    const { ctx, createComment } = createPluginContextFixture({
+      exit: Promise.resolve({
+        exitCode: 0,
+        signal: null,
+        stdout: [
+          '==============================',
+          'File: src/auth.ts',
+          'Line: 10',
+          'Type: Security',
+          'Comment:',
+          'Validate the redirect target before use.',
+          '==============================',
+        ].join('\n'),
+        stderr: '',
+      }),
+    });
+    createComment.mockRejectedValueOnce(new Error('comment store unavailable'));
+    const backend = createCodeRabbitExecutionRunBackend({
+      ctx,
+      executionRunParams: {
+        cwd: '/workspace',
+        runId: 'run-comment-persistence-fails',
+        start: {
+          intentInput: {
+            projectId: 'project-1',
+            engineIds: ['coderabbit'],
+            instructions: 'Review this change.',
+            changeType: 'uncommitted',
+            base: { kind: 'none' },
+            scmReviewScope: createSupportedScmReviewScope(['src/auth.ts']),
+          },
+        },
+      } as never,
+    });
+    const messages: unknown[] = [];
+    const unsubscribe = backend.subscribeMessages((message) => {
+      messages.push(message);
+    });
+
+    await expect(backend.provisionSession({ initialPrompt: 'Review this change.' }))
+      .resolves.toEqual({ sessionId: expect.stringMatching(/^coderabbit_/) });
+    unsubscribe();
+    await backend.dispose();
+
+    expect(createComment).toHaveBeenCalledTimes(1);
+    expect(messages).toContainEqual(expect.objectContaining({
+      type: 'model-output',
+      fullText: expect.stringContaining('CodeRabbit review: 1 finding(s).'),
+    }));
+  });
+
   it('routes non-absolute command overrides through host-declared preferredCommand', async () => {
     const { ctx } = createPluginContextFixture({
       exit: Promise.resolve({
@@ -541,7 +635,7 @@ describe('createCodeRabbitExecutionRunBackend', () => {
     await expect(backend.provisionSession({ initialPrompt: 'Review this change.' }))
       .resolves.toEqual({ sessionId: expect.stringMatching(/^coderabbit_/) });
 
-    expect(ctx.exec.systemTools.resolve).toHaveBeenCalledWith(expect.objectContaining({
+    expect(ctx.agentRuntime.exec.systemTools.resolve).toHaveBeenCalledWith(expect.objectContaining({
       toolId: 'coderabbit',
       preferredPath: null,
       preferredCommand: 'coderabbit',
@@ -570,7 +664,7 @@ describe('createCodeRabbitExecutionRunBackend', () => {
     const started = await backend.provisionSession();
     const prompt = backend.sendPrompt(started.sessionId, 'Review this change.')
       .then(() => ({ ok: true as const }), (error) => ({ ok: false as const, error }));
-    await waitFor(() => vi.mocked(ctx.exec.spawn).mock.calls.length > 0);
+    await waitFor(() => vi.mocked(ctx.agentRuntime.exec.spawn).mock.calls.length > 0);
     await backend.cancel(started.sessionId);
 
     await expect(prompt).resolves.toEqual({
@@ -610,7 +704,7 @@ describe('createCodeRabbitExecutionRunBackend', () => {
     const started = await backend.provisionSession();
     const prompt = backend.sendPrompt(started.sessionId, 'Review this change.')
       .then(() => ({ ok: true as const }), (error) => ({ ok: false as const, error }));
-    await waitFor(() => vi.mocked(ctx.exec.spawn).mock.calls.length > 0);
+    await waitFor(() => vi.mocked(ctx.agentRuntime.exec.spawn).mock.calls.length > 0);
 
     await expect(withTimeout(backend.cancel(started.sessionId), 100)).resolves.toBeUndefined();
     await expect(prompt).resolves.toEqual({

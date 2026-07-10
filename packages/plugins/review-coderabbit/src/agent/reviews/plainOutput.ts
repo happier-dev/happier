@@ -1,4 +1,4 @@
-import type { ReviewFinding } from '@happier-dev/protocol';
+import type { ReviewFinding } from '@happier-dev/plugin-sdk/reviews';
 
 type ParsedCodeRabbitFinding = {
   filePath?: string;

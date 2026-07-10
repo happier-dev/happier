@@ -3,7 +3,8 @@ import type {
   ReviewCommentAnchorV1,
   ReviewCommentV1,
 } from '@happier-dev/plugin-sdk';
-import type { ReviewFinding } from '@happier-dev/protocol';
+import { createReviewCommentFingerprintV1 } from '@happier-dev/plugin-sdk/reviews';
+import type { ReviewFinding } from '@happier-dev/plugin-sdk/reviews';
 
 function normalizeLine(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value)
@@ -79,10 +80,11 @@ export async function mapCodeRabbitReviewComments(params: Readonly<{
       snapshot,
       authorIntent: 'propose',
       evidence: [{ kind: 'reasoning', message: `CodeRabbit finding ${finding.id}` }],
-      fingerprint: {
+      fingerprint: createReviewCommentFingerprintV1({
         ruleId: String(finding.category ?? 'coderabbit'),
-        normalizedMessageHash: `${JSON.stringify(anchor)}:${body}`,
-      },
+        anchor,
+        message: body,
+      }),
       clientMutationId: `coderabbit:${params.runId}:${finding.id}`,
       metadata: {
         severity: mapCommentSeverity(finding.severity),

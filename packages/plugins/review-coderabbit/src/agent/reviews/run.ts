@@ -10,10 +10,12 @@ import type {
   ExecutionRunHostMessageV1,
   PluginContextV1,
 } from '@happier-dev/plugin-sdk';
+import { composeSessionIsolationEnvironment } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 import {
   createSingleShotExecutionRunHostBackend,
   REVIEW_SCM_SCOPE_INPUT_KEY,
 } from '@happier-dev/plugin-sdk';
+import { redactReviewCommentSensitiveText } from '@happier-dev/plugin-sdk/reviews';
 
 import { readCodeRabbitReviewConfigFromEnv } from './config.js';
 import { mapCodeRabbitReviewComments } from './comments.js';
@@ -59,7 +61,11 @@ function readCwd(params: CreateExecutionRunBackendParamsV1): string {
 }
 
 function readEnv(params: CreateExecutionRunBackendParamsV1): Readonly<Record<string, string>> {
-  return readStringRecord(params.isolation?.env) ?? readStringRecord(params.env) ?? {};
+  return composeSessionIsolationEnvironment({
+    isolationEnvironment: readStringRecord(params.isolation?.env),
+    environment: readStringRecord(params.env),
+    unsetEnvKeys: params.isolation?.unsetEnvKeys,
+  });
 }
 
 function compactEnv(env: Readonly<Record<string, string | undefined>>): Readonly<Record<string, string>> {
@@ -70,23 +76,14 @@ function compactEnv(env: Readonly<Record<string, string | undefined>>): Readonly
   return out;
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 function sanitizeCodeRabbitDiagnostic(
   value: string,
   env: Readonly<Record<string, string>>,
 ): string {
-  let out = value;
-  for (const [key, raw] of Object.entries(env)) {
-    const secret = raw.trim();
-    if (!secret || !/(^|_)(api_?key|secret|token|password|credential|auth)($|_)/i.test(key)) continue;
-    out = out.replace(new RegExp(escapeRegExp(secret), 'g'), '[redacted]');
-  }
-  return out
-    .replace(/\b([A-Z0-9_]*(?:API_?KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|AUTH)[A-Z0-9_]*)\s*=\s*([^\s,;]+)/gi, '$1=[redacted]')
-    .replace(/\b(--(?:api-?key|secret|token|password|credential|auth)(?:=|\s+))([^\s,;]+)/gi, '$1[redacted]');
+  const redactedValues = Object.entries(env)
+    .filter(([key, raw]) => raw.trim() && /(^|_)(api_?key|secret|token|password|credential|auth)($|_)/i.test(key))
+    .map(([, raw]) => raw);
+  return redactReviewCommentSensitiveText(value, { redactedValues });
 }
 
 function readOptionalString(value: unknown): string | null {
@@ -134,6 +131,17 @@ function createSleep(ms: number, signal?: AbortSignal): Promise<void> {
 
 function createModelOutputMessage(fullText: string): ExecutionRunHostMessageV1 {
   return { type: 'model-output', fullText } as unknown as ExecutionRunHostMessageV1;
+}
+
+function logCommentPersistenceFailure(
+  ctx: PluginContextV1,
+  error: unknown,
+  env: Readonly<Record<string, string>>,
+): void {
+  const message = error instanceof Error ? error.message : String(error);
+  (ctx as Partial<Pick<PluginContextV1, 'logger'>>).logger?.warn('CodeRabbit review comment persistence failed', {
+    error: sanitizeCodeRabbitDiagnostic(message, env),
+  });
 }
 
 export function createCodeRabbitExecutionRunBackend(params: Readonly<{
@@ -203,7 +211,7 @@ export function createCodeRabbitExecutionRunBackend(params: Readonly<{
     signal: AbortSignal;
     isCancelled: () => boolean;
   }>): Promise<AttemptResult> {
-    const processHandle = await params.ctx.exec.spawn(params2.launch, {
+    const processHandle = await params.ctx.agentRuntime.exec.spawn(params2.launch, {
       timeoutMs: config.timeoutMs ?? undefined,
       maxStdoutBytes: 1024 * 1024 * 8,
       maxStderrBytes: 1024 * 256,
@@ -252,7 +260,7 @@ export function createCodeRabbitExecutionRunBackend(params: Readonly<{
 
       try {
         const launchRequest = await buildLaunchRequest(prompt);
-        const toolGrant = await params.ctx.exec.systemTools.resolve({
+        const toolGrant = await params.ctx.agentRuntime.exec.systemTools.resolve({
           toolId: 'coderabbit',
           purpose: 'run CodeRabbit review',
           cwd,
@@ -287,15 +295,19 @@ export function createCodeRabbitExecutionRunBackend(params: Readonly<{
         if (launchRequest.normalizePlainOutput && launchRequest.projectId) {
           const comments = (params.ctx as Partial<Pick<PluginContextV1, 'reviews'>>).reviews?.comments;
           if (typeof comments?.create === 'function' && typeof comments.resolveSnapshot === 'function') {
-            await mapCodeRabbitReviewComments({
-              projectId: launchRequest.projectId,
-              ...(launchRequest.workspaceId ? { workspaceId: launchRequest.workspaceId } : {}),
-              ...(launchRequest.sessionId ? { sessionId: launchRequest.sessionId } : {}),
-              runId: params.executionRunParams.runId ?? sessionId,
-              findings: normalizeCodeRabbitPlainReviewOutput(result.stdout),
-              comments,
-              cwd,
-            });
+            try {
+              await mapCodeRabbitReviewComments({
+                projectId: launchRequest.projectId,
+                ...(launchRequest.workspaceId ? { workspaceId: launchRequest.workspaceId } : {}),
+                ...(launchRequest.sessionId ? { sessionId: launchRequest.sessionId } : {}),
+                runId: params.executionRunParams.runId ?? sessionId,
+                findings: normalizeCodeRabbitPlainReviewOutput(result.stdout),
+                comments,
+                cwd,
+              });
+            } catch (error) {
+              logCommentPersistenceFailure(params.ctx, error, launchEnv);
+            }
           }
         }
         return {

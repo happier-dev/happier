@@ -17,22 +17,22 @@ export const PLUGIN_MANIFEST = definePluginManifest({
     resolvedVersion: '0.0.0',
   },
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: ['backends', 'executionRunProfiles'] },
-  targets: {},
-  capabilities: {
-    permissions: [],
-    optionalPermissions: [{
+  activationEvents: ['onReviewProvider:coderabbit'],
+  uses: ['agents', 'executionRunProfiles'],
+  entrypoints: { main: './dist/index.js' },
+  permissions: {
+    required: [],
+    optional: [{
       capability: 'reviews.comments.write.direct',
       reason: 'Write approved CodeRabbit review comments directly when the user grants direct-write authority.',
     }],
   },
   contributes: {
-    backends: [{
+    agents: [{
       kindVersion: 1,
       id: coderabbitReviewDescriptor.id,
-      agentId: coderabbitReviewDescriptor.id,
       title: 'CodeRabbit',
-      engine: { kind: 'custom' },
+      runtime: { kind: 'custom' },
       capabilities: coderabbitReviewDescriptor.capabilities,
       surfaceHandlers: [],
     }],
