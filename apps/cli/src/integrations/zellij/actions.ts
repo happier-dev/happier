@@ -1,11 +1,21 @@
 import { spawn } from 'node:child_process';
 
+import {
+  createTerminalHostDeadline,
+  remainingTerminalHostDeadlineMs,
+} from '../terminalHost/deadline';
+import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
+import { acquireZellijActionSlot } from './actionLimiter';
+
 export type ZellijCommandResult = Readonly<{ exitCode: number; stdout: string; stderr: string }>;
 
 export class ZellijActionTimeoutError extends Error {
+  readonly action: string;
+
   constructor(action: string) {
     super(`zellij ${action} timed out`);
     this.name = 'ZellijActionTimeoutError';
+    this.action = action;
   }
 }
 
@@ -27,6 +37,7 @@ export type ZellijPane = Readonly<{
 export type ZellijActionParams = Readonly<{
   zellijBinary: string;
   env: Readonly<Record<string, string>>;
+  unsetEnvKeys?: readonly string[];
 }>;
 
 export type ZellijPaneActionParams = ZellijActionParams & Readonly<{ paneId: string }>;
@@ -47,6 +58,9 @@ export type ZellijActions = Readonly<{
     text: string;
     chunkSize?: number;
   }> & ZellijTimeoutParams): Promise<void>;
+  pasteText(params: ZellijPaneActionParams & Readonly<{
+    text: string;
+  }> & ZellijTimeoutParams): Promise<void>;
   sendEnter(params: ZellijPaneActionParams & ZellijTimeoutParams): Promise<void>;
   sendEscape(params: ZellijPaneActionParams & ZellijTimeoutParams): Promise<void>;
   closePane(params: ZellijPaneActionParams & ZellijTimeoutParams): Promise<void>;
@@ -56,13 +70,67 @@ export type ZellijActions = Readonly<{
 }>;
 
 export const DEFAULT_ZELLIJ_WRITE_BYTES_CHUNK_SIZE = 4096;
+export const ZELLIJ_ACTION_PASTE_SAFE_BYTES = {
+  darwin: 300_000,
+  linux: 65_536,
+  win32: 16_384,
+  fallback: 65_536,
+} as const;
 const ZELLIJ_TIMEOUT_KILL_GRACE_MS = 250;
+const DEFAULT_ZELLIJ_ACTION_MAX_CONCURRENCY = 4;
 
-function buildZellijEnv(env: Readonly<Record<string, string>>): NodeJS.ProcessEnv {
-  return { ...process.env, ...env };
+function buildZellijEnv(params: ZellijActionParams): NodeJS.ProcessEnv {
+  return buildScopedProcessEnv({
+    baseEnv: process.env,
+    explicitEnv: params.env,
+    unsetEnvKeys: params.unsetEnvKeys,
+  });
 }
 
-function runZellij(
+function readZellijActionMaxConcurrency(): number {
+  const parsed = Number.parseInt(process.env.HAPPIER_ZELLIJ_ACTION_MAX_CONCURRENCY ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_ZELLIJ_ACTION_MAX_CONCURRENCY;
+}
+
+/**
+ * Machine-wide admission control for zellij action clients. Each spawned client contends for one of
+ * a bounded number of slots brokered on the filesystem under the shared socket directory, so every
+ * runner process on the machine shares one cap (not N×cap per process) — the root fix for the
+ * client storms that overloaded the zellij server and killed hosts in waves. The caller's deadline
+ * spans BOTH the admission wait and the process execution, so a queued action fails fast with a
+ * timeout instead of spawning a full-timeout client once it finally gets a slot.
+ */
+async function runZellij(
+  params: ZellijActionParams,
+  args: readonly string[],
+  options?: Readonly<{ cwd?: string; timeoutMs?: number; action?: string }>,
+): Promise<ZellijCommandResult> {
+  const action = options?.action ?? args[0] ?? 'command';
+  const timeoutError = () => new ZellijActionTimeoutError(action);
+  if (options?.timeoutMs === 0) throw timeoutError();
+  const deadline = createTerminalHostDeadline(options?.timeoutMs);
+  const releaseSlot = await acquireZellijActionSlot({
+    socketDir: params.env.ZELLIJ_SOCKET_DIR,
+    maxConcurrency: readZellijActionMaxConcurrency(),
+    deadlineMs: deadline,
+    timeoutError,
+  });
+  try {
+    const remainingTimeoutMs = remainingTerminalHostDeadlineMs(deadline);
+    if (remainingTimeoutMs === 0) throw timeoutError();
+    return await runZellijUnbounded(
+      params,
+      args,
+      remainingTimeoutMs === undefined
+        ? options
+        : { ...options, timeoutMs: remainingTimeoutMs },
+    );
+  } finally {
+    await releaseSlot();
+  }
+}
+
+function runZellijUnbounded(
   params: ZellijActionParams,
   args: readonly string[],
   options?: Readonly<{ cwd?: string; timeoutMs?: number; action?: string }>,
@@ -71,7 +139,7 @@ function runZellij(
     const detached = process.platform !== 'win32';
     const child = spawn(params.zellijBinary, [...args], {
       cwd: options?.cwd,
-      env: buildZellijEnv(params.env),
+      env: buildZellijEnv(params),
       detached,
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -183,16 +251,36 @@ export async function writeBytesChunked(
   params: ZellijPaneActionParams & Readonly<{ text: string; chunkSize?: number }> & ZellijTimeoutParams,
 ): Promise<void> {
   const chunkSize = params.chunkSize ?? DEFAULT_ZELLIJ_WRITE_BYTES_CHUNK_SIZE;
+  const deadline = createTerminalHostDeadline(params.timeoutMs);
   for (const chunk of splitUtf8CodePointChunks(params.text, chunkSize)) {
+    const timeoutMs = remainingTerminalHostDeadlineMs(deadline);
+    if (timeoutMs === 0) throw new ZellijActionTimeoutError('write');
     const result = await runZellij(params, [
       'action',
       'write',
       '--pane-id',
       params.paneId,
       ...Array.from(chunk).map((byte) => String(byte)),
-    ], { timeoutMs: params.timeoutMs, action: 'write' });
+    ], { timeoutMs, action: 'write' });
     await requireSuccess(result, 'write');
   }
+}
+
+export function resolveZellijActionPasteSafeBytes(platform: NodeJS.Platform = process.platform): number {
+  if (platform === 'darwin') return ZELLIJ_ACTION_PASTE_SAFE_BYTES.darwin;
+  if (platform === 'linux') return ZELLIJ_ACTION_PASTE_SAFE_BYTES.linux;
+  if (platform === 'win32') return ZELLIJ_ACTION_PASTE_SAFE_BYTES.win32;
+  return ZELLIJ_ACTION_PASTE_SAFE_BYTES.fallback;
+}
+
+export async function pasteText(
+  params: ZellijPaneActionParams & Readonly<{ text: string }> & ZellijTimeoutParams,
+): Promise<void> {
+  if (params.timeoutMs === 0) throw new ZellijActionTimeoutError('paste');
+  await requireSuccess(await runZellij(params, ['action', 'paste', '--pane-id', params.paneId, params.text], {
+    timeoutMs: params.timeoutMs,
+    action: 'paste',
+  }), 'paste');
 }
 
 export async function sendEnter(params: ZellijPaneActionParams & ZellijTimeoutParams): Promise<void> {
@@ -259,6 +347,7 @@ export const defaultZellijActions: ZellijActions = {
   attachCreateBackground,
   runCommand,
   writeBytesChunked,
+  pasteText,
   sendEnter,
   sendEscape,
   closePane,

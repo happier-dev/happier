@@ -193,6 +193,25 @@ describe('TmuxUtilities.spawnInTmux', () => {
         expect(tIndex).toBeLessThan(commandIndex);
     });
 
+    it('unsets inherited tmux-server variables before executing the window command', async () => {
+        const tmux = new FakeTmuxUtilities();
+
+        await tmux.spawnInTmux(
+            ['echo', 'hello'],
+            {
+                sessionName: 'my-session',
+                windowName: 'my-window',
+                unsetEnvKeys: ['OPENAI_API_KEY', 'Gemini_Model'],
+            },
+            {},
+        );
+
+        const newWindowCall = tmux.calls.find((call) => call.cmd[0] === 'new-window');
+        expect(newWindowCall?.cmd.at(-1)).toBe(
+            "unset OPENAI_API_KEY Gemini_Model; exec 'echo' 'hello'",
+        );
+    });
+
     it('creates tmux windows detached so existing attached clients keep their active window', async () => {
         const tmux = new FakeTmuxUtilities();
 

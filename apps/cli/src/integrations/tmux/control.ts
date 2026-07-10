@@ -6,7 +6,9 @@ import {
   type TerminalSpecialKey,
 } from '@happier-dev/agents';
 
+import { splitStringByCodePoints } from '../terminalHost/chunks';
 import { buildTerminalControlCapture } from '../terminalHost/controlCapture';
+import { parseTmuxCursorPosition } from './cursorPosition';
 import { resolveTmuxSendKeysChunkSize } from './env';
 import type { TmuxCommandResult } from './types';
 
@@ -34,15 +36,6 @@ type TmuxExecOutcome =
 
 function isTmuxMissingTargetStderr(stderr: string): boolean {
   return /can't find (?:pane|window|session)|no server running|no current (?:session|client)|(?:session|window|pane) not found/i.test(stderr);
-}
-
-function chunkByCodePoints(text: string, chunkSize: number): string[] {
-  const codePoints = Array.from(text);
-  const chunks: string[] = [];
-  for (let index = 0; index < codePoints.length; index += chunkSize) {
-    chunks.push(codePoints.slice(index, index + chunkSize).join(''));
-  }
-  return chunks;
 }
 
 function sanitizeStderr(stderr: string): string {
@@ -84,7 +77,7 @@ export function createTmuxTerminalControlPort(params: Readonly<{
 
   async function sendLiteralChunks(text: string): Promise<TerminalControlSendResult> {
     if (text.length === 0) return { status: 'sent', at: nowMs() };
-    for (const chunk of chunkByCodePoints(text, chunkSize)) {
+    for (const chunk of splitStringByCodePoints(text, chunkSize)) {
       const outcome = await exec(['send-keys', '-t', target, '-l', '--', chunk]);
       if (outcome.kind !== 'ok') return outcomeToSendResult(outcome);
     }
@@ -119,9 +112,18 @@ export function createTmuxTerminalControlPort(params: Readonly<{
           ? { status: 'failed', reason: outcome.reason, detail: outcome.detail }
           : { status: 'failed', reason: outcome.reason };
       }
+      const cursorOutcome = await exec(['display-message', '-p', '-t', target, '#{cursor_x}\t#{cursor_y}']);
+      const cursor = cursorOutcome.kind === 'ok'
+        ? parseTmuxCursorPosition(cursorOutcome.result.stdout)
+        : null;
       return {
         status: 'captured',
-        capture: buildTerminalControlCapture({ rawText: outcome.result.stdout, hostKind: 'tmux', capturedAtMs: nowMs() }),
+        capture: buildTerminalControlCapture({
+          rawText: outcome.result.stdout,
+          hostKind: 'tmux',
+          ...(cursor !== null ? { cursor } : {}),
+          capturedAtMs: nowMs(),
+        }),
       };
     },
   };

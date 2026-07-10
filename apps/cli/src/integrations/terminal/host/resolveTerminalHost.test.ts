@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { resolveTerminalHost } from './resolveTerminalHost';
 import type { TerminalHostAdapter, TerminalHostResolverPlatform } from './_types';
 
-function adapter(kind: 'tmux' | 'zellij'): TerminalHostAdapter {
+function adapter(kind: 'tmux' | 'zellij' | 'windows_console'): TerminalHostAdapter {
   return {
     kind,
     createOrAttachHost: async () => {
@@ -43,6 +43,54 @@ describe('resolveTerminalHost', () => {
         zellijAvailable: true,
       }),
     ).toMatchObject({ status: 'resolved', adapter: { kind: 'zellij' }, reason: 'tmux_unavailable' });
+  });
+
+  it('prefers a Windows console host for native Windows auto without enabling zellij', () => {
+    const result = resolveTerminalHost({
+      preference: 'auto',
+      platform: { os: 'win32', arch: 'x64' },
+      adapters: { windows_console: adapter('windows_console'), zellij: adapter('zellij') },
+      tmuxAvailable: false,
+      zellijAvailable: true,
+    });
+
+    expect(result).toMatchObject({
+      status: 'resolved',
+      adapter: { kind: 'windows_console' },
+      reason: 'windows_console_available',
+    });
+  });
+
+  it('uses the Windows console host on Windows arm64 auto when available', () => {
+    const result = resolveTerminalHost({
+      preference: 'auto',
+      platform: { os: 'win32', arch: 'arm64' },
+      adapters: { windows_console: adapter('windows_console'), zellij: adapter('zellij') },
+      tmuxAvailable: false,
+      zellijAvailable: true,
+    });
+
+    expect(result).toMatchObject({
+      status: 'resolved',
+      adapter: { kind: 'windows_console' },
+      reason: 'windows_console_available',
+    });
+  });
+
+  it('uses the forced Windows console host on Windows arm64 when available', () => {
+    const result = resolveTerminalHost({
+      preference: 'windows_console',
+      platform: { os: 'win32', arch: 'arm64' },
+      adapters: { windows_console: adapter('windows_console') },
+      tmuxAvailable: false,
+      zellijAvailable: false,
+    });
+
+    expect(result).toMatchObject({
+      status: 'resolved',
+      adapter: { kind: 'windows_console' },
+      reason: 'windows_console_forced',
+    });
   });
 
   it('fails closed for native Windows zellij until background TUI use is validated', () => {
@@ -99,7 +147,7 @@ describe('resolveTerminalHost', () => {
     ).toMatchObject({ status: 'disabled', reason: 'tmux_unavailable' });
   });
 
-  it('rejects forced zellij when zellij is unavailable', () => {
+  it('falls back to tmux on POSIX when forced zellij is unavailable', () => {
     expect(
       resolveTerminalHost({
         preference: 'zellij',
@@ -108,7 +156,7 @@ describe('resolveTerminalHost', () => {
         tmuxAvailable: true,
         zellijAvailable: false,
       }),
-    ).toMatchObject({ status: 'disabled', reason: 'zellij_unavailable' });
+    ).toMatchObject({ status: 'resolved', adapter: { kind: 'tmux' }, reason: 'zellij_unavailable_tmux_fallback' });
   });
 
   it('disables auto resolution when no supported host is available', () => {

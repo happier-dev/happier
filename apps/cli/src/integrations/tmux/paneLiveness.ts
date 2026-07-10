@@ -26,8 +26,13 @@ export async function evaluateTmuxPaneLiveness(params: Readonly<{
     TMUX_PANE_LIVENESS_FORMAT,
   ]);
 
-  if (!result || result.returncode !== 0) {
-    return { paneAlive: false, paneDead: true, observedAt };
+  if (!result || result.returncode !== 0 || result.timedOut === true) {
+    return {
+      paneAlive: false,
+      probeInconclusive: true,
+      ...(result?.stderr ? { paneScreenDumpError: sanitizeTerminalHostDiagnosticText(result.stderr) } : {}),
+      observedAt,
+    };
   }
 
   const [deadRaw, pidRaw, commandRaw] = result.stdout.trimEnd().split('\t');

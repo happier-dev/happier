@@ -103,15 +103,23 @@ describe('createTmuxTerminalControlPort', () => {
   it('captures the FULL pane with SGR styling (-e) and strips ANSI via the shared normalizer (ported S-8)', async () => {
     const esc = String.fromCharCode(0x1b);
     const rawPane = `${esc}[32mline1${esc}[0m\nline2\nline3   \n`;
-    const { executor, calls } = recordingExecutor(ok(rawPane));
+    const calls: string[][] = [];
+    const executor: TmuxControlCommandExecutor = async (args) => {
+      calls.push([...args]);
+      if (args[0] === 'display-message') return ok('2\t1\n');
+      return ok(rawPane);
+    };
     const port = createTmuxTerminalControlPort({ executor, target: TARGET, nowMs: () => 4242 });
 
     const result = await port.captureScreen();
 
-    expect(calls).toEqual([['capture-pane', '-p', '-e', '-t', TARGET]]);
+    expect(calls).toEqual([
+      ['capture-pane', '-p', '-e', '-t', TARGET],
+      ['display-message', '-p', '-t', TARGET, '#{cursor_x}\t#{cursor_y}'],
+    ]);
     expect(result).toEqual({
       status: 'captured',
-      capture: { text: 'line1\nline2\nline3', styledText: rawPane, capturedAtMs: 4242, hostKind: 'tmux' },
+      capture: { text: 'line1\nline2\nline3', styledText: rawPane, cursor: { x: 2, y: 1 }, capturedAtMs: 4242, hostKind: 'tmux' },
     });
   });
 

@@ -13,6 +13,7 @@ import {
   parseTmuxSessionIdentifier,
   TmuxSessionIdentifierError,
 } from './identifiers';
+import { parseTmuxCursorPosition } from './cursorPosition';
 import { COMMANDS_SUPPORTING_TARGET, CONTROL_SEQUENCES, WIN_OPS } from './operations';
 import {
   TmuxControlState,
@@ -23,6 +24,7 @@ import {
   type TmuxSessionInfo,
   type TmuxWindowOperation,
 } from './types';
+import { normalizeUnsetEnvKeys } from '@/utils/processEnv/buildScopedProcessEnv';
 
 function logTmuxDebug(message: string, ...args: unknown[]): void {
   void import('@/ui/logger')
@@ -49,6 +51,8 @@ export interface TmuxSpawnOptions extends Omit<SpawnOptions, 'env'> {
   createWindow?: boolean;
   /** Window name for new windows */
   windowName?: string;
+  /** Environment names removed inside the new window before the command executes. */
+  unsetEnvKeys?: readonly string[];
   // Note: env is intentionally excluded from this interface.
   // It's passed as a separate parameter to spawnInTmux() for clarity
   // and efficiency - only variables that differ from the tmux server
@@ -364,6 +368,12 @@ export class TmuxUtilities {
     return '';
   }
 
+  async captureCursorPosition(session?: string, window?: string, pane?: string): Promise<Readonly<{ x: number; y: number }> | null> {
+    const result = await this.executeTmuxCommand(['display-message', '-p', '#{cursor_x}\t#{cursor_y}'], session, window, pane);
+    if (!result || result.returncode !== 0 || result.timedOut === true) return null;
+    return parseTmuxCursorPosition(result.stdout);
+  }
+
   /**
    * Send keys to tmux pane with proper control sequence handling and type safety
    */
@@ -515,6 +525,10 @@ export class TmuxUtilities {
 
       // Build command to execute in the new window
       const fullCommand = buildPosixShellCommand(args);
+      const unsetEnvKeys = normalizeUnsetEnvKeys(options.unsetEnvKeys);
+      const scopedCommand = unsetEnvKeys.length > 0
+        ? `unset ${unsetEnvKeys.join(' ')}; exec ${fullCommand}`
+        : fullCommand;
 
       // Create new window in session with command and environment variables
       // IMPORTANT: Don't manually add -t here - executeTmuxCommand handles it via parameters
@@ -554,7 +568,7 @@ export class TmuxUtilities {
       }
 
       // Add the command to run in the window (runs immediately when window is created)
-      createWindowArgs.push(fullCommand);
+      createWindowArgs.push(scopedCommand);
 
       // Create window with command and get PID immediately.
       //

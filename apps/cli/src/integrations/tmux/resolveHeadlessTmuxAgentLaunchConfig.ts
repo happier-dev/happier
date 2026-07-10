@@ -1,6 +1,7 @@
-import type { AgentId } from '@/agent/core';
-import { requireCatalogEntry, resolveCatalogAgentId } from '@/backends/catalog';
-import { CATALOG_AGENT_IDS, DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
+import type { CatalogAgentId as AgentId } from '@/agent/catalog/ids';
+import { requireCatalogEntry } from '@/agent/catalog/registry';
+import { resolveCatalogAgentId } from '@/agent/catalog/resolution';
+import { CATALOG_AGENT_IDS, DEFAULT_CATALOG_AGENT_ID } from '@/agent/catalog/ids';
 
 type HeadlessTmuxAgentLaunchConfig = Readonly<{
   agent: AgentId;

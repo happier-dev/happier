@@ -43,6 +43,7 @@ export function normalizeCapturedScreen(text: string): string {
 export function buildTerminalControlCapture(params: Readonly<{
   rawText: string;
   hostKind: TerminalHostKind;
+  cursor?: Readonly<{ x: number; y: number }>;
   capturedAtMs: number;
 }>): TerminalControlCapture {
   return {
@@ -51,6 +52,7 @@ export function buildTerminalControlCapture(params: Readonly<{
     // discriminator between Claude Code's empty-composer suggestion placeholder and a typed draft
     // (ported S-8 / QA-B F6). Parsers normalize internally; `text` stays the canonical stripped form.
     ...(params.rawText.includes('\u001b[') ? { styledText: params.rawText } : {}),
+    ...(params.cursor !== undefined ? { cursor: params.cursor } : {}),
     capturedAtMs: params.capturedAtMs,
     hostKind: params.hostKind,
   };

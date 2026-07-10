@@ -60,8 +60,9 @@ describe('controlCapture', () => {
         rawText: '> draft\n',
         hostKind: 'zellij',
         capturedAtMs: 99,
+        cursor: { x: 2, y: 0 },
       });
-      expect(capture).toEqual({ text: '> draft', capturedAtMs: 99, hostKind: 'zellij' });
+      expect(capture).toEqual({ text: '> draft', cursor: { x: 2, y: 0 }, capturedAtMs: 99, hostKind: 'zellij' });
     });
   });
 });

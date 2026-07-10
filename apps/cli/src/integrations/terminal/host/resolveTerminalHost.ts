@@ -3,14 +3,6 @@ import type { ResolveTerminalHostParams, TerminalHostResolution } from './_types
 export function resolveTerminalHost(params: ResolveTerminalHostParams): TerminalHostResolution {
   const { adapters, platform, preference } = params;
 
-  if (platform.os === 'win32' && platform.arch === 'arm64') {
-    return {
-      status: 'disabled',
-      reason: 'windows_arm64_unsupported',
-      message: 'Bundled zellij has no supported Windows ARM64 binary; use WSL2 or a non-terminal runtime.',
-    };
-  }
-
   if (preference === 'tmux') {
     if (platform.os === 'win32') {
       return {
@@ -31,6 +23,13 @@ export function resolveTerminalHost(params: ResolveTerminalHostParams): Terminal
 
   if (preference === 'zellij') {
     if (platform.os === 'win32') {
+      if (platform.arch === 'arm64') {
+        return {
+          status: 'disabled',
+          reason: 'windows_arm64_unsupported',
+          message: 'Bundled zellij has no supported Windows ARM64 binary; use WSL2 or a non-terminal runtime.',
+        };
+      }
       return {
         status: 'disabled',
         reason: 'windows_zellij_unvalidated',
@@ -38,6 +37,9 @@ export function resolveTerminalHost(params: ResolveTerminalHostParams): Terminal
       };
     }
     if (!params.zellijAvailable || !adapters.zellij) {
+      if (params.tmuxAvailable && adapters.tmux) {
+        return { status: 'resolved', adapter: adapters.tmux, reason: 'zellij_unavailable_tmux_fallback' };
+      }
       return {
         status: 'disabled',
         reason: 'zellij_unavailable',
@@ -47,7 +49,28 @@ export function resolveTerminalHost(params: ResolveTerminalHostParams): Terminal
     return { status: 'resolved', adapter: adapters.zellij, reason: 'zellij_forced' };
   }
 
+  if (preference === 'windows_console') {
+    if (!adapters.windows_console) {
+      return {
+        status: 'disabled',
+        reason: 'windows_console_unavailable',
+        message: 'Windows console terminal host is unavailable.',
+      };
+    }
+    return { status: 'resolved', adapter: adapters.windows_console, reason: 'windows_console_forced' };
+  }
+
   if (platform.os === 'win32') {
+    if (adapters.windows_console) {
+      return { status: 'resolved', adapter: adapters.windows_console, reason: 'windows_console_available' };
+    }
+    if (platform.arch === 'arm64') {
+      return {
+        status: 'disabled',
+        reason: 'windows_arm64_unsupported',
+        message: 'Bundled zellij has no supported Windows ARM64 binary; use WSL2 or a non-terminal runtime.',
+      };
+    }
     return {
       status: 'disabled',
       reason: 'windows_zellij_unvalidated',

@@ -46,15 +46,47 @@ describe('evaluateTmuxPaneLiveness', () => {
     expect(liveness.paneCurrentCommand).not.toContain('provider-bearer-secret');
   });
 
-  it('treats failed liveness probes as dead', async () => {
+  it('treats failed liveness probes as inconclusive', async () => {
     await expect(evaluateTmuxPaneLiveness({
       executor: async () => null,
       target: 'missing',
       observedAt: 99,
     })).resolves.toEqual({
       paneAlive: false,
-      paneDead: true,
+      probeInconclusive: true,
       observedAt: 99,
+    });
+
+    await expect(evaluateTmuxPaneLiveness({
+      executor: async () => ({
+        returncode: 1,
+        stdout: '',
+        stderr: 'no such pane',
+        command: [],
+      }),
+      target: 'missing',
+      observedAt: 100,
+    })).resolves.toEqual({
+      paneAlive: false,
+      probeInconclusive: true,
+      paneScreenDumpError: 'no such pane',
+      observedAt: 100,
+    });
+
+    await expect(evaluateTmuxPaneLiveness({
+      executor: async () => ({
+        returncode: 0,
+        stdout: '',
+        stderr: '',
+        command: [],
+        timedOut: true,
+      }),
+      target: 'slow',
+      observedAt: 101,
+    })).resolves.toEqual({
+      paneAlive: false,
+      probeInconclusive: true,
+      observedAt: 101,
     });
   });
 });
