@@ -1,16 +1,16 @@
 import type {
-    ScmCommitBackoutRequest,
-    ScmCommitBackoutResponse,
-    ScmCommitCreateRequest,
-    ScmCommitCreateResponse,
-} from '@happier-dev/protocol';
+  ScmCommitBackoutRequest,
+  ScmCommitBackoutResponse,
+  ScmCommitCreateRequest,
+  ScmCommitCreateResponse,
+} from '@happier-dev/plugin-sdk/scm';
 import {
-    SCM_COMMIT_MESSAGE_MAX_LENGTH,
-    SCM_COMMIT_PATCH_MAX_COUNT,
-    SCM_COMMIT_PATCH_MAX_LENGTH,
-    SCM_OPERATION_ERROR_CODES,
-    isScmPatchBoundToPath,
-} from '@happier-dev/protocol';
+  SCM_COMMIT_MESSAGE_MAX_LENGTH,
+  SCM_COMMIT_PATCH_MAX_COUNT,
+  SCM_COMMIT_PATCH_MAX_LENGTH,
+  SCM_OPERATION_ERROR_CODES,
+  isScmPatchBoundToPath,
+} from '@happier-dev/plugin-sdk/scm';
 import type { ScmBackendContext } from '../types.js';
 import { normalizeCommitRef, runScmCommand } from '../runtime.js';
 import { mapGitErrorCode } from '../remote.js';
@@ -325,7 +325,7 @@ export async function gitCommitCreate(input: {
                 // Important: do not reset paths that were already staged in the live index.
                 const touched = await runGitCommand({
                     cwd: context.cwd,
-                    args: ['diff-tree', '--no-commit-id', '--name-status', '-r', '-z', commitSha],
+                    args: ['diff-tree', '--root', '--no-commit-id', '--name-status', '-r', '-z', commitSha],
                     timeoutMs: 5000,
                 });
                 if (!touched.success) {

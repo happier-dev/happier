@@ -1,15 +1,15 @@
 import {
-    SCM_OPERATION_ERROR_CODES,
-    type ScmHostingRepositoryAuthSummary,
-    type ScmHostingRepositorySummary,
-    type ScmOperationErrorCode,
-    type ScmRepositoryCloneInput,
-    type ScmRepositoryCloneOutput,
-    type ScmRepositoryCloneTarget,
-    type ScmRepositoryCloneTargetDescription,
-    type ScmWorkingSnapshot,
-    type SourceControlCloneProtocol,
-} from '@happier-dev/protocol';
+  SCM_OPERATION_ERROR_CODES,
+  type ScmHostingRepositoryAuthSummary,
+  type ScmHostingRepositorySummary,
+  type ScmOperationErrorCode,
+  type ScmRepositoryCloneInput,
+  type ScmRepositoryCloneOutput,
+  type ScmRepositoryCloneTarget,
+  type ScmRepositoryCloneTargetDescription,
+  type ScmWorkingSnapshot,
+  type SourceControlCloneProtocol,
+} from '@happier-dev/plugin-sdk/scm';
 import {
     readCurrentScmHostingProviderRuntimeServices,
     type ScmHostingProviderRuntimeServices,

@@ -4,12 +4,12 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import {
-    createScmCapabilities,
-    type ScmRepositoryCloneInput,
-    type ScmRepositoryCloneOutput,
-    type ScmWorkingSnapshot,
-    type ScmRepositoryCloneTargetDescription,
-} from '@happier-dev/protocol';
+  createScmCapabilities,
+  type ScmRepositoryCloneInput,
+  type ScmRepositoryCloneOutput,
+  type ScmWorkingSnapshot,
+  type ScmRepositoryCloneTargetDescription,
+} from '@happier-dev/plugin-sdk/scm';
 import { expect } from 'vitest';
 
 import { runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';

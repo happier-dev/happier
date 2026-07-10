@@ -1,8 +1,8 @@
 import type {
-    ScmFollowupAction,
-    ScmHostingProviderRef,
-} from '@happier-dev/protocol';
-import { resolveScmHostingProviderFollowupAllowedBaseUrl } from '@happier-dev/protocol';
+  ScmFollowupAction,
+  ScmHostingProviderRef,
+} from '@happier-dev/plugin-sdk/scm';
+import { resolveScmHostingProviderFollowupAllowedBaseUrl } from '@happier-dev/plugin-sdk/scm';
 
 export function createValidatedPullRequestFollowupAction(_input: Readonly<{
     provider: ScmHostingProviderRef;

@@ -3,11 +3,11 @@ import { access, lstat, realpath, unlink } from 'node:fs/promises';
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import {
-    SCM_OPERATION_ERROR_CODES,
-    type ScmRepositoryRemoveIndexLockRequest,
-    type ScmRepositoryRemoveIndexLockResponse,
-    type ScmWorkingSnapshot,
-} from '@happier-dev/protocol';
+  SCM_OPERATION_ERROR_CODES,
+  type ScmRepositoryRemoveIndexLockRequest,
+  type ScmRepositoryRemoveIndexLockResponse,
+  type ScmWorkingSnapshot,
+} from '@happier-dev/plugin-sdk/scm';
 
 import { runScmCommand } from '../runtime.js';
 import type { ScmBackendContext } from '../types.js';

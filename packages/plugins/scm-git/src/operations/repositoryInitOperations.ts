@@ -1,9 +1,9 @@
 import {
-    SCM_OPERATION_ERROR_CODES,
-    type ScmRepositoryInitRequest,
-    type ScmRepositoryInitResponse,
-    type ScmWorkingSnapshot,
-} from '@happier-dev/protocol';
+  SCM_OPERATION_ERROR_CODES,
+  type ScmRepositoryInitRequest,
+  type ScmRepositoryInitResponse,
+  type ScmWorkingSnapshot,
+} from '@happier-dev/plugin-sdk/scm';
 
 import { runScmCommand } from '../runtime.js';
 import type { ScmBackendContext, ScmRepoDetection } from '../types.js';

@@ -1,9 +1,9 @@
-import {
-    type ScmWorktree,
-    type ScmOperationState,
-    type ScmWorkingEntry,
-    type ScmWorkingSnapshot,
-} from '@happier-dev/protocol';
+import type {
+  ScmWorktree,
+  ScmOperationState,
+  ScmWorkingEntry,
+  ScmWorkingSnapshot,
+} from '@happier-dev/plugin-sdk/scm';
 
 import { parseGitStatusPorcelainV2Z, parseNumStatZ } from './statusParser.js';
 import { parseGitWorktreeListPorcelain } from './worktreeListParser.js';

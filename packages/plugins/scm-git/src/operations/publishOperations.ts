@@ -1,11 +1,17 @@
-import type { ScmRemotePublishRequest, ScmRemotePublishResponse, ScmWorkingSnapshot } from '@happier-dev/protocol';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import type {
+  ScmRemotePublishRequest,
+  ScmRemotePublishResponse,
+  ScmWorkingSnapshot,
+} from '@happier-dev/plugin-sdk/scm';
+import {
+    evaluateScmRemoteMutationPreconditions,
+    SCM_OPERATION_ERROR_CODES,
+} from '@happier-dev/plugin-sdk/scm';
 
 import type { ScmBackendContext } from '../types.js';
 import { runScmCommand } from '../runtime.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 import { mapGitErrorCode, normalizeScmRemoteRequest } from '../remote.js';
-import { evaluateRemoteMutationPreconditions } from '../providers/shared/remoteMutationPreconditions.js';
 
 import { invalidatePrStatusCacheAfterSuccessfulScmMutation } from '../hostingProviders/prStatusCacheInvalidation.js';
 import { readGitSnapshotForChecks } from './snapshotChecks.js';
@@ -62,7 +68,7 @@ export async function gitRemotePublish(input: {
         };
     }
 
-    const guard = evaluateRemoteMutationPreconditions({
+    const guard = evaluateScmRemoteMutationPreconditions({
         kind: 'push',
         snapshot,
         hasExplicitTarget: true,

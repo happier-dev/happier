@@ -1,9 +1,9 @@
 import {
-    createScmCapabilitiesFromBackendCapabilities,
-    supportedCapability,
-    unsupportedCapability,
-    type ScmBackendCapabilities,
-} from '@happier-dev/protocol';
+  createScmCapabilitiesFromBackendCapabilities,
+  supportedCapability,
+  unsupportedCapability,
+  type ScmBackendCapabilities,
+} from '@happier-dev/plugin-sdk/scm';
 
 export const GIT_SCM_BACKEND_CAPABILITIES = {
     detection: {

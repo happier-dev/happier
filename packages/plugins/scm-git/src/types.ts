@@ -80,7 +80,7 @@ import type {
   ScmWorktreePruneResponse,
   ScmWorktreeRemoveRequest,
   ScmWorktreeRemoveResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/scm';
 import type {
   ScmBackendRuntimeContext,
   ScmBackendRuntimeDetection,

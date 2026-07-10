@@ -9,7 +9,7 @@ import {
     type ScmBackendCommandRunInput,
     type ScmBackendCommandRunResult,
     type ScmBackendRuntimeServices,
-} from '@happier-dev/plugin-sdk/scm/backend';
+} from '@happier-dev/plugin-sdk/experimental/scm/backend';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
 
 export type GitScmCommandRunner = (input: ScmBackendCommandRunInput) => Promise<ScmBackendCommandRunResult>;

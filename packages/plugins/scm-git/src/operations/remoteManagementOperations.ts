@@ -1,15 +1,15 @@
 import type {
-    ScmRemoteAddRequest,
-    ScmRemoteInfo,
-    ScmRemoteManagementResponse,
-    ScmRemoteRemoveRequest,
-    ScmRemoteSetUrlRequest,
-} from '@happier-dev/protocol';
+  ScmRemoteAddRequest,
+  ScmRemoteInfo,
+  ScmRemoteManagementResponse,
+  ScmRemoteRemoveRequest,
+  ScmRemoteSetUrlRequest,
+} from '@happier-dev/plugin-sdk/scm';
 import {
-    SCM_OPERATION_ERROR_CODES,
-    normalizeScmRemoteName,
-    normalizeScmRemoteUrl,
-} from '@happier-dev/protocol';
+  SCM_OPERATION_ERROR_CODES,
+  normalizeScmRemoteName,
+  normalizeScmRemoteUrl,
+} from '@happier-dev/plugin-sdk/scm';
 
 import { runScmCommand } from '../runtime.js';
 import type { ScmBackendContext } from '../types.js';
@@ -19,6 +19,11 @@ import { invalidatePrStatusCacheAfterSuccessfulScmMutation } from '../hostingPro
 import { parseGitRemoteVerbose } from '../remoteListParser.js';
 
 const GIT_REMOTE_MANAGEMENT_TIMEOUT_MS = 30_000;
+const ALLOWED_REMOTE_URL_SCHEMES = new Set(['https:', 'ssh:', 'git:', 'file:']);
+const TRANSPORT_HELPER_URL_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*::/;
+const URL_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:/;
+const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[A-Za-z]:[\\/]/;
+const SCP_LIKE_REMOTE_PATTERN = /^(?:[^@\s]+@)?[^:\s]+:.+$/;
 
 type RemoteListResult =
     | { ok: true; remotes: ScmRemoteInfo[] }
@@ -83,9 +88,34 @@ function normalizeRemoteUrlForRequest(
     label: string
 ): { ok: true; url: string } | { ok: false; response: ScmRemoteManagementResponse } {
     const normalized = normalizeScmRemoteUrl(value, label);
+    if (normalized.ok) {
+        const safety = validateAllowedGitRemoteUrl(normalized.url, label);
+        if (!safety.ok) return { ok: false, response: invalidRequest(safety.error) };
+    }
     return normalized.ok
         ? normalized
         : { ok: false, response: invalidRequest(normalized.error) };
+}
+
+function validateAllowedGitRemoteUrl(
+    url: string,
+    label: string,
+): { ok: true } | { ok: false; error: string } {
+    const trimmed = url.trim();
+    if (TRANSPORT_HELPER_URL_PATTERN.test(trimmed)) {
+        return { ok: false, error: `${label} uses an unsupported Git transport helper` };
+    }
+    if (SCP_LIKE_REMOTE_PATTERN.test(trimmed) && !WINDOWS_ABSOLUTE_PATH_PATTERN.test(trimmed)) {
+        return { ok: true };
+    }
+    const schemeMatch = URL_SCHEME_PATTERN.exec(trimmed);
+    if (!schemeMatch || WINDOWS_ABSOLUTE_PATH_PATTERN.test(trimmed)) {
+        return { ok: true };
+    }
+    const scheme = schemeMatch[0].toLowerCase();
+    return ALLOWED_REMOTE_URL_SCHEMES.has(scheme)
+        ? { ok: true }
+        : { ok: false, error: `${label} uses unsupported scheme "${scheme}"` };
 }
 
 function findRemote(remotes: readonly ScmRemoteInfo[], name: string): ScmRemoteInfo | null {

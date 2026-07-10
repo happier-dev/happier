@@ -37,11 +37,12 @@ export const PLUGIN_MANIFEST = definePluginManifest({
     resolvedVersion: '0.0.0',
   },
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: ['scmBackends'] },
-  targets: {},
-  capabilities: { permissions: [] },
+  activationEvents: ['onScmProvider:git'],
+  uses: ['scmBackends'],
+  entrypoints: { main: './dist/index.js' },
+  permissions: { required: [], optional: [] },
   contributes: {
-    installables: [{
+    managedDependencies: [{
       id: 'dep.git',
       key: 'dep.git',
       kind: 'dep',

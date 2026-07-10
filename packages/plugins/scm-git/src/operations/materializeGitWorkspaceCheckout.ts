@@ -1,43 +1,23 @@
 import { lstat, mkdir, readdir, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
 import { normalizeCommitRef, runScmCommand } from '../runtime.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 import { inspectGitCheckoutIdentity, isGitLinkedWorktreeIdentity } from '../checkoutIdentity.js';
 import { repairGitWorktreeAdminReference } from './repairGitWorktreeAdminReference.js';
+import {
+    buildWorktreeTargetPath,
+    hasForbiddenGitRefName,
+    normalizeWorktreeDisplayName,
+} from './worktreeName.js';
 
 type GitWorkspaceCheckoutCreationInput = Readonly<{
     repoRoot: string;
     displayName: string;
     baseRef: string | null;
 }>;
-
-function normalizeWorktreeNameSegment(segment: string): string {
-    const trimmed = segment.trim();
-    if (!trimmed || trimmed === '.' || trimmed === '..') {
-        return '';
-    }
-
-    return trimmed
-        .replace(/\s+/g, '-')
-        .replace(/@\{/g, '-')
-        .replace(/[~^:?*[\]\\]/g, '-')
-        .replace(/\.{2,}/g, '-')
-        .replace(/(^[./-]+)|([./-]+$)/g, '')
-        .replace(/-+/g, '-');
-}
-
-function normalizeWorktreeDisplayName(value: string): string {
-    return value
-        .trim()
-        .replaceAll('\\', '/')
-        .split('/')
-        .map(normalizeWorktreeNameSegment)
-        .filter((segment) => segment.length > 0)
-        .join('/');
-}
 
 function resolveNormalizedBaseRef(baseRef: string | null): string | null {
     if (baseRef == null) {
@@ -50,6 +30,19 @@ function resolveNormalizedBaseRef(baseRef: string | null): string | null {
     }
 
     return normalized.commit;
+}
+
+function resolveWorktreeBranchName(displayName: string): string {
+    if (displayName.trim() && hasForbiddenGitRefName(displayName)) {
+        throw new Error('Invalid Git worktree name');
+    }
+
+    const branchName = normalizeWorktreeDisplayName(displayName);
+    if (!branchName) {
+        throw new Error('Workspace checkout display name is required');
+    }
+
+    return branchName;
 }
 
 async function runGitWorktreeAdd(input: Readonly<{
@@ -167,10 +160,6 @@ async function tryReuseExistingGitWorktree(input: Readonly<{
     return await resolveGitMaterializedWorktreeTargetPath({ targetPath: input.targetPath });
 }
 
-function buildDefaultWorktreeTargetPath(repoRoot: string, branchName: string): string {
-    return join(repoRoot, '.dev', 'worktree', ...branchName.split('/'));
-}
-
 function isAlreadyExistsFailure(error: unknown): boolean {
     const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
     return message.includes('already exists');
@@ -184,10 +173,7 @@ export async function materializeGitWorkspaceCheckoutAtPath(input: Readonly<{
 }>): Promise<Readonly<{
     targetPath: string;
 }>> {
-    const branchName = normalizeWorktreeDisplayName(input.displayName);
-    if (!branchName) {
-        throw new Error('Workspace checkout display name is required');
-    }
+    const branchName = resolveWorktreeBranchName(input.displayName);
 
     const reusedTargetPath = await tryReuseExistingGitWorktree({
         repoRoot: input.repoRoot,
@@ -229,16 +215,13 @@ export async function createGitWorkspaceCheckoutAtDefaultPath(
 ): Promise<Readonly<{
     targetPath: string;
 }>> {
-    const branchName = normalizeWorktreeDisplayName(input.displayName);
-    if (!branchName) {
-        throw new Error('Workspace checkout display name is required');
-    }
+    const branchName = resolveWorktreeBranchName(input.displayName);
 
     const normalizedBaseRef = resolveNormalizedBaseRef(input.baseRef);
 
     for (let suffix = 1; suffix <= 4; suffix += 1) {
         const candidateBranchName = suffix === 1 ? branchName : `${branchName}-${suffix}`;
-        const candidateTargetPath = buildDefaultWorktreeTargetPath(input.repoRoot, candidateBranchName);
+        const candidateTargetPath = buildWorktreeTargetPath(input.repoRoot, candidateBranchName);
         try {
             const materialized = await materializeGitWorkspaceCheckoutAtPath({
                 repoRoot: input.repoRoot,

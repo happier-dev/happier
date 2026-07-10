@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ScmHostingProviderRef, ScmPullRequestSummary } from '@happier-dev/protocol';
+import type {
+  ScmHostingProviderRef,
+  ScmPullRequestSummary,
+} from '@happier-dev/plugin-sdk/scm';
 
 import { createPrStatusCache } from './prStatusCache.js';
 

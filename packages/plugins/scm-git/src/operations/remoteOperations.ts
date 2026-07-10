@@ -1,8 +1,8 @@
 import type {
-    ScmRemoteRequest,
-    ScmRemoteResponse,
-} from '@happier-dev/protocol';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+  ScmRemoteRequest,
+  ScmRemoteResponse,
+} from '@happier-dev/plugin-sdk/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 import type { ScmBackendContext } from '../types.js';
 import { runScmCommand } from '../runtime.js';

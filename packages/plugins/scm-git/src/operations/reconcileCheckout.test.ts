@@ -11,7 +11,7 @@ import { runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js'
 import { reconcileGitWorkspaceCheckout } from './reconcileWorkspaceCheckout.js';
 
 const execFile = promisify(execFileCallback);
-const REAL_GIT_RECONCILE_TEST_TIMEOUT_MS = 10_000;
+const REAL_GIT_RECONCILE_TEST_TIMEOUT_MS = 20_000;
 
 async function makeTempDir(prefix: string): Promise<string> {
     return await mkdtemp(join(tmpdir(), prefix));

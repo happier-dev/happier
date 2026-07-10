@@ -1,5 +1,8 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { SCM_OPERATION_ERROR_CODES, type ScmWorktreeRemoveRequest } from '@happier-dev/protocol';
+import {
+  SCM_OPERATION_ERROR_CODES,
+  type ScmWorktreeRemoveRequest,
+} from '@happier-dev/plugin-sdk/scm';
 
 import {
     runWithGitScmCommandRunner,

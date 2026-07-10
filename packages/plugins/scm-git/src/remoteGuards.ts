@@ -1,13 +1,11 @@
-import type { ScmWorkingSnapshot } from '@happier-dev/protocol';
+import type { ScmWorkingSnapshot } from '@happier-dev/plugin-sdk/scm';
 import {
-    SCM_OPERATION_ERROR_CODES,
-    type ScmRemoteMutationKind,
-    type ScmRemoteMutationReason,
-} from '@happier-dev/protocol';
-import {
-    evaluateRemoteMutationPreconditions as evaluateSharedRemoteMutationPreconditions,
-    type RemoteMutationGuardResult,
-} from './providers/shared/remoteMutationPreconditions.js';
+  evaluateScmRemoteMutationPreconditions as evaluateSharedRemoteMutationPreconditions,
+  SCM_OPERATION_ERROR_CODES,
+  type ScmRemoteMutationGuardResult,
+  type ScmRemoteMutationKind,
+  type ScmRemoteMutationReason,
+} from '@happier-dev/plugin-sdk/scm';
 
 type RemoteMutationKind = 'push' | 'pull';
 
@@ -15,7 +13,7 @@ export function evaluateRemoteMutationPreconditions(input: {
     kind: RemoteMutationKind;
     snapshot: ScmWorkingSnapshot;
     hasExplicitRemoteOrBranch: boolean;
-}): RemoteMutationGuardResult {
+}): ScmRemoteMutationGuardResult {
     return evaluateSharedRemoteMutationPreconditions({
         kind: input.kind,
         snapshot: input.snapshot,
@@ -34,7 +32,7 @@ export function evaluateRemoteMutationPreconditions(input: {
 function mapRemoteMutationReasonToError(
     kind: ScmRemoteMutationKind,
     reason: ScmRemoteMutationReason
-): Exclude<RemoteMutationGuardResult, { ok: true }> {
+): Exclude<ScmRemoteMutationGuardResult, { ok: true }> {
     switch (reason) {
         case 'conflicts_present':
             return {

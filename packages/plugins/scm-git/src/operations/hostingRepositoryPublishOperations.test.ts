@@ -4,14 +4,14 @@ import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 
 import {
-    SCM_OPERATION_ERROR_CODES,
-    type ScmHostingProviderRef,
-    type ScmHostingRepositoryPublishRequest,
-    type ScmHostingRepositorySummary,
-    type ScmRemoteManagementResponse,
-    type ScmRemotePublishResponse,
-    type ScmWorkingSnapshot,
-} from '@happier-dev/protocol';
+  SCM_OPERATION_ERROR_CODES,
+  type ScmHostingProviderRef,
+  type ScmHostingRepositoryPublishRequest,
+  type ScmHostingRepositorySummary,
+  type ScmRemoteManagementResponse,
+  type ScmRemotePublishResponse,
+  type ScmWorkingSnapshot,
+} from '@happier-dev/plugin-sdk/scm';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ScmBackendContext } from '../types.js';

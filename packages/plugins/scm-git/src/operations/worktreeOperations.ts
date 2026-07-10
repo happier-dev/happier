@@ -1,55 +1,27 @@
 import type {
-    ScmWorktreeCreateRequest,
-    ScmWorktreeCreateResponse,
-    ScmWorktreePruneRequest,
-    ScmWorktreePruneResponse,
-    ScmWorktreeRemoveRequest,
-    ScmWorktreeRemoveResponse,
-} from '@happier-dev/protocol';
-import { SCM_OPERATION_ERROR_CODES, SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from '@happier-dev/protocol';
+  ScmWorktreeCreateRequest,
+  ScmWorktreeCreateResponse,
+  ScmWorktreePruneRequest,
+  ScmWorktreePruneResponse,
+  ScmWorktreeRemoveRequest,
+  ScmWorktreeRemoveResponse,
+} from '@happier-dev/plugin-sdk/scm';
+import {
+  SCM_OPERATION_ERROR_CODES,
+  SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
+} from '@happier-dev/plugin-sdk/scm';
 import { mkdir } from 'node:fs/promises';
 
 import type { ScmBackendContext } from '../types.js';
 import { runScmCommand } from '../runtime.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 import { mapGitErrorCode } from '../remote.js';
-
-function normalizeWorktreeNameSegment(segment: string): string {
-    const trimmed = segment.trim();
-    if (!trimmed || trimmed === '.' || trimmed === '..') return '';
-
-    return trimmed
-        .replace(/\s+/g, '-')
-        .replace(/@\{/g, '-')
-        .replace(/[~^:?*[\]\\]/g, '-')
-        .replace(/\.{2,}/g, '-')
-        .replace(/(^[./-]+)|([./-]+$)/g, '')
-        .replace(/-+/g, '-');
-}
-
-function hasForbiddenGitRefSegment(segment: string): boolean {
-    const normalizedSegment = normalizeWorktreeNameSegment(segment);
-    return normalizedSegment === '@' || normalizedSegment.endsWith('.lock');
-}
-
-function normalizeWorktreeDisplayName(value: string): string {
-    const normalizedSegments = value
-        .trim()
-        .replaceAll('\\', '/')
-        .split('/')
-        .map(normalizeWorktreeNameSegment)
-        .filter((segment) => segment.length > 0);
-
-    return normalizedSegments.join('/');
-}
-
-function hasForbiddenGitRefName(value: string): boolean {
-    return value
-        .trim()
-        .replaceAll('\\', '/')
-        .split('/')
-        .some(hasForbiddenGitRefSegment);
-}
+import {
+    WORKTREE_RELATIVE_PARENT_DIR,
+    buildWorktreeRelativePath,
+    hasForbiddenGitRefName,
+    normalizeWorktreeDisplayName,
+} from './worktreeName.js';
 
 function normalizeBaseRef(value: string | null | undefined): string | null {
     const trimmed = String(value ?? '').trim();
@@ -212,10 +184,10 @@ export async function gitWorktreeCreate(input: {
         ? null
         : explicitBaseRef ?? await resolveImplicitBaseRef(input.context);
 
-    await mkdir(`${resolvedPaths.repositoryRootPath}/.dev/worktree`, { recursive: true });
+    await mkdir(`${resolvedPaths.repositoryRootPath}/${WORKTREE_RELATIVE_PARENT_DIR}`, { recursive: true });
 
     const tryCreate = async (branchName: string): Promise<ScmWorktreeCreateResponse> => {
-        const relativeWorktreePath = `.dev/worktree/${branchName}`;
+        const relativeWorktreePath = buildWorktreeRelativePath(branchName);
         const result = await runScmCommand({
             bin: 'git',
             cwd: resolvedPaths.repositoryRootPath,

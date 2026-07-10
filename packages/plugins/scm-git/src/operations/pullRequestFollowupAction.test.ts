@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ScmHostingProviderRef } from '@happier-dev/protocol';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm';
 
 import { createValidatedPullRequestFollowupAction } from './pullRequestFollowupAction.js';
 

@@ -1,5 +1,8 @@
-import type { ScmChangeApplyRequest, ScmChangeApplyResponse } from '@happier-dev/protocol';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import type {
+  ScmChangeApplyRequest,
+  ScmChangeApplyResponse,
+} from '@happier-dev/plugin-sdk/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 import type { ScmBackendContext } from '../types.js';
 import { runScmCommand } from '../runtime.js';
 

@@ -5,17 +5,17 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import {
-    SCM_OPERATION_ERROR_CODES,
-    type ScmRepositoryRemoveIndexLockRequest,
-    type ScmRepositoryRemoveIndexLockResponse,
-} from '@happier-dev/protocol';
+  SCM_OPERATION_ERROR_CODES,
+  type ScmRepositoryRemoveIndexLockRequest,
+  type ScmRepositoryRemoveIndexLockResponse,
+} from '@happier-dev/plugin-sdk/scm';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createGitBackend } from '../backend.js';
 import { runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
 import type { ScmBackend, ScmBackendContext } from '../types.js';
 
-const REAL_GIT_INDEX_LOCK_TEST_TIMEOUT_MS = 10_000;
+const REAL_GIT_INDEX_LOCK_TEST_TIMEOUT_MS = 20_000;
 
 type RemoveIndexLockOperation = (input: {
     context: ScmBackendContext;

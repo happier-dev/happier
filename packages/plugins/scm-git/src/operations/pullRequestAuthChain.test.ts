@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { SCM_OPERATION_ERROR_CODES, type ScmHostingProviderRef, type ScmPullRequestSummary } from '@happier-dev/protocol';
+import {
+  SCM_OPERATION_ERROR_CODES,
+  type ScmHostingProviderRef,
+  type ScmPullRequestSummary,
+} from '@happier-dev/plugin-sdk/scm';
 
 import {
     matchesBranchHeadContext,

@@ -1,27 +1,29 @@
 import { basename } from 'node:path';
 
 import {
-    SCM_OPERATION_ERROR_CODES,
-    ScmHostingProviderKindSchema,
-    normalizeScmRemoteName,
-    type ScmHostingRepositoryDescribePublishTargetsRequest,
-    type ScmHostingRepositoryDescribePublishTargetsResponse,
-    type ScmHostingRepositoryAuthSummary,
-    type ScmHostingProviderKind,
-    type ScmHostingProviderRef,
-    type ScmHostingRepositoryPublishTarget,
-    type ScmHostingRepositoryPublishRequest,
-    type ScmHostingRepositoryPublishResponse,
-    type ScmHostingRepositoryRemoteUrlKind,
-    type ScmHostingRepositorySummary,
-    type ScmOperationErrorCode,
-    type ScmRemoteInfo,
-    type ScmRemoteMutationKind,
-    type ScmRemoteMutationReason,
-    type ScmRemoteManagementResponse,
-    type ScmRemotePublishResponse,
-    type ScmWorkingSnapshot,
-} from '@happier-dev/protocol';
+  evaluateScmRemoteMutationPreconditions,
+  SCM_OPERATION_ERROR_CODES,
+  ScmHostingProviderKindSchema,
+  normalizeScmRemoteName,
+  type ScmHostingRepositoryDescribePublishTargetsRequest,
+  type ScmHostingRepositoryDescribePublishTargetsResponse,
+  type ScmHostingRepositoryAuthSummary,
+  type ScmHostingProviderKind,
+  type ScmHostingProviderRef,
+  type ScmHostingRepositoryPublishTarget,
+  type ScmHostingRepositoryPublishRequest,
+  type ScmHostingRepositoryPublishResponse,
+  type ScmHostingRepositoryRemoteUrlKind,
+  type ScmHostingRepositorySummary,
+  type ScmOperationErrorCode,
+  type ScmRemoteInfo,
+  type ScmRemoteMutationGuardResult,
+  type ScmRemoteMutationKind,
+  type ScmRemoteMutationReason,
+  type ScmRemoteManagementResponse,
+  type ScmRemotePublishResponse,
+  type ScmWorkingSnapshot,
+} from '@happier-dev/plugin-sdk/scm';
 import {
     readCurrentScmHostingProviderRuntimeServices,
     type ScmHostingProviderRuntimeServices,
@@ -31,10 +33,6 @@ import { runScmCommand } from '../runtime.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 import { invalidatePrStatusCacheAfterSuccessfulScmMutation } from '../hostingProviders/prStatusCacheInvalidation.js';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
-import {
-    evaluateRemoteMutationPreconditions,
-    type RemoteMutationGuardResult,
-} from '../providers/shared/remoteMutationPreconditions.js';
 import { gitRemoteAdd, gitRemoteSetUrl } from './remoteManagementOperations.js';
 import { gitRemotePublish } from './publishOperations.js';
 import { readGitSnapshotForChecks } from './snapshotChecks.js';
@@ -184,7 +182,7 @@ function existingRemoteMatchesTarget(remote: ScmRemoteInfo, remoteUrl: string): 
 function mapPublishPreconditionFailure(
     kind: ScmRemoteMutationKind,
     reason: ScmRemoteMutationReason,
-): Exclude<RemoteMutationGuardResult, { ok: true }> {
+): Exclude<ScmRemoteMutationGuardResult, { ok: true }> {
     switch (reason) {
         case 'conflicts_present':
             return {
@@ -225,8 +223,8 @@ function mapPublishPreconditionFailure(
     }
 }
 
-function evaluatePublishPreconditions(snapshot: ScmWorkingSnapshot): RemoteMutationGuardResult {
-    return evaluateRemoteMutationPreconditions({
+function evaluatePublishPreconditions(snapshot: ScmWorkingSnapshot): ScmRemoteMutationGuardResult {
+    return evaluateScmRemoteMutationPreconditions({
         kind: 'push',
         snapshot,
         hasExplicitTarget: true,

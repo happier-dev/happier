@@ -1,7 +1,10 @@
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { ScmWorktree, ScmWorktreeEnrichmentEntry } from '@happier-dev/protocol';
+import type {
+  ScmWorktree,
+  ScmWorktreeEnrichmentEntry,
+} from '@happier-dev/plugin-sdk/scm';
 
 import { runScmCommand } from './runtime.js';
 import { parseGitStatusPorcelainShortZ, type ParsedGitStatusPorcelainShortZEntry } from './statusParser.js';

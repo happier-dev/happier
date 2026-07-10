@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
-    ScmBranchCreateResponse,
-    ScmCommitCreateResponse,
-    ScmPullRequestOpenOrReuseResponse,
-    ScmRemotePublishResponse,
-    ScmRemoteResponse,
-    ScmWorkingSnapshot,
-} from '@happier-dev/protocol';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+  ScmBranchCreateResponse,
+  ScmCommitCreateResponse,
+  ScmPullRequestOpenOrReuseResponse,
+  ScmRemotePublishResponse,
+  ScmRemoteResponse,
+  ScmWorkingSnapshot,
+} from '@happier-dev/plugin-sdk/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
 import type { ScmBackendContext } from '../types.js';
 import { createGitRunStackedPullRequestAction } from './runStackedPullRequestAction.js';

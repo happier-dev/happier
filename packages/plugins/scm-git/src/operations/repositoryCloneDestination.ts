@@ -2,11 +2,11 @@ import { lstat, mkdir, mkdtemp, readdir, rename, rmdir, unlink, writeFile } from
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
 import {
-    SCM_OPERATION_ERROR_CODES,
-    type ScmOperationErrorCode,
-    type ScmRepositoryCloneInput,
-    type ScmRepositoryCloneOutput,
-} from '@happier-dev/protocol';
+  SCM_OPERATION_ERROR_CODES,
+  type ScmOperationErrorCode,
+  type ScmRepositoryCloneInput,
+  type ScmRepositoryCloneOutput,
+} from '@happier-dev/plugin-sdk/scm';
 
 const PRIVATE_CLONE_DIRECTORY_PREFIX = '.happier-clone-';
 const PUBLISH_RESERVATION_MARKER_PREFIX = '.happier-clone-publish-';

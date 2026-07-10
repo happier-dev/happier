@@ -35,6 +35,32 @@ async function writeTrackedFile(cwd: string, relativePath: string, contents: str
 }
 
 describe('materializeGitWorkspaceCheckout', () => {
+    it('rejects forbidden worktree display names before materializing a checkout', async () => {
+        const repoRoot = await makeTempDir('git-materialize-forbidden-name-repo-');
+
+        try {
+            await runGit(repoRoot, ['init']);
+            await configureGitRepo(repoRoot);
+            await runGit(repoRoot, ['branch', '-M', 'main']);
+            await writeTrackedFile(repoRoot, 'README.md', 'main\n');
+            await runGit(repoRoot, ['commit', '-m', 'initial']);
+
+            await expect(runWithRealGitScmRuntime(() => createGitWorkspaceCheckoutAtDefaultPath({
+                repoRoot,
+                displayName: 'feature/@',
+                baseRef: 'main',
+            }))).rejects.toThrow('Invalid Git worktree name');
+            await expect(runWithRealGitScmRuntime(() => createGitWorkspaceCheckoutAtDefaultPath({
+                repoRoot,
+                displayName: 'feature.lock',
+                baseRef: 'main',
+            }))).rejects.toThrow('Invalid Git worktree name');
+            await expect(runGit(repoRoot, ['worktree', 'list', '--porcelain'])).resolves.not.toContain('.dev/worktree');
+        } finally {
+            await rm(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('registers a linked worktree into a pre-populated target path without replacing imported files', async () => {
         const repoRoot = await makeTempDir('git-materialize-populated-repo-');
         const targetRoot = join(repoRoot, '.worktrees', 'feature-auth');

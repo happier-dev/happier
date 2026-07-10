@@ -1,14 +1,14 @@
 import {
-    SCM_OPERATION_ERROR_CODES,
-    type ScmHostingProviderRef,
-    type ScmOperationErrorCode,
-    type ScmPullRequestOpenOrReuseRequest,
-    type ScmPullRequestOpenOrReuseResponse,
-    type ScmPullRequestReference,
-    type ScmPullRequestState,
-    type ScmPullRequestSummary,
-    type ScmWorkingSnapshot,
-} from '@happier-dev/protocol';
+  SCM_OPERATION_ERROR_CODES,
+  type ScmHostingProviderRef,
+  type ScmOperationErrorCode,
+  type ScmPullRequestOpenOrReuseRequest,
+  type ScmPullRequestOpenOrReuseResponse,
+  type ScmPullRequestReference,
+  type ScmPullRequestState,
+  type ScmPullRequestSummary,
+  type ScmWorkingSnapshot,
+} from '@happier-dev/plugin-sdk/scm';
 import {
     readCurrentScmHostingProviderRuntimeServices,
     type ScmHostingProviderRuntimeServices,

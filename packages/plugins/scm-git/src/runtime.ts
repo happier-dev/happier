@@ -2,7 +2,13 @@ import { realpathSync } from 'node:fs';
 import { isAbsolute, relative, sep } from 'node:path';
 import path from 'node:path';
 
-import { readCurrentScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
+import {
+  resolveScmBackendCommandMaxOutputBytes,
+  runScmBackendCommand,
+  ScmSelectedMutationPathSchema,
+} from '@happier-dev/plugin-sdk/scm';
+
+const SAFE_GIT_ALLOW_PROTOCOL = 'https:ssh:git:file';
 
 export type ScmExecResult = {
   success: boolean;
@@ -13,17 +19,11 @@ export type ScmExecResult = {
   outputLimitExceeded?: boolean;
 };
 
-const DEFAULT_SCM_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
-
 function resolveScmMaxOutputBytes(inputMaxOutputBytes: number | undefined): number {
-  if (typeof inputMaxOutputBytes === 'number' && Number.isFinite(inputMaxOutputBytes) && inputMaxOutputBytes > 0) {
-    return Math.floor(inputMaxOutputBytes);
-  }
-
-  const envValue = process.env.HAPPIER_SCM_MAX_OUTPUT_BYTES;
-  if (!envValue) return DEFAULT_SCM_MAX_OUTPUT_BYTES;
-  const parsed = Number(envValue);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_SCM_MAX_OUTPUT_BYTES;
+  return resolveScmBackendCommandMaxOutputBytes({
+    inputMaxOutputBytes,
+    envValue: process.env.HAPPIER_SCM_MAX_OUTPUT_BYTES,
+  });
 }
 
 export function runScmCommand(input: {
@@ -35,31 +35,27 @@ export function runScmCommand(input: {
   maxOutputBytes?: number;
   env?: Record<string, string | undefined>;
 }): Promise<ScmExecResult> {
-  const runtimeServices = readCurrentScmBackendRuntimeServices();
-  if (!runtimeServices) {
-    return Promise.resolve({
-      success: false,
-      stdout: '',
-      stderr: `SCM command runner is unavailable for ${input.bin}`,
-      exitCode: -1,
-    });
-  }
-
-  return runtimeServices.runCommand({
+  return runScmBackendCommand({
     installableKey: 'dep.git',
     command: input.bin,
+  }, {
     cwd: input.cwd,
     args: input.args,
     timeoutMs: input.timeoutMs,
     stdin: input.stdin,
     maxOutputBytes: resolveScmMaxOutputBytes(input.maxOutputBytes),
-    env: input.env,
+    env: {
+      ...(input.env ?? {}),
+      GIT_ALLOW_PROTOCOL: SAFE_GIT_ALLOW_PROTOCOL,
+    },
   });
 }
 
 function validateContainedPath(rawPath: string, cwd: string): { ok: true; relativePath: string } | { ok: false; error: string } {
-  if (!rawPath.trim()) return { ok: false, error: 'Path cannot be empty' };
-  if (rawPath.includes('\0')) return { ok: false, error: 'Path contains null bytes' };
+  const selectedPath = ScmSelectedMutationPathSchema.safeParse(rawPath);
+  if (!selectedPath.success) {
+    return { ok: false, error: 'Path must identify a file or subdirectory' };
+  }
   const canonicalCwd = (() => {
     try {
       return realpathSync(path.resolve(cwd));
@@ -78,6 +74,9 @@ function validateContainedPath(rawPath: string, cwd: string): { ok: true; relati
 export function normalizePathspec(rawPath: string, cwd: string): { ok: true; pathspec: string } | { ok: false; error: string } {
   const validation = validateContainedPath(rawPath, cwd);
   if (!validation.ok) return validation;
+  if (validation.relativePath === '.') {
+    return { ok: false, error: 'Path must identify a file or subdirectory' };
+  }
   return { ok: true, pathspec: validation.relativePath };
 }
 

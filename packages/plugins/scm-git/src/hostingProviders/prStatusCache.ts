@@ -1,9 +1,9 @@
 import type {
-    ScmHostingProviderRef,
-    ScmOperationErrorCode,
-    ScmPullRequestState,
-    ScmPullRequestSummary,
-} from '@happier-dev/protocol';
+  ScmHostingProviderRef,
+  ScmOperationErrorCode,
+  ScmPullRequestState,
+  ScmPullRequestSummary,
+} from '@happier-dev/plugin-sdk/scm';
 
 export type PrStatusCacheConfig = Readonly<{
     successTtlMs: number;

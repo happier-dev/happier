@@ -5,10 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-    SCM_OPERATION_ERROR_CODES,
-    type ScmRepositoryInitRequest,
-    type ScmRepositoryInitResponse,
-} from '@happier-dev/protocol';
+  SCM_OPERATION_ERROR_CODES,
+  type ScmRepositoryInitRequest,
+  type ScmRepositoryInitResponse,
+} from '@happier-dev/plugin-sdk/scm';
 import { describe, expect, it } from 'vitest';
 
 import { createGitBackend } from '../backend.js';

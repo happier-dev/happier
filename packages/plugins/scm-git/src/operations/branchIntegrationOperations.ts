@@ -1,14 +1,14 @@
 import type {
-    ScmBranchIntegrationOperation,
-    ScmBranchIntegrationRequest,
-    ScmBranchIntegrationResponse,
-    ScmBranchOperationControlRequest,
-    ScmWorkingSnapshot,
-} from '@happier-dev/protocol';
+  ScmBranchIntegrationOperation,
+  ScmBranchIntegrationRequest,
+  ScmBranchIntegrationResponse,
+  ScmBranchOperationControlRequest,
+  ScmWorkingSnapshot,
+} from '@happier-dev/plugin-sdk/scm';
 import {
-    SCM_OPERATION_ERROR_CODES,
-    normalizeScmBranchSourceRef,
-} from '@happier-dev/protocol';
+  SCM_OPERATION_ERROR_CODES,
+  normalizeScmBranchSourceRef,
+} from '@happier-dev/plugin-sdk/scm';
 
 import { runScmCommand } from '../runtime.js';
 import type { ScmBackendContext } from '../types.js';

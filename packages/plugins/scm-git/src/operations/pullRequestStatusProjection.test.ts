@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
-import type { ScmHostingProviderRef, ScmPullRequestSummary, ScmWorkingSnapshot } from '@happier-dev/protocol';
+import type {
+  ScmHostingProviderRef,
+  ScmPullRequestSummary,
+  ScmWorkingSnapshot,
+} from '@happier-dev/plugin-sdk/scm';
 
 import { createPrStatusCache } from '../hostingProviders/prStatusCache.js';
 import {
@@ -211,7 +215,7 @@ describe('pull request status projection', () => {
                     }
                     return {
                         kind: 'resolved' as const,
-                        providerId: 'scm.gitlab',
+                        agentId: 'scm.gitlab',
                         provider: {
                             id: 'scm.gitlab',
                             kind: 'gitlab',

@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
-    ScmHostingProviderRef,
-    ScmPullRequestSummary,
-    ScmWorkingSnapshot,
-} from '@happier-dev/protocol';
+  ScmHostingProviderRef,
+  ScmPullRequestSummary,
+  ScmWorkingSnapshot,
+} from '@happier-dev/plugin-sdk/scm';
 
 import type { ScmBackendContext } from '../types.js';
 import {

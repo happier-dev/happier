@@ -1,11 +1,11 @@
 import type { ScmRepoDetection, ScmBackendContext } from './types.js';
 import type {
-    ScmStatusSnapshotRequest,
-    ScmStatusSnapshotResponse,
-    ScmWorktreesEnrichmentRequest,
-    ScmWorktreesEnrichmentResponse,
-} from '@happier-dev/protocol';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+  ScmStatusSnapshotRequest,
+  ScmStatusSnapshotResponse,
+  ScmWorktreesEnrichmentRequest,
+  ScmWorktreesEnrichmentResponse,
+} from '@happier-dev/plugin-sdk/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
 import { runScmCommand } from './runtime.js';
 import { normalizeRepoRootRelativePath } from './runtime.js';
