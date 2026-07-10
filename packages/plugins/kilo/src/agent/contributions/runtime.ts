@@ -1,4 +1,4 @@
-export const KILO_PROVIDER_RUNTIME_CONTRIBUTION = Object.freeze({
+export const KILO_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'kilo',
   builtInAcpCatalog: true,
   preflightSessionControls: {

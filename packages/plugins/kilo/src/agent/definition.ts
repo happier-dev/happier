@@ -65,10 +65,10 @@ export const AGENT_DEFINITION = Object.freeze({
     installGuideUrl: null,
     docsUrl: 'https://kilo.ai/docs/cli',
   },
-  providerSettings: null,
+  agentSettings: null,
   runtimeContributions: {
-    providerCatalogEntry: {
-      importName: 'KILO_PROVIDER_RUNTIME_CONTRIBUTION',
+    agentCatalogEntry: {
+      importName: 'KILO_AGENT_RUNTIME_CONTRIBUTION',
       source: './agent/contributions/runtime',
     },
   },

@@ -1,4 +1,4 @@
-import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/acp';
+import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/experimental/acp';
 
 import { buildKiloAcpEnv } from './callbacks.js';
 import { KILO_ACP_STDERR_RULES, KILO_ACP_TIMEOUTS, KILO_ACP_TOOL_NAME_INFERENCE } from './transport.js';

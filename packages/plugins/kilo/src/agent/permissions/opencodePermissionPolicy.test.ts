@@ -39,4 +39,22 @@ describe('Kilo OpenCode permission policy', () => {
       permissionMode: 'read-only',
     })).toEqual({});
   });
+
+  it('uses the richer shared OpenCode-style policy vocabulary', () => {
+    expect(resolveKiloOpenCodePermissionPolicy('read_only')).toMatchObject({
+      '*': 'deny',
+      read: 'allow',
+      glob: 'allow',
+      grep: 'allow',
+      ls: 'allow',
+      edit: 'deny',
+      write: 'deny',
+      task: 'deny',
+      external_directory: 'deny',
+      doom_loop: 'deny',
+      change_title: 'allow',
+      session_title_set: 'allow',
+      happier_action_execute: 'allow',
+    });
+  });
 });

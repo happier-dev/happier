@@ -1,21 +1,23 @@
-import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/acp';
-import type { BackendEngineV1 } from '@happier-dev/plugin-sdk';
-import { createAcpBackendEngine, readAcpBackendSpec } from '@happier-dev/plugin-sdk/acp';
+import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/experimental/acp';
+import type { AgentRuntimeV1 } from '@happier-dev/plugin-sdk';
+import { createAcpBackendEngine, readAcpBackendSpec } from '@happier-dev/plugin-sdk/experimental/acp';
 import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
 
 type KiloBackendRegistration = Readonly<{
-  backendId: string;
+  agentId: string;
   create: (ctx: Readonly<{
-    acp: Readonly<{
-      defineAcpBackend: (spec: AcpBackendSpecV1) => BackendEngineV1;
+    agentRuntime: Readonly<{
+      acp: Readonly<{
+        defineAcpBackend: (spec: AcpBackendSpecV1) => AgentRuntimeV1;
+      }>;
     }>;
-  }>) => BackendEngineV1 | Promise<BackendEngineV1>;
+  }>) => AgentRuntimeV1 | Promise<AgentRuntimeV1>;
 }>;
 
-function readRegisteredBackend(registerBackendEngine: ReturnType<typeof vi.fn>): KiloBackendRegistration {
-  const registration = registerBackendEngine.mock.calls[0]?.[0];
+function readRegisteredBackend(registerAgentRuntime: ReturnType<typeof vi.fn>): KiloBackendRegistration {
+  const registration = registerAgentRuntime.mock.calls[0]?.[0];
   if (!registration || typeof registration !== 'object') {
     throw new Error('Expected Kilo activation to register a backend engine');
   }
@@ -24,16 +26,18 @@ function readRegisteredBackend(registerBackendEngine: ReturnType<typeof vi.fn>):
 
 describe('Kilo activate', () => {
   it('registers the Kilo ACP backend through the plugin API', async () => {
-    const registerBackendEngine = vi.fn();
+    const registerAgentRuntime = vi.fn();
 
-    activate({ registerBackendEngine });
+    activate({ registerAgentRuntime });
 
-    const registration = readRegisteredBackend(registerBackendEngine);
-    expect(registration.backendId).toBe('kilo');
+    const registration = readRegisteredBackend(registerAgentRuntime);
+    expect(registration.agentId).toBe('kilo');
 
     const engine = await registration.create({
-      acp: {
-        defineAcpBackend: createAcpBackendEngine,
+      agentRuntime: {
+        acp: {
+          defineAcpBackend: createAcpBackendEngine,
+        },
       },
     });
     expect(readAcpBackendSpec(engine)).toMatchObject({

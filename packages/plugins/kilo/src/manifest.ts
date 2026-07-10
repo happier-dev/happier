@@ -1,14 +1,17 @@
 import {
   definePluginManifest,
-  type PluginBackendContributionV2,
+  type PluginAgentContributionV2,
   type PluginManifestV2,
+  type PluginAgentSettingsContributionV1,
 } from '@happier-dev/plugin-sdk';
 
 import { KILO_ACP_BACKEND_SPEC } from './agent/acp/definition.js';
+import { KILO_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
 type KiloPluginManifestV2 = Omit<PluginManifestV2, 'contributes'> & Readonly<{
   contributes: Readonly<{
-    backends: ReadonlyArray<PluginBackendContributionV2>;
+    agents: ReadonlyArray<PluginAgentContributionV2>;
+    agentSettings: ReadonlyArray<PluginAgentSettingsContributionV1>;
   }>;
 }>;
 
@@ -19,16 +22,16 @@ export const PLUGIN_MANIFEST = definePluginManifest({
   displayName: 'kilo',
   description: undefined,
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: ['backends'] },
-  targets: {},
-  capabilities: { permissions: [] },
+  activationEvents: ['onAgent:kilo'],
+  uses: ['agents'],
+  entrypoints: { main: './dist/index.js' },
+  permissions: { required: [], optional: [] },
   contributes: {
-    backends: [
+    agents: [
       {
         kindVersion: 1,
         id: 'kilo',
-        agentId: 'kilo',
-        engine: {
+        runtime: {
           kind: 'acp',
           transport: KILO_ACP_BACKEND_SPEC.transport,
           ux: KILO_ACP_BACKEND_SPEC.ux,
@@ -51,5 +54,6 @@ export const PLUGIN_MANIFEST = definePluginManifest({
         },
       },
     ],
+    agentSettings: [KILO_AGENT_SETTINGS_CONTRIBUTION],
   },
 } satisfies KiloPluginManifestV2);

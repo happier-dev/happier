@@ -10,7 +10,7 @@ const FORBIDDEN_NO_EXECUTE_KEYS = new Set([
   'uiBehaviorOverride',
   'sessionProviderBehavior',
   'messageMetaOverride',
-  'providerSettings',
+  'agentSettings',
   'visibleMessageResolver',
   'svgIconXml',
 ]);
@@ -44,7 +44,7 @@ describe('KILO_UI_DESCRIPTOR', () => {
         connectedService: { serviceId: null, labelKey: 'agentInput.agent.kilo', connectRoute: null },
         icon: { assetId: 'kilo' },
       },
-      settings: { descriptorId: 'kilo.providerSettings.v1' },
+      settings: { descriptorId: 'kilo.agentSettings.v1' },
     });
   });
 

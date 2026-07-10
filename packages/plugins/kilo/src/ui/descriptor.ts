@@ -39,7 +39,7 @@ export const KILO_UI_DESCRIPTOR = Object.freeze({
     resume: 'experimental',
   },
   settings: {
-    descriptorId: 'kilo.providerSettings.v1',
+    descriptorId: 'kilo.agentSettings.v1',
   },
   behavior: {},
   session: {},

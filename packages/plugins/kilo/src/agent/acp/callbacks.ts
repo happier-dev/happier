@@ -1,4 +1,4 @@
-import type { AcpTier2EnvBuilderV1 } from '@happier-dev/plugin-sdk/acp';
+import type { AcpTier2EnvBuilderV1 } from '@happier-dev/plugin-sdk/experimental/acp';
 
 import { buildKiloOpenCodePermissionEnv } from '../permissions/opencodePermissionPolicy.js';
 

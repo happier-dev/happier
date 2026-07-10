@@ -1,48 +1,12 @@
-import { parsePermissionIntentAlias } from '@happier-dev/agents';
+import {
+  resolveAcpToolPermissionPolicy,
+  type AcpToolPermissionPolicyV1,
+} from '@happier-dev/plugin-sdk/experimental/acp';
 
-type OpenCodePermissionPolicy = Readonly<Record<string, 'allow' | 'ask' | 'deny'>>;
+type OpenCodePermissionPolicy = AcpToolPermissionPolicyV1;
 
 export function resolveKiloOpenCodePermissionPolicy(permissionMode: string | null | undefined): OpenCodePermissionPolicy {
-  const intent = parsePermissionIntentAlias(permissionMode ?? 'default') ?? 'default';
-  const base = {
-    '*': 'ask',
-    read: 'allow',
-    edit: 'ask',
-    bash: 'ask',
-    external_directory: 'ask',
-    change_title: 'allow',
-    save_memory: 'allow',
-    think: 'allow',
-  } as const;
-
-  if (intent === 'yolo') {
-    return {
-      ...base,
-      '*': 'allow',
-      edit: 'allow',
-      bash: 'allow',
-      external_directory: 'allow',
-    };
-  }
-
-  if (intent === 'safe-yolo') {
-    return {
-      ...base,
-      edit: 'allow',
-    };
-  }
-
-  if (intent === 'read-only' || intent === 'plan') {
-    return {
-      ...base,
-      '*': 'deny',
-      edit: 'deny',
-      bash: 'deny',
-      external_directory: 'deny',
-    };
-  }
-
-  return base;
+  return resolveAcpToolPermissionPolicy(permissionMode);
 }
 
 export function buildKiloOpenCodePermissionEnv(params: Readonly<{
