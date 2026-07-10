@@ -1,5 +1,7 @@
 import { isAbsolute } from 'node:path';
 
+import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/plugin-sdk/sessions';
+
 import {
   buildPiAgentRuntimeDescriptorV1,
   type PiAgentRuntimeDescriptorV1,
@@ -12,7 +14,7 @@ export type PublishedPiSessionMetadata = Readonly<{
   sessionFile: string | null;
 }>;
 
-export type PiSessionMetadataPublisher<TMetadata extends object> = (
+export type PiSessionMetadataPublisher<TMetadata extends Record<string, unknown>> = (
   updater: (metadata: TMetadata) => TMetadata,
 ) => Promise<void> | void;
 
@@ -32,7 +34,7 @@ function shouldSkipPublication(
   return previous.sessionFile === next.sessionFile;
 }
 
-function buildPiSessionMetadata<TMetadata extends object>(
+function buildPiSessionMetadata<TMetadata extends Record<string, unknown>>(
   metadata: TMetadata,
   params: Readonly<{
     sessionId: string;
@@ -40,14 +42,12 @@ function buildPiSessionMetadata<TMetadata extends object>(
     descriptor: PiAgentRuntimeDescriptorV1;
   }>,
 ): TMetadata {
-  const next: TMetadata & {
-    piSessionId: string;
-    piSessionFile?: string;
-    agentRuntimeDescriptorV1: PiAgentRuntimeDescriptorV1;
-  } = {
+  const next = applyRuntimeDescriptorSessionMetadata({
     ...metadata,
     piSessionId: params.sessionId,
-    agentRuntimeDescriptorV1: params.descriptor,
+  }, params.descriptor) as TMetadata & {
+    piSessionId: string;
+    piSessionFile?: string;
   };
   if (params.sessionFile === null) {
     delete next.piSessionFile;
@@ -57,7 +57,7 @@ function buildPiSessionMetadata<TMetadata extends object>(
   return next;
 }
 
-export function maybeUpdatePiSessionIdMetadata<TMetadata extends object>(params: {
+export function maybeUpdatePiSessionIdMetadata<TMetadata extends Record<string, unknown>>(params: {
   getPiSessionId: () => string | null;
   getPiSessionFile: () => string | null;
   updateHappySessionMetadata: PiSessionMetadataPublisher<TMetadata>;

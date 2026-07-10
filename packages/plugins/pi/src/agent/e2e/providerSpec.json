@@ -1,0 +1,72 @@
+{
+  "v": 1,
+  "id": "pi",
+  "enableEnvVar": "HAPPIER_E2E_PROVIDER_PI",
+  "protocol": "acp",
+  "traceProvider": "pi",
+  "requiredBinaries": [
+    {
+      "bin": "pi",
+      "envOverride": "HAPPIER_E2E_PROVIDER_PI_BIN",
+      "requireExists": true
+    }
+  ],
+  "auth": {
+    "mode": "auto",
+    "env": {
+      "requiredAnyOf": [
+        ["OPENAI_API_KEY"],
+        ["ANTHROPIC_API_KEY"],
+        ["GEMINI_API_KEY"],
+        ["OPENROUTER_API_KEY"],
+        ["KIMI_API_KEY"]
+      ]
+    }
+  },
+  "permissions": {
+    "v": 1,
+    "acp": {
+      "toolPermissionPromptsByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "outsideWorkspaceWriteAllowedByMode": {
+        "default": true,
+        "safe-yolo": true,
+        "read-only": false,
+        "yolo": true,
+        "plan": false
+      },
+      "outsideWorkspaceWriteMustCompleteByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": true,
+        "plan": false
+      },
+      "outsideWorkspaceRequireTaskCompleteByMode": {
+        "default": true,
+        "safe-yolo": true,
+        "read-only": false,
+        "yolo": true,
+        "plan": false
+      },
+      "expectToolPermissionPrompts": false,
+      "permissionSurfaceOutsideWorkspaceYolo": true
+    }
+  },
+  "cli": {
+    "subcommand": "pi",
+    "extraArgs": ["--started-by", "terminal"],
+    "env": {
+      "HEADLESS": "1",
+      "HAPPIER_VARIANT": "dev"
+    },
+    "envFrom": {
+      "HAPPIER_PI_PATH": "HAPPIER_E2E_PROVIDER_PI_BIN"
+    }
+  }
+}

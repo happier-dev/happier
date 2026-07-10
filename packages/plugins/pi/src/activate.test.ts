@@ -1,14 +1,12 @@
 import type {
+  AgentRuntimeV1,
   ExecClientHandleV1,
   ExecJsonStreamClientSpecV1,
   JsonStreamClientV1,
   PluginContextV1,
+  RegisterAgentRuntimeV1,
+  SessionRuntimeV1,
 } from '@happier-dev/plugin-sdk';
-import type {
-  BundledBackendEngineV1,
-  BundledRegisterBackendEngineV1,
-  BundledSessionRuntimeCreateResultV1,
-} from '@happier-dev/plugin-sdk/internal/runtime/session';
 import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
@@ -44,40 +42,44 @@ function createPluginContext(capture: {
     dispose: async () => undefined,
   };
   return {
-    exec: {
-      systemTools: {
-        resolve: async () => {
-          throw new Error('not used');
-        },
-      },
-      run: async () => {
-        throw new Error('not used');
-      },
-      spawn: async () => {
-        throw new Error('not used');
-      },
-      spawnClient: async (spec) => {
-        capture.specs.push(spec as ExecJsonStreamClientSpecV1);
-        return handle;
-      },
-    },
-    acp: {
-      defineAcpBackend: () => {
-        throw new Error('Pi must not register through ACP');
-      },
-      createRuntime: async () => {
-        throw new Error('Pi must not create an ACP runtime');
-      },
-    },
     logger: { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined },
     config: { values: {} },
     features: { isEnabled: () => false },
-    capabilities: { has: () => false, list: () => [] },
-    agents: {} as PluginContextV1['agents'],
+    permissions: { isGranted: () => false, list: () => [] },
+    agentRuntime: {
+      exec: {
+        systemTools: {
+          resolve: async () => {
+            throw new Error('not used');
+          },
+        },
+        run: async () => {
+          throw new Error('not used');
+        },
+        spawn: async () => {
+          throw new Error('not used');
+        },
+        spawnClient: async (spec) => {
+          capture.specs.push(spec as ExecJsonStreamClientSpecV1);
+          return handle;
+        },
+      },
+      acp: {
+        defineAcpBackend: () => {
+          throw new Error('Pi must not register through ACP');
+        },
+        createRuntime: async () => {
+          throw new Error('Pi must not create an ACP runtime');
+        },
+      },
+      agents: {} as PluginContextV1['agentRuntime']['agents'],
+      terminalHost: {} as PluginContextV1['agentRuntime']['terminalHost'],
+      sessionHooks: {} as PluginContextV1['agentRuntime']['sessionHooks'],
+      transcripts: {} as PluginContextV1['agentRuntime']['transcripts'],
+      accountUsage: {} as PluginContextV1['agentRuntime']['accountUsage'],
+    },
     managedServer: {} as PluginContextV1['managedServer'],
     mcp: {} as PluginContextV1['mcp'],
-    terminalHost: {} as PluginContextV1['terminalHost'],
-    sessionHooks: {} as PluginContextV1['sessionHooks'],
     errors: {} as PluginContextV1['errors'],
     retry: {} as PluginContextV1['retry'],
     env: { get: () => undefined } as PluginContextV1['env'],
@@ -93,11 +95,11 @@ function createPluginContext(capture: {
     projects: {} as PluginContextV1['projects'],
     account: {} as PluginContextV1['account'],
     reviews: {} as PluginContextV1['reviews'],
-    session: {} as PluginContextV1['session'],
     sessions: {} as PluginContextV1['sessions'],
-    transcripts: {} as PluginContextV1['transcripts'],
-    telemetry: {} as PluginContextV1['telemetry'],
-    artifacts: {} as PluginContextV1['artifacts'],
+    experimental: {
+      telemetry: {} as PluginContextV1['experimental']['telemetry'],
+      artifacts: {} as PluginContextV1['experimental']['artifacts'],
+    },
     notifications: {} as PluginContextV1['notifications'],
     abort: {} as PluginContextV1['abort'],
     timeout: {} as PluginContextV1['timeout'],
@@ -105,18 +107,12 @@ function createPluginContext(capture: {
   };
 }
 
-type HostSessionRuntimePlan = Extract<BundledSessionRuntimeCreateResultV1, { kind: 'hostSessionRuntimePlan' }>;
-
-function readRegisteredBackend(registerBackendEngine: ReturnType<typeof vi.fn>): BundledRegisterBackendEngineV1 {
-  const registration = registerBackendEngine.mock.calls[0]?.[0];
+function readRegisteredBackend(registerAgentRuntime: ReturnType<typeof vi.fn>): RegisterAgentRuntimeV1 {
+  const registration = registerAgentRuntime.mock.calls[0]?.[0];
   if (!registration || typeof registration !== 'object') {
     throw new Error('Expected Pi activation to register a backend engine');
   }
-  return registration as BundledRegisterBackendEngineV1;
-}
-
-function assertHostSessionRuntimePlan(value: BundledSessionRuntimeCreateResultV1): asserts value is HostSessionRuntimePlan {
-  expect(value).toMatchObject({ kind: 'hostSessionRuntimePlan', providerId: 'pi' });
+  return registration as RegisterAgentRuntimeV1;
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -157,52 +153,33 @@ async function ackWrittenCommand(
 
 describe('activate', () => {
   it('registers Pi as a custom strict-LF JSON stream runtimeCore', async () => {
-    const registerBackendEngine = vi.fn();
+    const registerAgentRuntime = vi.fn();
     const capture: { specs: ExecJsonStreamClientSpecV1[]; written: unknown[]; listener?: (record: unknown) => void | Promise<void> } = {
       specs: [],
       written: [],
     };
 
-    activate({ registerBackendEngine });
+    activate({ registerAgentRuntime });
 
-    const registration = readRegisteredBackend(registerBackendEngine);
-    expect(registration.backendId).toBe('pi');
+    const registration = readRegisteredBackend(registerAgentRuntime);
+    expect(registration.agentId).toBe('pi');
 
-    const engine = await registration.create(createPluginContext(capture)) as BundledBackendEngineV1;
+    const engine = await registration.create(createPluginContext(capture)) as AgentRuntimeV1;
     expect(engine.runtimeCore).toBeDefined();
 
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const runtime = await engine.runtimeCore?.createSessionRuntime({
       directory: '/tmp/pi-workspace',
       permissionMode: 'safe-yolo',
       isolation: { env: { HAPPIER_PI_THINKING_LEVEL: 'medium' } },
     });
-    if (!plan) throw new Error('Expected Pi runtimeCore to create a session runtime plan');
-    assertHostSessionRuntimePlan(plan);
-    expect(plan).toMatchObject({
-      kind: 'hostSessionRuntimePlan',
-      providerId: 'pi',
-      config: {
-        backendDisplayName: 'Pi',
-        providerName: 'pi',
-        agentMessageType: 'pi',
-        supportsMcpServers: false,
-      },
-    });
-
-    const createSessionRuntime = plan.config.createSessionRuntime as (params: {
-      directory: string;
-      getPermissionMode: () => string;
-    }) => Promise<{ operations: Record<string, unknown> }>;
-    const result = await createSessionRuntime({
-      directory: '/tmp/pi-workspace',
-      getPermissionMode: () => 'safe-yolo',
-    });
-
-    expect(result.operations).toEqual(expect.objectContaining({
-      startOrLoadSession: expect.any(Function),
-      sendTurnPrompt: expect.any(Function),
-      waitForTurnCompletion: expect.any(Function),
-      resetOrDisposeRuntime: expect.any(Function),
+    if (!runtime) throw new Error('Expected Pi runtimeCore to create a session runtime');
+    expect(runtime satisfies SessionRuntimeV1).toEqual(expect.objectContaining({
+      identity: expect.objectContaining({ read: expect.any(Function) }),
+      events: expect.objectContaining({ subscribe: expect.any(Function) }),
+      send: expect.any(Function),
+      cancel: expect.any(Function),
+      dispose: expect.any(Function),
+      permissions: { capability: 'static' },
     }));
     expect(capture.specs).toHaveLength(1);
     expect(capture.specs[0]).toMatchObject({
@@ -224,16 +201,16 @@ describe('activate', () => {
   });
 
   it('creates Pi execution-run backends through the strict-LF spawnClient runtime', async () => {
-    const registerBackendEngine = vi.fn();
+    const registerAgentRuntime = vi.fn();
     const capture: { specs: ExecJsonStreamClientSpecV1[]; written: unknown[]; listener?: (record: unknown) => void | Promise<void> } = {
       specs: [],
       written: [],
     };
 
-    activate({ registerBackendEngine });
+    activate({ registerAgentRuntime });
 
-    const registration = readRegisteredBackend(registerBackendEngine);
-    const engine = await registration.create(createPluginContext(capture)) as BundledBackendEngineV1;
+    const registration = readRegisteredBackend(registerAgentRuntime);
+    const engine = await registration.create(createPluginContext(capture)) as AgentRuntimeV1;
     const backend = engine.runtimeCore?.createExecutionRunBackend({
       cwd: '/tmp/pi-workspace',
       runId: 'happier-execution-run-1',

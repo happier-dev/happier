@@ -1,3 +1,5 @@
+import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+
 type PiPreflightModelOption = Readonly<{
   id: string;
   name: string;
@@ -13,6 +15,10 @@ export type PiPreflightModel = Readonly<{
   modelOptions?: readonly PiPreflightModelOption[];
 }>;
 
+const PI_CLI_MODELS_COMMAND_ARGS = ['--list-models'] as const;
+const MIN_PREFLIGHT_MODELS_TIMEOUT_MS = 250;
+const PREFLIGHT_OUTPUT_MAX_BYTES = 256 * 1024;
+
 const PI_THINKING_MODEL_OPTION: PiPreflightModelOption = Object.freeze({
   id: 'reasoning_effort',
   name: 'Thinking',
@@ -25,6 +31,15 @@ const PI_THINKING_MODEL_OPTION: PiPreflightModelOption = Object.freeze({
     Object.freeze({ value: 'xhigh', name: 'Max' }),
   ]),
 });
+
+function buildPiPreflightEnv(env: NodeJS.ProcessEnv | undefined): Readonly<Record<string, string>> {
+  const output: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env ?? {})) {
+    if (typeof value === 'string') output[key] = value;
+  }
+  output.CI = '1';
+  return output;
+}
 
 function readThinkingSupport(value: string | undefined): boolean | null {
   const normalized = value?.trim().toLowerCase();
@@ -62,10 +77,29 @@ export function buildPiPreflightModelsFromListModelsOutput(outputRaw: string): r
   return models.length > 0 ? models : null;
 }
 
+export async function probePiPreflightModelsRaw(params: Readonly<{
+  exec: ExecRuntimeServiceV1;
+  cwd: string;
+  timeoutMs: number;
+  env?: NodeJS.ProcessEnv;
+}>): Promise<readonly PiPreflightModel[] | null> {
+  const result = await params.exec.run({
+    kind: 'agent-cli',
+    agentId: 'pi',
+    args: PI_CLI_MODELS_COMMAND_ARGS,
+    cwd: params.cwd,
+    env: buildPiPreflightEnv(params.env),
+  }, {
+    maxStderrBytes: PREFLIGHT_OUTPUT_MAX_BYTES,
+    maxStdoutBytes: PREFLIGHT_OUTPUT_MAX_BYTES,
+    timeoutMs: Math.max(MIN_PREFLIGHT_MODELS_TIMEOUT_MS, params.timeoutMs),
+  });
+  if (result.exitCode !== 0) return null;
+  return buildPiPreflightModelsFromListModelsOutput(result.stdout)
+    ?? buildPiPreflightModelsFromListModelsOutput(result.stderr);
+}
+
 export const PI_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
   failureCacheStrategy: 'cooldown',
-  cliModelsCommandArgs: ['--list-models'],
-  probeModelsCommandArgs: ['--list-models'],
-  probeModelsFromCommandOutput: ({ output }: Readonly<{ output: string }>) =>
-    buildPiPreflightModelsFromListModelsOutput(output),
+  probeModelsRaw: probePiPreflightModelsRaw,
 } as const);

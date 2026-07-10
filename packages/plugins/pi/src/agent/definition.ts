@@ -33,7 +33,7 @@ export const AGENT_DEFINITION = Object.freeze({
       supportedKindsByServiceId: {
         'openai-codex': ['oauth'],
         openai: ['token'],
-        'claude-subscription': ['token'],
+        'claude-subscription': ['oauth', 'token'],
         anthropic: ['token'],
       },
     },
@@ -96,8 +96,8 @@ export const AGENT_DEFINITION = Object.freeze({
     docsUrl: null,
   },
   runtimeContributions: {
-    providerCatalogEntry: {
-      importName: 'PI_PROVIDER_RUNTIME_CONTRIBUTION',
+    agentCatalogEntry: {
+      importName: 'PI_AGENT_RUNTIME_CONTRIBUTION',
       source: './agent/contributions/runtime',
     },
     sessionControlAdapter: {
@@ -119,5 +119,5 @@ export const AGENT_DEFINITION = Object.freeze({
       canonicalReader: 'readCanonicalPiAgentRuntimeDescriptorV1',
     },
   },
-  providerSettings: null,
+  agentSettings: null,
 } as const);

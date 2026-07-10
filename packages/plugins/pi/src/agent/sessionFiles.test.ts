@@ -9,6 +9,18 @@ import {
   resolvePiSessionIdFromResumeReference,
 } from './sessionFiles.js';
 
+type DescriptorModule = Readonly<{
+  PI_SESSION_FILE_STORE_DESCRIPTOR_V1?: Readonly<{
+    productId: string;
+    defaultAgentDirSegments: readonly string[];
+    agentDirEnvVar: string;
+    legacySessionDirEnvVars: readonly string[];
+    readsSettingsSessionDir: boolean;
+    configDirName: string;
+    encodeCwdSubdir: ((cwd: string) => string) | null;
+  }>;
+}>;
+
 describe('pi session-file layout', () => {
   it('is published through a narrow plugin agent subpath', () => {
     const packageJson = JSON.parse(
@@ -45,6 +57,27 @@ describe('pi session-file layout', () => {
 
     expect(resolvePiSessionIdFromResumeReference(id)).toBe(id);
     expect(resolvePiSessionIdFromResumeReference(`/p/--cwd--/2026-05-20T15-57-24-578Z_${id}.jsonl`)).toBe(id);
+    expect(resolvePiSessionIdFromResumeReference('/p/--cwd--/a_b_c.jsonl')).toBe('c');
+    expect(doesPiSessionFileNameMatchSessionId('2026-05-20T15-57-24-578Z_b_c.jsonl', 'b_c')).toBe(true);
+    expect(doesPiSessionFileNameMatchSessionId('2026-05-20T15-57-24-578Z_b_c.jsonl', 'c')).toBe(true);
     expect(resolvePiSessionIdFromResumeReference('')).toBeNull();
+  });
+
+  it('owns Pi product facts in a plugin leaf descriptor', async () => {
+    const loaded = await import('./sessionFileStoreDescriptor.js').catch((error: unknown) => error);
+    expect(loaded).not.toBeInstanceOf(Error);
+    const descriptor = (loaded as DescriptorModule).PI_SESSION_FILE_STORE_DESCRIPTOR_V1;
+
+    expect(descriptor).toEqual(expect.objectContaining({
+      productId: 'pi',
+      defaultAgentDirSegments: ['.pi', 'agent'],
+      agentDirEnvVar: 'PI_CODING_AGENT_DIR',
+      legacySessionDirEnvVars: ['PI_CODING_AGENT_SESSION_DIR'],
+      readsSettingsSessionDir: true,
+      configDirName: '.pi',
+    }));
+    expect(descriptor?.encodeCwdSubdir?.('/Users/leeroy/Documents/Development/happier/dev')).toBe(
+      '--Users-leeroy-Documents-Development-happier-dev--',
+    );
   });
 });

@@ -1,9 +1,9 @@
-import type { RuntimeEventV1 } from '@happier-dev/protocol/runtime';
+import type { RuntimeEventV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 type PiRuntimeEventProjectionContext = Readonly<{
   sessionId: string | null;
   turnId: string | null;
-  providerSessionId: string | null;
+  agentSessionId: string | null;
   nowMs: () => number;
 }>;
 
@@ -17,8 +17,8 @@ export type PiContextCompactionAcpPayload = Readonly<{
   trigger: ContextCompactionTriggerV1;
   backendId: string;
   agentId: string;
-  providerEventId?: string;
-  providerSessionId?: string;
+  agentEventId?: string;
+  agentSessionId?: string;
   turnId?: string;
   tokenCountBefore?: number;
   tokenCountAfter?: number;
@@ -243,7 +243,7 @@ export function buildPiContextCompactionPayload(
   const type = readString(record.type);
   if (type !== 'compaction_start' && type !== 'compaction_end') return null;
   const result = isRecord(record.result) ? record.result : {};
-  const providerEventId = readString(record.id);
+  const agentEventId = readString(record.id);
   const tokenCountBefore = readNonNegativeNumber(result.tokensBefore ?? result.tokenCountBefore ?? record.tokensBefore);
   const tokenCountAfter = readNonNegativeNumber(result.tokensAfter ?? result.tokenCountAfter ?? record.tokensAfter);
   const retryAttempt = readTruncatedNonNegativeInteger(
@@ -258,11 +258,11 @@ export function buildPiContextCompactionPayload(
     type: 'context-compaction',
     phase: readCompactionPhase(record),
     lifecycleId: readCompactionLifecycleId(record),
-    source: 'provider-event',
+    source: 'agent-event',
     trigger: readCompactionTrigger(record.reason, options),
     backendId: 'pi',
     agentId: 'pi',
-    ...(providerEventId ? { providerEventId } : {}),
+    ...(agentEventId ? { agentEventId } : {}),
     ...(tokenCountBefore === null ? {} : { tokenCountBefore }),
     ...(tokenCountAfter === null ? {} : { tokenCountAfter }),
     ...(retryAttempt === null ? {} : { retryAttempt }),
@@ -296,13 +296,13 @@ function projectCompactionEvent(
     trigger: payload.trigger,
     backendId: payload.backendId,
     agentId: payload.agentId,
-    ...(payload.providerEventId ? { providerEventId: payload.providerEventId } : {}),
+    ...(payload.agentEventId ? { agentEventId: payload.agentEventId } : {}),
     ...(payload.tokenCountBefore === undefined ? {} : { tokenCountBefore: payload.tokenCountBefore }),
     ...(payload.tokenCountAfter === undefined ? {} : { tokenCountAfter: payload.tokenCountAfter }),
     ...(payload.retryAttempt === undefined ? {} : { retryAttempt: payload.retryAttempt }),
     ...(payload.errorCode ? { errorCode: payload.errorCode } : {}),
     ...(payload.sanitizedErrorPreview ? { sanitizedErrorPreview: payload.sanitizedErrorPreview } : {}),
-    ...(context.providerSessionId ? { providerSessionId: context.providerSessionId } : {}),
+    ...(context.agentSessionId ? { agentSessionId: context.agentSessionId } : {}),
     ...(context.turnId ? { turnId: context.turnId } : {}),
   }];
 }

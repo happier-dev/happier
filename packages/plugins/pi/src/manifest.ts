@@ -1,11 +1,12 @@
 import {
   definePluginManifest,
-  type PluginBackendContributionV2,
+  type PluginAgentContributionV2,
   type PluginManifestV2,
-} from '@happier-dev/plugin-sdk';
-import type { PluginAgentContributionV2 } from '@happier-dev/protocol';
+  type PluginAgentSettingsContributionV1,
+} from '@happier-dev/plugin-sdk/manifest';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
+import { PI_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
 const PI_BACKEND_ID = 'pi';
 type PiAgentCliRuntime = NonNullable<PluginAgentContributionV2['agentCliRuntime']>;
@@ -26,7 +27,7 @@ const PI_CONNECTED_SERVICE_IDS = [
 type PiPluginManifestV2 = Omit<PluginManifestV2, 'contributes'> & Readonly<{
   contributes: Readonly<{
     agents: ReadonlyArray<PluginAgentContributionV2>;
-    backends: ReadonlyArray<PluginBackendContributionV2>;
+    agentSettings: ReadonlyArray<PluginAgentSettingsContributionV1>;
   }>;
 }>;
 
@@ -39,9 +40,10 @@ export const PLUGIN_MANIFEST = definePluginManifest({
   displayName: 'pi',
   description: undefined,
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: ['agents', 'backends'] },
-  targets: {},
-  capabilities: { permissions: [] },
+  activationEvents: ['onAgent:pi'],
+  uses: ['agents'],
+  entrypoints: { main: './dist/index.js' },
+  permissions: { required: [], optional: [] },
   contributes: {
     agents: [
       {
@@ -79,16 +81,15 @@ export const PLUGIN_MANIFEST = definePluginManifest({
           modelSelection: AGENT_DEFINITION.modelConfig.supportsSelection ? 'supported' : 'unsupported',
         },
         ownedBackendIds: [PI_BACKEND_ID],
-      },
-    ],
-    backends: [
-      {
-        kindVersion: 1,
-        id: PI_BACKEND_ID,
-        agentId: PI_BACKEND_ID,
-        engine: { kind: 'custom' },
+        runtime: { kind: 'custom' },
         capabilities: {
-          executionRun: { supported: true },
+          executionRun: {
+            supported: true,
+            structuredOutputRecovery: {
+              plan: 'loose-sections',
+              delegate: 'loose-deliverables',
+            },
+          },
           mcp: { policy: 'unsupported' },
           session: {
             media: {
@@ -101,5 +102,6 @@ export const PLUGIN_MANIFEST = definePluginManifest({
         },
       },
     ],
+    agentSettings: [PI_AGENT_SETTINGS_CONTRIBUTION],
   },
 } satisfies PiPluginManifestV2);

@@ -1,18 +1,18 @@
-type PiAgentRuntimeDescriptorProvider = Readonly<{
+type PiAgentRuntimeDescriptorAgentPayload = Readonly<{
   resumeStrategy: 'sessionFileBySessionId' | 'sessionFileAbsolutePreferred';
   providerSessionId?: string;
-  vendorSessionId?: string;
+  vendorSessionId?: string; // legacy vendorSessionId read-compat
   sessionFile?: string;
 }>;
 
 export type PiAgentRuntimeDescriptorV1 = Readonly<{
   v: 1;
-  providerId: 'pi';
-  provider: PiAgentRuntimeDescriptorProvider;
+  agentId: 'pi';
+  agent: PiAgentRuntimeDescriptorAgentPayload;
 } & Record<string, unknown>>;
 
 export type CanonicalPiAgentRuntimeDescriptorV1 = Readonly<{
-  providerId: 'pi';
+  agentId: 'pi';
   resumeStrategy: 'sessionFileBySessionId' | 'sessionFileAbsolutePreferred' | null;
   providerSessionId: string | null;
   sessionFile: string | null;
@@ -30,6 +30,16 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function readAgentIdCompat(record: Readonly<Record<string, unknown>>): string | null {
+  const hasAgentId = Object.hasOwn(record, 'agentId');
+  const hasProviderId = Object.hasOwn(record, 'providerId');
+  const agentId = normalizeTrimmedString(record.agentId);
+  const providerId = normalizeTrimmedString(record.providerId);
+  if ((hasAgentId && !agentId) || (hasProviderId && !providerId)) return null;
+  if (agentId && providerId && agentId !== providerId) return null;
+  return agentId ?? providerId;
+}
+
 function readProviderSessionIdCompat(record: Readonly<Record<string, unknown>>): string | null {
   return normalizeTrimmedString(record.providerSessionId)
     ?? normalizeTrimmedString(record.vendorSessionId); // legacy vendorSessionId read-compat
@@ -42,8 +52,8 @@ export function buildPiAgentRuntimeDescriptorV1(params: Readonly<{
 }>): PiAgentRuntimeDescriptorV1 {
   return {
     v: 1,
-    providerId: 'pi',
-    provider: {
+    agentId: 'pi',
+    agent: {
       resumeStrategy: params.resumeStrategy,
       ...(params.providerSessionId ? { providerSessionId: params.providerSessionId } : {}),
       ...(params.sessionFile ? { sessionFile: params.sessionFile } : {}),
@@ -55,17 +65,17 @@ export function readCanonicalPiAgentRuntimeDescriptorV1(
   descriptor: unknown,
 ): CanonicalPiAgentRuntimeDescriptorV1 | null {
   const record = asRecord(descriptor);
-  if (!record || record.v !== 1 || record.providerId !== 'pi') return null;
-  const provider = asRecord(record.provider);
-  if (!provider) return null;
+  if (!record || record.v !== 1 || readAgentIdCompat(record) !== 'pi') return null;
+  const agentPayload = asRecord(record.agent) ?? asRecord(record.provider); // legacy `provider` payload-key read-compat
+  if (!agentPayload) return null;
 
   return {
-    providerId: 'pi',
-    resumeStrategy: provider.resumeStrategy === 'sessionFileBySessionId'
-      || provider.resumeStrategy === 'sessionFileAbsolutePreferred'
-      ? provider.resumeStrategy
+    agentId: 'pi',
+    resumeStrategy: agentPayload.resumeStrategy === 'sessionFileBySessionId'
+      || agentPayload.resumeStrategy === 'sessionFileAbsolutePreferred'
+      ? agentPayload.resumeStrategy
       : null,
-    providerSessionId: readProviderSessionIdCompat(provider),
-    sessionFile: normalizeTrimmedString(provider.sessionFile),
+    providerSessionId: readProviderSessionIdCompat(agentPayload),
+    sessionFile: normalizeTrimmedString(agentPayload.sessionFile),
   };
 }

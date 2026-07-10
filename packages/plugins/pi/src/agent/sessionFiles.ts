@@ -1,51 +1,40 @@
-import { readdir, stat } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+
+import {
+  findNewestSessionFileInDir,
+  isBareSessionFileId,
+  parseSessionIdFromFileName,
+  sessionFileNameMatchesSessionId,
+} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+
+import { PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from './sessionFileStoreDescriptor.js';
 
 const LEGACY_PI_WORKDIR_SEGMENT = '--workdir--';
 
 export function doesPiSessionFileNameMatchSessionId(fileName: string, sessionId: string): boolean {
-  if (!fileName.endsWith('.jsonl')) return false;
-  const stem = fileName.slice(0, -'.jsonl'.length);
-  if (stem === sessionId) return true;
-  if (stem === `session-${sessionId}`) return true;
-  return stem.endsWith(`_${sessionId}`);
+  return sessionFileNameMatchesSessionId(fileName, sessionId);
 }
 
 export function isBarePiSessionId(value: string): boolean {
-  return (
-    value.length > 0
-    && !value.includes('\0')
-    && !value.includes('/')
-    && !value.includes('\\')
-    && !value.toLowerCase().endsWith('.jsonl')
-  );
+  return isBareSessionFileId(value);
 }
 
 export function encodePiSessionDirectoryCwd(cwd: string): string {
-  return resolve(cwd).replace(/^[/\\]/, '').replace(/[/\\:]/g, '-');
+  const encoded = PI_SESSION_FILE_STORE_DESCRIPTOR_V1.encodeCwdSubdir?.(cwd) ?? '';
+  return encoded.startsWith('--') && encoded.endsWith('--') ? encoded.slice(2, -2) : encoded;
 }
 
 export function formatPiSessionDirectoryForCwd(cwd: string): string {
-  return `--${encodePiSessionDirectoryCwd(cwd)}--`;
+  return PI_SESSION_FILE_STORE_DESCRIPTOR_V1.encodeCwdSubdir?.(cwd) ?? `--${encodePiSessionDirectoryCwd(cwd)}--`;
 }
 
 export function resolvePiSessionIdFromResumeReference(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
   if (isBarePiSessionId(trimmed)) return trimmed;
-  if (!trimmed.toLowerCase().endsWith('.jsonl')) return null;
-
-  const fileName = basename(trimmed);
-  const stem = fileName.slice(0, -'.jsonl'.length);
-  const lastUnderscore = stem.lastIndexOf('_');
-  if (lastUnderscore >= 0 && lastUnderscore < stem.length - 1) {
-    return stem.slice(lastUnderscore + 1) || null;
-  }
-  if (stem.startsWith('session-') && stem.length > 'session-'.length) {
-    return stem.slice('session-'.length) || null;
-  }
-  return stem || null;
+  return parseSessionIdFromFileName(basename(trimmed));
 }
 
 function nonEmptyString(value: unknown): string | null {
@@ -66,34 +55,7 @@ export async function findNewestPiSessionFileInDir(params: Readonly<{
   sessionId: string;
   dir: string;
 }>): Promise<string | null> {
-  let entries: ReadonlyArray<Readonly<{ name: string; isFile: () => boolean }>>;
-  try {
-    entries = await readdir(params.dir, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-
-  const matches: Array<{ path: string; mtimeMs: number }> = [];
-  for (const entry of entries) {
-    if (!entry.isFile()) continue;
-    if (!doesPiSessionFileNameMatchSessionId(entry.name, params.sessionId)) continue;
-    const path = join(params.dir, entry.name);
-    try {
-      const metadata = await stat(path);
-      if (!metadata.isFile()) continue;
-      matches.push({
-        path,
-        mtimeMs: typeof metadata.mtimeMs === 'number' && Number.isFinite(metadata.mtimeMs)
-          ? metadata.mtimeMs
-          : 0,
-      });
-    } catch {
-      // Ignore files that disappear between read and stat.
-    }
-  }
-
-  matches.sort((a, b) => (b.mtimeMs - a.mtimeMs) || a.path.localeCompare(b.path));
-  return matches[0]?.path ?? null;
+  return await findNewestSessionFileInDir(params);
 }
 
 export function buildPiResumeSearchRoots(params: Readonly<{
@@ -105,11 +67,14 @@ export function buildPiResumeSearchRoots(params: Readonly<{
 }>): string[] {
   const encodedCwdDir = formatPiSessionDirectoryForCwd(params.cwd);
   const env = params.env ?? {};
-  const piAgentDir = nonEmptyString(env.PI_CODING_AGENT_DIR);
-  const legacySessionDir = nonEmptyString(env.PI_CODING_AGENT_SESSION_DIR);
+  const piAgentDir = nonEmptyString(env[PI_SESSION_FILE_STORE_DESCRIPTOR_V1.agentDirEnvVar]);
+  const legacySessionDir = PI_SESSION_FILE_STORE_DESCRIPTOR_V1.legacySessionDirEnvVars
+    .map((envVar) => nonEmptyString(env[envVar]))
+    .find((value): value is string => value != null) ?? null;
   const persisted = nonEmptyString(params.candidatePersistedSessionFile);
   const persistedDir = persisted && isAbsolute(persisted) ? dirname(persisted) : null;
   const targetRoot = nonEmptyString(params.targetMaterializedRoot);
+  const defaultAgentDir = join(homedir(), ...PI_SESSION_FILE_STORE_DESCRIPTOR_V1.defaultAgentDirSegments);
 
   if (params.targetStrict) {
     return piAgentDir ? [join(piAgentDir, 'sessions', encodedCwdDir)] : [];
@@ -118,8 +83,8 @@ export function buildPiResumeSearchRoots(params: Readonly<{
   const roots = [
     ...(persistedDir ? [persistedDir] : []),
     ...(piAgentDir ? [join(piAgentDir, 'sessions', encodedCwdDir), join(piAgentDir, 'sessions')] : []),
-    join(homedir(), '.pi', 'agent', 'sessions', encodedCwdDir),
-    join(homedir(), '.pi', 'agent', 'sessions'),
+    join(defaultAgentDir, 'sessions', encodedCwdDir),
+    join(defaultAgentDir, 'sessions'),
     ...(legacySessionDir ? [join(legacySessionDir, LEGACY_PI_WORKDIR_SEGMENT), legacySessionDir] : []),
     ...(targetRoot ? [
       join(targetRoot, 'pi-agent-dir', 'sessions', encodedCwdDir),

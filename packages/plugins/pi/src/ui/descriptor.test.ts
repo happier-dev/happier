@@ -10,7 +10,7 @@ const FORBIDDEN_NO_EXECUTE_KEYS = new Set([
   'uiBehaviorOverride',
   'sessionProviderBehavior',
   'messageMetaOverride',
-  'providerSettings',
+  'agentSettings',
   'visibleMessageResolver',
   'svgIconXml',
 ]);
@@ -44,7 +44,7 @@ describe('PI_UI_DESCRIPTOR', () => {
         connectedService: { serviceId: null, labelKey: 'agentInput.agent.pi', connectRoute: null },
         icon: { assetId: 'pi' },
       },
-      settings: { descriptorId: 'pi.providerSettings.v1' },
+      settings: { descriptorId: 'pi.agentSettings.v1' },
       behavior: { descriptorId: 'pi.uiBehavior.v1' },
     });
   });

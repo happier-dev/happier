@@ -1,6 +1,6 @@
-export const PI_PROVIDER_SETTINGS_PLUGIN = {
+export const PI_AGENT_SETTINGS_PLUGIN = {
   providerId: 'pi',
-  title: { key: 'settingsProviders.plugins.pi.title' },
+  title: { key: 'settingsAgents.plugins.pi.title' },
   icon: { ionName: 'code-slash-outline', color: { kind: 'theme', token: 'green' } },
   settings: {},
   uiSections: [],

@@ -1,6 +1,5 @@
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
-import type { InternalRuntimeTurnOperationsV1 } from '@happier-dev/plugin-sdk/internal/runtime/session';
-import { describe, expect, it, vi } from 'vitest';
+import type { PluginContextV1, SessionRuntimeV1 } from '@happier-dev/plugin-sdk';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createPiExecutionRunBackend } from './backend.js';
 
@@ -9,6 +8,10 @@ const createPiRuntimeOperationsMock = vi.hoisted(() => vi.fn());
 vi.mock('../runtime/rpc/operations.js', () => ({
   createPiRuntimeOperations: createPiRuntimeOperationsMock,
 }));
+
+beforeEach(() => {
+  createPiRuntimeOperationsMock.mockReset();
+});
 
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -21,20 +24,24 @@ function createDeferred<T>() {
 }
 
 function createRuntimeOperations(params: Readonly<{
-  resetOrDisposeRuntime: () => Promise<void>;
-}>): InternalRuntimeTurnOperationsV1 {
+  dispose: () => Promise<void>;
+  providerSessionId?: string;
+}>): SessionRuntimeV1 & Readonly<{
+  dispose: ReturnType<typeof vi.fn>;
+}> {
+  const providerSessionId = params.providerSessionId ?? 'pi-session-1';
   return {
-    beginTurnLifecycle: vi.fn(),
-    startOrLoadSession: vi.fn(async () => ({ sessionId: 'pi-session-1' })),
-    sendTurnPrompt: vi.fn(async () => undefined),
-    steerInFlightTurn: vi.fn(async () => undefined),
-    waitForTurnCompletion: vi.fn(async () => undefined),
-    subscribeRuntimeEvents: vi.fn(() => () => undefined),
-    respondToPermission: vi.fn(async () => undefined),
-    cancelTurn: vi.fn(async () => undefined),
-    readSessionIdentity: vi.fn(() => ({ sessionId: 'pi-session-1' })),
-    updateSessionRuntimeConfig: vi.fn(async () => undefined),
-    resetOrDisposeRuntime: vi.fn(params.resetOrDisposeRuntime),
+    identity: {
+      read: vi.fn(() => ({ providerSessionId })),
+    },
+    events: {
+      subscribe: vi.fn(() => () => undefined),
+    },
+    send: vi.fn(async () => ({ status: 'accepted' })),
+    cancel: vi.fn(async () => ({ status: 'cancelled' })),
+    permissions: { capability: 'static' },
+    updateConfig: vi.fn(async () => undefined),
+    dispose: vi.fn(params.dispose),
   };
 }
 
@@ -45,19 +52,76 @@ async function flushMicrotasks(times = 4): Promise<void> {
 }
 
 describe('createPiExecutionRunBackend', () => {
+  it('keeps overlapping provision resume ids scoped to their factory calls', async () => {
+    createPiRuntimeOperationsMock.mockImplementation((options: Readonly<{ resumeSessionId?: string | null }>) => {
+      const providerSessionId = options.resumeSessionId ?? 'pi-session-fresh';
+      return createRuntimeOperations({
+        providerSessionId,
+        dispose: async () => undefined,
+      });
+    });
+    const backend = createPiExecutionRunBackend({
+      ctx: {} as PluginContextV1,
+      executionRunParams: {
+        backendId: 'pi',
+        cwd: process.cwd(),
+      },
+    });
+
+    const firstProvision = backend.provisionSession({ resumeSessionId: 'pi-session-first' });
+    const secondProvision = backend.provisionSession({ resumeSessionId: 'pi-session-second' }).catch((error: unknown) => error);
+
+    await expect(firstProvision).resolves.toEqual({ sessionId: 'pi-session-first' });
+    await expect(secondProvision).resolves.toBeInstanceOf(Error);
+    expect(createPiRuntimeOperationsMock).toHaveBeenCalledTimes(1);
+    expect(createPiRuntimeOperationsMock).toHaveBeenCalledWith(expect.objectContaining({
+      resumeSessionId: 'pi-session-first',
+    }));
+  });
+
+  it('applies the execution-run modelId to the pi runtime before the first turn', async () => {
+    const operations = createRuntimeOperations({ providerSessionId: 'pi-session-first', dispose: async () => undefined });
+    createPiRuntimeOperationsMock.mockReturnValue(operations);
+    const backend = createPiExecutionRunBackend({
+      ctx: {} as PluginContextV1,
+      executionRunParams: {
+        backendId: 'pi',
+        cwd: process.cwd(),
+        modelId: 'openai/gpt-5',
+      },
+    });
+
+    await expect(backend.provisionSession({ resumeSessionId: 'pi-session-first' }))
+      .resolves.toEqual({ sessionId: 'pi-session-first' });
+    expect(operations.updateConfig).toHaveBeenCalledWith({ modelId: 'openai/gpt-5' });
+  });
+
+  it('does not apply a sentinel default modelId to the pi runtime', async () => {
+    const operations = createRuntimeOperations({ providerSessionId: 'pi-session-first', dispose: async () => undefined });
+    createPiRuntimeOperationsMock.mockReturnValue(operations);
+    const backend = createPiExecutionRunBackend({
+      ctx: {} as PluginContextV1,
+      executionRunParams: {
+        backendId: 'pi',
+        cwd: process.cwd(),
+        modelId: 'default',
+      },
+    });
+
+    await backend.provisionSession({ resumeSessionId: 'pi-session-first' });
+    expect(operations.updateConfig).not.toHaveBeenCalled();
+  });
+
   it('awaits runtime cleanup when disposed while runtime creation is in flight', async () => {
-    const runtimeCreation = createDeferred<Readonly<{
-      operations: InternalRuntimeTurnOperationsV1;
-      nativeRuntime: InternalRuntimeTurnOperationsV1;
-    }>>();
-    const resetComplete = createDeferred<void>();
-    let resetStarted = false;
+    const runtimeCreation = createDeferred<SessionRuntimeV1>();
+    const disposeComplete = createDeferred<void>();
+    let runtimeDisposeStarted = false;
     let disposeSettled = false;
     createPiRuntimeOperationsMock.mockReturnValue(runtimeCreation.promise);
     const operations = createRuntimeOperations({
-      async resetOrDisposeRuntime() {
-        resetStarted = true;
-        await resetComplete.promise;
+      async dispose() {
+        runtimeDisposeStarted = true;
+        await disposeComplete.promise;
       },
     });
     const backend = createPiExecutionRunBackend({
@@ -80,14 +144,14 @@ describe('createPiExecutionRunBackend', () => {
     disposePromise.then(() => {
       disposeSettled = true;
     });
-    runtimeCreation.resolve({ operations, nativeRuntime: operations });
+    runtimeCreation.resolve(operations);
     await flushMicrotasks();
 
-    expect(operations.resetOrDisposeRuntime).toHaveBeenCalledTimes(1);
-    expect(resetStarted).toBe(true);
+    expect(operations.dispose).toHaveBeenCalledTimes(1);
+    expect(runtimeDisposeStarted).toBe(true);
     expect(disposeSettled).toBe(false);
 
-    resetComplete.resolve();
+    disposeComplete.resolve();
     await expect(disposePromise).resolves.toBeUndefined();
     await expect(provisionResult).resolves.toMatchObject({ ok: false });
     expect(disposeSettled).toBe(true);

@@ -38,7 +38,7 @@ export const PI_UI_DESCRIPTOR = Object.freeze({
     icon: { assetId: 'pi' },
   },
   settings: {
-    descriptorId: 'pi.providerSettings.v1',
+    descriptorId: 'pi.agentSettings.v1',
   },
   behavior: {
     descriptorId: 'pi.uiBehavior.v1',

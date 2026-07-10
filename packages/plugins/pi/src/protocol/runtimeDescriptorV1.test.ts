@@ -11,8 +11,9 @@ describe('pi runtime descriptor v1', () => {
   it('owns the provider codec inside the plugin leaf', () => {
     const source = readFileSync(new URL('./runtimeDescriptorV1.ts', import.meta.url), 'utf8');
 
-    expect(source).not.toContain("from '@happier-dev/protocol");
-    expect(source).not.toContain('from "@happier-dev/protocol');
+    const protocolImportPrefix = '@happier-dev/' + 'protocol';
+    expect(source).not.toContain(`from '${protocolImportPrefix}`);
+    expect(source).not.toContain(`from "${protocolImportPrefix}`);
   });
 
   it('builds absolute-preferred resume descriptors with optional sessionFile', () => {
@@ -24,8 +25,8 @@ describe('pi runtime descriptor v1', () => {
 
     expect(built).toEqual({
       v: 1,
-      providerId: 'pi',
-      provider: {
+      agentId: 'pi',
+      agent: {
         resumeStrategy: 'sessionFileAbsolutePreferred',
         providerSessionId: 'pi-session-1',
         sessionFile: '/tmp/pi/sessions/pi-session-1.jsonl',
@@ -36,8 +37,8 @@ describe('pi runtime descriptor v1', () => {
   it('canonicalizes absolute-preferred descriptors', () => {
     const canonical = readCanonicalPiAgentRuntimeDescriptorV1({
       v: 1,
-      providerId: 'pi',
-      provider: {
+      agentId: 'pi',
+      agent: {
         resumeStrategy: 'sessionFileAbsolutePreferred',
         providerSessionId: ' pi-session-1 ',
         sessionFile: ' /tmp/pi/sessions/pi-session-1.jsonl ',
@@ -45,7 +46,7 @@ describe('pi runtime descriptor v1', () => {
     });
 
     expect(canonical).toEqual({
-      providerId: 'pi',
+      agentId: 'pi',
       resumeStrategy: 'sessionFileAbsolutePreferred',
       providerSessionId: 'pi-session-1',
       sessionFile: '/tmp/pi/sessions/pi-session-1.jsonl',
@@ -55,15 +56,15 @@ describe('pi runtime descriptor v1', () => {
   it('keeps legacy by-session-id descriptors readable', () => {
     const canonical = readCanonicalPiAgentRuntimeDescriptorV1({
       v: 1,
-      providerId: 'pi',
-      provider: {
+      agentId: 'pi',
+      agent: {
         resumeStrategy: 'sessionFileBySessionId',
         providerSessionId: 'pi-session-1',
       },
     });
 
     expect(canonical).toEqual({
-      providerId: 'pi',
+      agentId: 'pi',
       resumeStrategy: 'sessionFileBySessionId',
       providerSessionId: 'pi-session-1',
       sessionFile: null,
@@ -73,8 +74,8 @@ describe('pi runtime descriptor v1', () => {
   it('keeps legacy vendorSessionId descriptors readable', () => {
     const canonical = readCanonicalPiAgentRuntimeDescriptorV1({
       v: 1,
-      providerId: 'pi',
-      provider: {
+      agentId: 'pi',
+      agent: {
         resumeStrategy: 'sessionFileBySessionId',
         vendorSessionId: 'legacy-pi-session',
       },
@@ -86,8 +87,8 @@ describe('pi runtime descriptor v1', () => {
   it('fails closed for malformed or wrong-provider descriptors', () => {
     expect(readCanonicalPiAgentRuntimeDescriptorV1({
       v: 1,
-      providerId: 'opencode',
-      provider: {
+      agentId: 'opencode',
+      agent: {
         resumeStrategy: 'sessionFileBySessionId',
         providerSessionId: 'wrong-provider-session',
       },
@@ -97,5 +98,14 @@ describe('pi runtime descriptor v1', () => {
       v: 1,
       providerId: 'pi',
     } as unknown as Parameters<typeof readCanonicalPiAgentRuntimeDescriptorV1>[0])).toBeNull();
+  });
+
+  it('fails closed when canonical and deployed identity fields conflict', () => {
+    expect(readCanonicalPiAgentRuntimeDescriptorV1({
+      v: 1,
+      agentId: 'pi',
+      providerId: 'opencode',
+      agent: { resumeStrategy: 'sessionFileBySessionId' },
+    })).toBeNull();
   });
 });

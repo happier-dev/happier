@@ -3,6 +3,18 @@ import { describe, expect, it } from 'vitest';
 import { buildPiRpcArgs } from './args.js';
 import { buildPiToolsForPermissionMode } from './permissions.js';
 
+type PermissionModule = Readonly<{
+  resolvePiToolsForPermissionMode?: (permissionMode?: string) => Readonly<{
+    tools: readonly string[];
+    resolvedIntent: string;
+    diagnostic: Readonly<{
+      kind: 'unknown_permission_mode';
+      requestedMode: string;
+      appliedIntent: 'read-only';
+    }> | null;
+  }>;
+}>;
+
 describe('buildPiToolsForPermissionMode', () => {
   it.each([
     { mode: 'plan', expected: ['read', 'grep', 'find', 'ls'] },
@@ -14,6 +26,27 @@ describe('buildPiToolsForPermissionMode', () => {
     { mode: 'bypassPermissions', expected: ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] },
   ] as const)('maps $mode to tools list', ({ mode, expected }) => {
     expect(buildPiToolsForPermissionMode(mode)).toEqual(expected);
+  });
+
+  it.each(['readOnly', 'yolo!', 'bypass'] as const)('fails closed for unknown mode %s', (mode) => {
+    expect(buildPiToolsForPermissionMode(mode)).toEqual(['read', 'grep', 'find', 'ls']);
+  });
+
+  it('returns diagnostics for unknown permission modes', async () => {
+    const loaded = await import('./permissions.js') as PermissionModule;
+    expect(loaded.resolvePiToolsForPermissionMode).toEqual(expect.any(Function));
+
+    const resolved = loaded.resolvePiToolsForPermissionMode?.('readOnly');
+
+    expect(resolved).toEqual({
+      tools: ['read', 'grep', 'find', 'ls'],
+      resolvedIntent: 'read-only',
+      diagnostic: {
+        kind: 'unknown_permission_mode',
+        requestedMode: 'readOnly',
+        appliedIntent: 'read-only',
+      },
+    });
   });
 });
 
@@ -41,6 +74,24 @@ describe('buildPiRpcArgs', () => {
       'read,bash,edit,write,grep,find,ls',
       '--session',
       'pi-session-1',
+    ]);
+  });
+
+  it('adds provider, startup model, and model scope derived from the connected service selection', () => {
+    expect(buildPiRpcArgs({
+      permissionMode: 'default',
+      connectedServiceId: 'openai-codex',
+    })).toEqual([
+      '--provider',
+      'openai-codex',
+      '--model',
+      'gpt-5.5',
+      '--models',
+      'openai-codex/*',
+      '--mode',
+      'rpc',
+      '--tools',
+      'read,bash,edit,write,grep,find,ls',
     ]);
   });
 });

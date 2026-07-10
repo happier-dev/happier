@@ -1,12 +1,5 @@
 import type { PiCompactionTurnOutcome, PiCompactionTurnState } from './types.js';
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function readString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value : null;
-}
+import { isRecord, readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 function readTerminalPhase(end: NonNullable<PiCompactionTurnState['lastCompactionEnd']>): string | null {
   return readString(end.phase) ?? (isRecord(end.payload) ? readString(end.payload.phase) : null);

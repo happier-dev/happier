@@ -54,16 +54,50 @@ describe('maybeUpdatePiSessionIdMetadata', () => {
     });
     expect(metadata.piSessionId).toBe('pi-session-1');
     expect(metadata.piSessionFile).toBe('/tmp/pi/sessions/pi-session-1.jsonl');
-    expect(metadata.agentRuntimeDescriptorV1).toEqual({
+    expect(metadata.runtimeDescriptorV1).toEqual({
       v: 1,
-      providerId: 'pi',
-      provider: {
+      agentId: 'pi',
+      agent: {
         resumeStrategy: 'sessionFileAbsolutePreferred',
         providerSessionId: 'pi-session-1',
         sessionFile: '/tmp/pi/sessions/pi-session-1.jsonl',
       },
     });
+    expect(metadata).not.toHaveProperty('agentRuntimeDescriptorV1');
     expect(metadata.flavor).toBe('pi');
+  });
+
+  it('replaces stale legacy runtime descriptors with canonical metadata', () => {
+    const lastPublished = { value: null as PublishedPiSessionMetadata | null };
+    let metadata = createMetadata({
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        agentId: 'pi',
+        provider: {
+          resumeStrategy: 'sessionFileAbsolutePreferred',
+          providerSessionId: 'old-session',
+        },
+      },
+    });
+
+    maybeUpdatePiSessionIdMetadata({
+      getPiSessionId: () => 'pi-session-1',
+      getPiSessionFile: () => null,
+      updateHappySessionMetadata: (updater) => {
+        metadata = updater(metadata);
+      },
+      lastPublished,
+    });
+
+    expect(metadata.runtimeDescriptorV1).toEqual({
+      v: 1,
+      agentId: 'pi',
+      agent: {
+        resumeStrategy: 'sessionFileAbsolutePreferred',
+        providerSessionId: 'pi-session-1',
+      },
+    });
+    expect(metadata).not.toHaveProperty('agentRuntimeDescriptorV1');
   });
 
   it('does not update metadata when the published session id and file are unchanged', () => {
@@ -129,15 +163,16 @@ describe('maybeUpdatePiSessionIdMetadata', () => {
       sessionFile: '/tmp/pi/sessions/pi-session-1.jsonl',
     });
     expect(metadata.piSessionFile).toBe('/tmp/pi/sessions/pi-session-1.jsonl');
-    expect(metadata.agentRuntimeDescriptorV1).toEqual({
+    expect(metadata.runtimeDescriptorV1).toEqual({
       v: 1,
-      providerId: 'pi',
-      provider: {
+      agentId: 'pi',
+      agent: {
         resumeStrategy: 'sessionFileAbsolutePreferred',
         providerSessionId: 'pi-session-1',
         sessionFile: '/tmp/pi/sessions/pi-session-1.jsonl',
       },
     });
+    expect(metadata).not.toHaveProperty('agentRuntimeDescriptorV1');
   });
 
   it('clears a stale session file when a new session id has no absolute session file', () => {
@@ -168,14 +203,15 @@ describe('maybeUpdatePiSessionIdMetadata', () => {
     });
     expect(metadata.piSessionId).toBe('pi-session-2');
     expect(metadata).not.toHaveProperty('piSessionFile');
-    expect(metadata.agentRuntimeDescriptorV1).toEqual({
+    expect(metadata.runtimeDescriptorV1).toEqual({
       v: 1,
-      providerId: 'pi',
-      provider: {
+      agentId: 'pi',
+      agent: {
         resumeStrategy: 'sessionFileAbsolutePreferred',
         providerSessionId: 'pi-session-2',
       },
     });
+    expect(metadata).not.toHaveProperty('agentRuntimeDescriptorV1');
     expect(metadata.flavor).toBe('pi');
   });
 
