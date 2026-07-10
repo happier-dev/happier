@@ -1,11 +1,11 @@
-import type {
-  CreateExecutionRunBackendParamsV1,
-  ExecutionRunBackendCreateResultV1,
-  ExecutionRunHostBackendV1,
-  PluginContextV1,
+import {
+  createExecutionRunHostBackendFromSessionRuntime,
+  type CreateExecutionRunBackendParamsV1,
+  type ExecutionRunBackendCreateResultV1,
+  type ExecutionRunHostBackendV1,
+  type PluginContextV1,
 } from '@happier-dev/plugin-sdk';
-import { createExecutionRunHostBackendFromTurnOperations } from '@happier-dev/plugin-sdk/internal/runtime/executionRun';
-import type { InternalRuntimeTurnOperationsV1 } from '@happier-dev/plugin-sdk/internal/runtime/session';
+import { composeSessionIsolationEnvironment } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 import { OPEN_CODE_ACP_BACKEND_SPEC } from '../acp/openCodeAcpBackendSpec.js';
 import {
@@ -13,9 +13,9 @@ import {
   resolveOpenCodeBackendMode,
 } from '../runtime/mode.js';
 import { createOpenCodeServerRuntimeAssembly } from '../runtime/server/assembly.js';
-import { asRecord, normalizeString, readStringRecord } from '../runtime/server/openCodeParsing.js';
+import { readOpenCodeServerEndpoint } from '../runtime/server/endpoint.js';
+import { asRecord, normalizeString } from '../runtime/server/openCodeParsing.js';
 
-const DEFAULT_OPENCODE_SERVER_BASE_URL = 'http://127.0.0.1:4096';
 const OPENCODE_EXECUTION_RUN_STATUS_POLL_INTERVAL_MS = 10;
 
 function readDirectory(executionRunParams: unknown): string {
@@ -25,19 +25,20 @@ function readDirectory(executionRunParams: unknown): string {
     || process.cwd();
 }
 
-function readBaseUrl(ctx: PluginContextV1, executionRunParams: unknown): string {
-  const record = asRecord(executionRunParams);
-  const env = readStringRecord(asRecord(record?.isolation)?.env ?? record?.env);
-  return normalizeString(env.HAPPIER_OPENCODE_SERVER_URL)
-    || normalizeString(ctx.config?.values?.HAPPIER_OPENCODE_SERVER_URL)
-    || DEFAULT_OPENCODE_SERVER_BASE_URL;
+function readPermissionMode(executionRunParams: unknown): string | null {
+  return normalizeString(asRecord(executionRunParams)?.permissionMode) || null;
+}
+
+function readModelId(executionRunParams: unknown): string | null {
+  const modelId = normalizeString(asRecord(executionRunParams)?.modelId);
+  return modelId && modelId !== 'default' ? modelId : null;
 }
 
 function createAcpExecutionRunBackend(params: Readonly<{
   ctx: PluginContextV1;
   executionRunParams: CreateExecutionRunBackendParamsV1;
 }>): ExecutionRunBackendCreateResultV1 {
-  const acpEngine = params.ctx.acp.defineAcpBackend(OPEN_CODE_ACP_BACKEND_SPEC);
+  const acpEngine = params.ctx.agentRuntime.acp.defineAcpBackend(OPEN_CODE_ACP_BACKEND_SPEC);
   const createExecutionRunBackend = acpEngine.runtimeCore?.createExecutionRunBackend;
   if (typeof createExecutionRunBackend !== 'function') {
     throw new Error('OpenCode ACP backend definition did not expose runtimeCore.createExecutionRunBackend.');
@@ -50,18 +51,30 @@ function createOpenCodeServerExecutionRunBackend(params: Readonly<{
   executionRunParams: CreateExecutionRunBackendParamsV1;
 }>): ExecutionRunHostBackendV1 {
   const directory = readDirectory(params.executionRunParams);
-  const baseUrl = readBaseUrl(params.ctx, params.executionRunParams);
+  const endpoint = readOpenCodeServerEndpoint(params.ctx, params.executionRunParams);
+  const permissionMode = readPermissionMode(params.executionRunParams);
+  const modelId = readModelId(params.executionRunParams);
   const happierSessionId = normalizeString(asRecord(params.executionRunParams)?.runId) || 'opencode-execution-run';
+  const environment = composeSessionIsolationEnvironment({
+    inheritedEnvironment: params.ctx.env.list(),
+    isolationEnvironment: params.executionRunParams.isolation?.env,
+    environment: params.executionRunParams.env,
+    unsetEnvKeys: params.executionRunParams.isolation?.unsetEnvKeys,
+  });
 
-  return createExecutionRunHostBackendFromTurnOperations({
-    createOperations: async () => {
+  return createExecutionRunHostBackendFromSessionRuntime({
+    createSessionRuntime: async (runtimeParams) => {
       const assembly = await createOpenCodeServerRuntimeAssembly({
         ctx: params.ctx,
         directory,
         happierSessionId,
-        baseUrl,
+        endpoint,
+        env: environment,
+        permissionMode,
+        ...(runtimeParams?.resumeSessionId ? { resumeSessionId: runtimeParams.resumeSessionId } : {}),
       });
-      return assembly.runtime as unknown as InternalRuntimeTurnOperationsV1;
+      if (modelId) await assembly.runtime.updateConfig?.({ modelId });
+      return assembly.runtime;
     },
     supportsSteerPrompt: false,
     waitForTurnCompletion: {

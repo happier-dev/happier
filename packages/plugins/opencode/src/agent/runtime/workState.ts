@@ -1,5 +1,5 @@
 import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
-import type { SessionWorkStateV1 } from '@happier-dev/protocol';
+import type { SessionWorkStateV1 } from '@happier-dev/plugin-sdk/experimental/sessions/workState';
 
 import type { OpenCodeServerClient } from './server/openCodeServerClient.js';
 import { buildOpenCodeTodoWorkState } from './server/openCodeTodoWorkState.js';

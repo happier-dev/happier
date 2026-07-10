@@ -13,7 +13,10 @@ const OPENCODE_AGENT_CORE = Object.freeze({
     supportedKindsByServiceId: {
       'openai-codex': ['oauth'],
       openai: ['token'],
-      'claude-subscription': ['token'],
+      // Claude subscription is brokered (Bearer + anthropic-beta) for OpenCode: browser-login OAuth AND
+      // setup-token are both accepted via the Happier broker. The Anthropic Console API key
+      // (`anthropic`) stays token-only (direct x-api-key).
+      'claude-subscription': ['oauth', 'token'],
       anthropic: ['token'],
     },
   },
@@ -92,28 +95,74 @@ const OPENCODE_AGENT_CLI_RUNTIME = Object.freeze({
   binaryName: 'opencode',
   knownUserBinDirSuffixes: ['.opencode/bin', 'AppData/Roaming/npm'],
   sourcePreferenceDefault: 'system-first',
-  managedInstall: null,
-  manualInstallKind: 'vendor_recipe',
-  manualInstallRecipes: {
-    darwin: [{
-      cmd: 'bash',
-      args: ['-lc', 'curl -fsSL https://opencode.ai/install | bash'],
-    }],
-    linux: [{
-      cmd: 'bash',
-      args: ['-lc', 'curl -fsSL https://opencode.ai/install | bash'],
-    }],
-    win32: [{
-      cmd: 'cmd.exe',
-      args: ['/c', 'npm install -g opencode-ai'],
-      note: null,
-    }],
+  managedInstall: {
+    kind: 'managed_package',
+    packageName: 'opencode-ai',
+    binaryName: 'opencode',
+    packageBinarySetup: { kind: 'opencode_platform_binary' },
   },
+  manualInstallKind: 'command',
+  manualInstallRecipes: null,
   acceptsJavaScriptFileOverride: false,
   setupRecommendation: { order: 40 },
   installGuideUrl: 'https://opencode.ai/docs',
   docsUrl: 'https://opencode.ai',
 });
+
+const OPENCODE_RUNTIME_KIND_ALIASES = [
+  { input: 'server', runtimeKind: 'server' },
+  { input: 'acp', runtimeKind: 'acp' },
+] as const;
+
+const OPENCODE_RUNTIME_DESCRIPTOR_READER_PROJECTION = {
+  providerId: 'opencode',
+  backendModeKey: 'backendMode',
+  runtimeKind: {
+    aliases: OPENCODE_RUNTIME_KIND_ALIASES,
+    caseInsensitive: true,
+  },
+  fields: [
+    { key: 'backendMode', kind: 'runtimeKind', runtimeHandle: 'whenPresent' },
+    { key: 'providerSessionId', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+    { key: 'serverBaseUrl', kind: 'loopbackHttpOrigin', runtimeHandle: 'whenPresent' },
+    { key: 'serverBaseUrlExplicit', kind: 'booleanTrue', runtimeHandle: 'booleanTrue', requiresField: 'serverBaseUrl' },
+  ],
+  legacy: {
+    defaultRuntimeKindWhenAnyFieldPresent: 'server',
+    fields: [
+      { key: 'backendMode', sourceKey: 'opencodeBackendMode', kind: 'runtimeKind', runtimeHandle: 'whenPresent' },
+      { key: 'providerSessionId', sourceKey: 'opencodeSessionId', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+      { key: 'serverBaseUrl', sourceKey: 'opencodeServerBaseUrl', kind: 'loopbackHttpOrigin', runtimeHandle: 'whenPresent' },
+      {
+        key: 'serverBaseUrlExplicit',
+        sourceKey: 'opencodeServerBaseUrlExplicit',
+        kind: 'booleanTrue',
+        runtimeHandle: 'booleanTrue',
+        requiresField: 'serverBaseUrl',
+      },
+    ],
+  },
+} as const;
+
+const OPENCODE_SESSION_CONTROL_ADAPTER_PROJECTION = {
+  providerId: 'opencode',
+  runtimeDescriptor: OPENCODE_RUNTIME_DESCRIPTOR_READER_PROJECTION,
+  runtimeKindOverride: {
+    aliases: OPENCODE_RUNTIME_KIND_ALIASES,
+    caseInsensitive: true,
+    accountSettingsField: 'opencodeBackendMode',
+    fallbackRuntimeKind: 'server',
+  },
+  configuredRuntimeKind: {
+    aliases: OPENCODE_RUNTIME_KIND_ALIASES,
+    caseInsensitive: true,
+    accountSettingsField: 'opencodeBackendMode',
+  },
+  vendorResumeId: {
+    descriptorField: 'providerSessionId',
+    legacyField: 'opencodeSessionId',
+  },
+} as const;
 
 // IMPORTANT: this must stay JSON-serializable (data-only).
 export const AGENT_DEFINITION = Object.freeze({
@@ -130,10 +179,10 @@ export const AGENT_DEFINITION = Object.freeze({
     rootHelpDescription: 'Start OpenCode CLI',
     allowTmux: true,
   },
-  providerSettings: null,
+  agentSettings: null,
   runtimeContributions: {
-    providerCatalogEntry: {
-      importName: 'OPENCODE_PROVIDER_RUNTIME_CONTRIBUTION',
+    agentCatalogEntry: {
+      importName: 'OPENCODE_AGENT_RUNTIME_CONTRIBUTION',
       source: './agent/contributions/runtime',
     },
     sessionControlAdapter: {
@@ -141,12 +190,14 @@ export const AGENT_DEFINITION = Object.freeze({
       providerId: 'opencode',
       source: './agent/surfaces/sessions/controls/adapter',
       exportName: 'OPENCODE_SESSION_CONTROL_ADAPTER',
+      generatedAdapter: OPENCODE_SESSION_CONTROL_ADAPTER_PROJECTION,
     },
     runtimeDescriptorReader: {
       kind: 'providerRuntimeDescriptorReader',
       providerId: 'opencode',
       source: './agent/identity/runtimeDescriptor',
       exportName: 'readOpenCodeSessionMetadataRuntimeDescriptor',
+      generatedReader: OPENCODE_RUNTIME_DESCRIPTOR_READER_PROJECTION,
     },
     protocolRuntimeDescriptor: {
       kind: 'providerRuntimeDescriptorV1',
@@ -154,12 +205,6 @@ export const AGENT_DEFINITION = Object.freeze({
       source: './protocol/runtimeDescriptorV1',
       buildFunction: 'buildOpenCodeAgentRuntimeDescriptorV1',
       canonicalReader: 'readCanonicalOpenCodeAgentRuntimeDescriptorV1',
-    },
-    protocolExternalSessionSource: {
-      kind: 'providerExternalSessionSourceV1',
-      providerId: 'opencode',
-      source: './protocol/externalSession',
-      exportName: 'OPENCODE_EXTERNAL_SESSION_SOURCE',
     },
   },
 });

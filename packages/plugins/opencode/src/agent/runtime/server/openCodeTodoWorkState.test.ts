@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { mergeSessionWorkStateMetadataV1 } from '@happier-dev/protocol';
+import { mergeSessionWorkStateMetadataV1 } from '@happier-dev/plugin-sdk/experimental/sessions/workState';
 
 import {
   OPEN_CODE_TODO_WORK_STATE_OWNED_SOURCE_FAMILIES,

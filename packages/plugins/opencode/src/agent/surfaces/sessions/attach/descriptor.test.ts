@@ -9,7 +9,7 @@ const metadata = {
   path: '/repo',
   opencodeSessionId: 'oc-session-1',
   opencodeBackendMode: 'server',
-  opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
+  opencodeServerBaseUrl: 'http://127.0.0.1:49196/',
   opencodeServerBaseUrlExplicit: true,
 };
 
@@ -21,12 +21,12 @@ describe('OpenCode attach descriptor', () => {
       ok: true,
       providerSessionId: 'oc-session-1',
       directory: '/repo',
-      baseUrl: 'http://127.0.0.1:4096/',
+      baseUrl: 'http://127.0.0.1:49196/',
     });
     if (!target.ok) throw new Error('expected attach target');
     expect(createOpenCodeAttachArgs(target)).toEqual([
       'attach',
-      'http://127.0.0.1:4096/',
+      'http://127.0.0.1:49196/',
       '--dir',
       '/repo',
       '--session',

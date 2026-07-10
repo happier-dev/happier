@@ -1,4 +1,8 @@
-import type { RuntimeEventV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import {
+  buildSessionRuntimeIssueV1,
+  type RuntimeEventV1,
+  type SessionRuntimeIssueV1,
+} from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 export function buildOpenCodeRuntimeIssue(params: Readonly<{
   code: string;
@@ -7,17 +11,14 @@ export function buildOpenCodeRuntimeIssue(params: Readonly<{
   occurredAt: number;
   usageLimit?: SessionRuntimeIssueV1['usageLimit'];
 }>): SessionRuntimeIssueV1 {
-  return {
-    v: 1,
-    scope: 'primary_session',
-    status: 'failed',
+  return buildSessionRuntimeIssueV1({
     code: params.code,
     source: params.source,
     occurredAt: params.occurredAt,
-    provider: 'opencode',
-    ...(params.message ? { sanitizedPreview: params.message.slice(0, 2_000) } : {}),
-    ...(params.usageLimit ? { usageLimit: params.usageLimit } : {}),
-  };
+    agentId: 'opencode',
+    sanitizedPreview: params.message,
+    usageLimit: params.usageLimit,
+  });
 }
 
 export async function publishOpenCodeRuntimeEvent(
@@ -45,7 +46,7 @@ export async function publishOpenCodeTurnFailed(params: Readonly<{
     kind: 'transcript-agent-message-committed',
     sessionId: params.sessionId,
     emittedAtMs: params.emittedAtMs,
-    provider: 'opencode',
+    agentId: 'opencode',
     localId: `${params.turnId}:turn_failed`,
     body: {
       type: 'turn_failed',
@@ -72,7 +73,7 @@ export async function publishOpenCodeTurnCancelled(params: Readonly<{
     kind: 'transcript-agent-message-committed',
     sessionId: params.sessionId,
     emittedAtMs: params.emittedAtMs,
-    provider: 'opencode',
+    agentId: 'opencode',
     localId: `${params.turnId}:turn_cancelled`,
     body: {
       type: 'turn_cancelled',

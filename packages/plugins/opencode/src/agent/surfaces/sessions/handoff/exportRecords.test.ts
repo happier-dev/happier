@@ -37,13 +37,13 @@ describe('parseOpenCodeSessionExportRecords', () => {
         { id: 'message-1' },
       ],
     }), 'utf8').toString('base64');
-    const extract = (exportRecords as Record<string, unknown>).extractOpenCodeSessionHandoffProviderBundleRecords;
+    const extract = (exportRecords as Record<string, unknown>).extractOpenCodeSessionHandoffAgentBundleRecords;
 
     expect(extract).toBeTypeOf('function');
     if (typeof extract !== 'function') return;
 
     expect(extract({
-      providerId: 'opencode',
+      agentId: 'opencode',
       remoteSessionId: 'oc-session-1',
       exportJsonBase64,
     })).toEqual([

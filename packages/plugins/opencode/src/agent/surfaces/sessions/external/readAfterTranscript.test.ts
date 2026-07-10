@@ -40,7 +40,10 @@ describe('readAfterOpenCodeTranscript', () => {
       maxItems: 10,
     });
 
-    expect(result.items.map((item) => item.id)).toEqual(['msg-user', 'msg-agent']);
+    expect(result.items.map((item) => item.id)).toEqual([
+      'opencode:sess-1:msg-user',
+      'opencode:sess-1:msg-agent',
+    ]);
     expect(result.nextCursor).toBe(encodeOpenCodeExternalAfterCursor({ v: 1, kind: 'opencodeAfter', nextIndex: 3 }));
     expect(result.truncated).toBe(false);
   });

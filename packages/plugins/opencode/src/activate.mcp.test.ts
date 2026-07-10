@@ -37,7 +37,7 @@ describe('OpenCode plugin activation MCP discovery', () => {
     );
     let registration: PluginApiMcpDiscoveryProviderRegistrationV1 | null = null;
     activate({
-      registerBackendEngine: vi.fn(),
+      registerAgentRuntime: vi.fn(),
       registerMcpDiscoveryProvider: vi.fn((nextRegistration) => {
         registration = nextRegistration;
       }),
@@ -92,7 +92,7 @@ describe('OpenCode plugin activation MCP discovery', () => {
     );
     let registration: PluginApiMcpDiscoveryProviderRegistrationV1 | null = null;
     activate({
-      registerBackendEngine: vi.fn(),
+      registerAgentRuntime: vi.fn(),
       registerMcpDiscoveryProvider: vi.fn((nextRegistration) => {
         registration = nextRegistration;
       }),
@@ -134,7 +134,7 @@ describe('OpenCode plugin activation MCP discovery', () => {
     );
     let registration: PluginApiMcpDiscoveryProviderRegistrationV1 | null = null;
     activate({
-      registerBackendEngine: vi.fn(),
+      registerAgentRuntime: vi.fn(),
       registerMcpDiscoveryProvider: vi.fn((nextRegistration) => {
         registration = nextRegistration;
       }),

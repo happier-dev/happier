@@ -1,4 +1,4 @@
-import { raceWithTimeout } from './raceWithTimeout.js';
+import { raceWithTimeout } from '@happier-dev/plugin-sdk/experimental/timeout';
 
 export type SseJsonSubscription<T> = Readonly<{
   close: () => void;

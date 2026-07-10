@@ -1,4 +1,4 @@
-import type { RuntimeEventV1 } from '@happier-dev/protocol';
+import type { RuntimeEventV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 import { publishOpenCodeRuntimeEvent } from './openCodeRuntimeEvents.js';
 import type { OpenCodeServerRuntimeState } from './state.js';

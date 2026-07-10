@@ -1,4 +1,4 @@
-import { OPENCODE_PROVIDER_SETTINGS_DESCRIPTOR } from './settings.js';
+import { OPENCODE_AGENT_SETTINGS_DESCRIPTOR } from '../agentSettings/definition.js';
 
 export const OPENCODE_UI_DESCRIPTOR = Object.freeze({
   kind: 'plugin.ui.v1',
@@ -37,7 +37,7 @@ export const OPENCODE_UI_DESCRIPTOR = Object.freeze({
     },
     icon: { assetId: 'opencode' },
   },
-  settings: OPENCODE_PROVIDER_SETTINGS_DESCRIPTOR,
+  settings: OPENCODE_AGENT_SETTINGS_DESCRIPTOR,
   behavior: {
     descriptorId: 'opencode.uiBehavior.v1',
     guidance: { includeInSessionGettingStartedCliExamples: true },
@@ -91,6 +91,17 @@ export const OPENCODE_UI_DESCRIPTOR = Object.freeze({
           rejectCredentials: true,
           httpLoopbackOnly: true,
           originOnly: true,
+        },
+        agentExtra: {
+          owner: 'opencode',
+          schemaId: 'opencode.agentRuntimeDescriptorExtra',
+          v: 1,
+          runtimeHandleFields: [
+            'backendMode',
+            'providerSessionId',
+            'serverBaseUrl',
+            'serverBaseUrlExplicit',
+          ],
         },
       },
     },

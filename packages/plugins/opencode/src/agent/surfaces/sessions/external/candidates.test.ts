@@ -27,7 +27,7 @@ describe('listOpenCodeSessionCandidates', () => {
     const result = await listOpenCodeSessionCandidates({
       source: {
         kind: 'opencodeServer',
-        baseUrl: 'http://127.0.0.1:4096/',
+        baseUrl: 'http://127.0.0.1:49196/',
       },
       limit: 10,
     });
@@ -37,15 +37,15 @@ describe('listOpenCodeSessionCandidates', () => {
     expect(details).toMatchObject({
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'opencode',
-        provider: {
+        agentId: 'opencode',
+        agent: {
           backendMode: 'server',
           providerSessionId: 'oc-session-1',
-          providerExtra: {
+          agentExtra: {
             runtimeHandle: {
               backendMode: 'server',
               providerSessionId: 'oc-session-1',
-              serverBaseUrl: 'http://127.0.0.1:4096/',
+              serverBaseUrl: 'http://127.0.0.1:49196/',
               serverBaseUrlExplicit: true,
             },
           },

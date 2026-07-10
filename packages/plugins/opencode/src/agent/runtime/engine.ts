@@ -1,13 +1,11 @@
 import type {
+  AgentRuntimeV1,
   CreateExecutionRunBackendParamsV1,
   CreateSessionRuntimeParamsV1,
   ExecutionRunBackendCreateResultV1,
   PluginContextV1,
+  SessionRuntimeCreateResultV1,
 } from '@happier-dev/plugin-sdk';
-import type {
-  BundledBackendEngineV1,
-  BundledSessionRuntimeCreateResultV1,
-} from '@happier-dev/plugin-sdk/internal/runtime/session';
 
 import { createOpenCodeExecutionRunBackend } from '../executionRuns/backend.js';
 import { createOpenCodeAcpSessionRuntime } from './acp/session.js';
@@ -26,7 +24,7 @@ export type OpenCodeSessionRuntimeFactory = (
     ctx: PluginContextV1;
     sessionParams: CreateSessionRuntimeParamsV1;
   }>,
-) => BundledSessionRuntimeCreateResultV1 | Promise<BundledSessionRuntimeCreateResultV1>;
+) => SessionRuntimeCreateResultV1 | Promise<SessionRuntimeCreateResultV1>;
 
 export type OpenCodeExecutionRunBackendFactory = (
   params: Readonly<{
@@ -44,7 +42,7 @@ export type CreateOpenCodeBackendEngineOptions = Readonly<{
 export function createOpenCodeBackendEngine(
   ctx: PluginContextV1,
   options: CreateOpenCodeBackendEngineOptions = {},
-): BundledBackendEngineV1 {
+): AgentRuntimeV1 {
   const createServerSessionRuntime =
     options.sessionRuntimes?.server ?? createOpenCodeServerSessionRuntime;
   const createAcpSessionRuntime =

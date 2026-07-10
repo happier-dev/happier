@@ -10,7 +10,7 @@ const FORBIDDEN_NO_EXECUTE_KEYS = new Set([
   'uiBehaviorOverride',
   'sessionProviderBehavior',
   'messageMetaOverride',
-  'providerSettings',
+  'agentSettings',
   'visibleMessageResolver',
   'svgIconXml',
 ]);
@@ -51,9 +51,9 @@ describe('OPENCODE_UI_DESCRIPTOR', () => {
         icon: { assetId: 'opencode' },
       },
       settings: {
-        kind: 'providerSettings.v1',
-        descriptorId: 'opencode.providerSettings.v1',
-        providerId: 'opencode',
+        kind: 'agentSettings.v1',
+        descriptorId: 'opencode.agentSettings.v1',
+        agentId: 'opencode',
         settings: {
           opencodeBackendMode: {
             schema: { kind: 'enum', values: ['server', 'acp'] },
@@ -169,6 +169,6 @@ describe('OPENCODE_UI_DESCRIPTOR', () => {
 
     expect(functionExports).toEqual([]);
     expect(openCodeUiEntrypoint).not.toHaveProperty('OPENCODE_UI_BEHAVIOR_OVERRIDE');
-    expect(openCodeUiEntrypoint).not.toHaveProperty('OPENCODE_PROVIDER_LOGO_SVG_XML');
+    expect(openCodeUiEntrypoint).not.toHaveProperty('OPENCODE_AGENT_LOGO_SVG_XML');
   });
 });

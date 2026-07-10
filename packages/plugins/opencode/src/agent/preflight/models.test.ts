@@ -11,6 +11,12 @@ import {
 } from './models.js';
 
 describe('OpenCode preflight model parsing', () => {
+  type ExecRunFixtureResult = Readonly<{
+    exitCode?: number | null;
+    stdout?: string;
+    stderr?: string;
+  }>;
+
   function readProbeModelsRaw(value: unknown): ((params: Readonly<{
     exec: ExecRuntimeServiceV1;
     cwd: string;
@@ -22,10 +28,8 @@ describe('OpenCode preflight model parsing', () => {
     return typeof probeModelsRaw === 'function' ? probeModelsRaw : null;
   }
 
-  function createExecRunFixture(params: Readonly<{
-    exitCode?: number | null;
-    stdout?: string;
-    stderr?: string;
+  function createExecRunFixture(params: ExecRunFixtureResult & Readonly<{
+    results?: readonly ExecRunFixtureResult[];
   }> = {}) {
     const runs: Array<Readonly<{
       input: ExecLaunchInputV1;
@@ -38,12 +42,15 @@ describe('OpenCode preflight model parsing', () => {
         },
       },
       run: async (input, options) => {
+        const runIndex = runs.length;
         runs.push({ input, options });
+        const response = params.results ? params.results[runIndex] : params;
+        if (!response) throw new Error(`unexpected exec run ${runIndex + 1}`);
         return {
-          exitCode: params.exitCode ?? 0,
+          exitCode: response.exitCode ?? 0,
           signal: null,
-          stdout: params.stdout ?? '',
-          stderr: params.stderr ?? '',
+          stdout: response.stdout ?? '',
+          stderr: response.stderr ?? '',
         };
       },
       spawn: async () => {
@@ -196,15 +203,90 @@ describe('OpenCode preflight model parsing', () => {
           OPENCODE_CONFIG_DIR: '/tmp/opencode',
         },
       },
-      options: { timeoutMs: 1_500 },
+      options: { timeoutMs: 120_000 },
     }]);
   });
 
-  it('treats failed verbose model probes as unavailable instead of using partial output', async () => {
+  it('uses an OpenCode-specific timeout floor for slow model discovery', async () => {
+    const raw = [
+      'opencode/big-pickle',
+      '{',
+      '  "id": "big-pickle",',
+      '  "providerID": "opencode",',
+      '  "name": "Big Pickle",',
+      '  "family": "big-pickle",',
+      '  "status": "active",',
+      '  "capabilities": { "toolcall": true, "input": { "text": true } }',
+      '}',
+    ].join('\n');
+    const fixture = createExecRunFixture({ stdout: raw });
+    const probeModelsRaw = readProbeModelsRaw(OPENCODE_PREFLIGHT_SESSION_CONTROLS);
+
+    expect(probeModelsRaw).toBeTypeOf('function');
+    if (!probeModelsRaw) throw new Error('OpenCode preflight model probe is missing');
+
+    await expect(probeModelsRaw({
+      exec: fixture.exec,
+      cwd: '/workspace',
+      timeoutMs: 1_500,
+    })).resolves.toEqual([{
+      id: 'opencode/big-pickle',
+      name: 'Big Pickle',
+      description: 'big-pickle',
+    }]);
+    expect(fixture.runs[0]?.options).toEqual({ timeoutMs: 120_000 });
+  });
+
+  it('falls back to the plain model list when verbose probing is unavailable', async () => {
     const fixture = createExecRunFixture({
-      exitCode: 1,
-      stdout: 'openai/codex-mini-latest\n{}',
-      stderr: 'boom',
+      results: [
+        {
+          exitCode: 1,
+          stdout: 'openai/codex-mini-latest\n{}',
+          stderr: 'boom',
+        },
+        {
+          stdout: [
+            'opencode/big-pickle',
+            'openai/gpt-5.5',
+            'not-a-model-id',
+          ].join('\n'),
+        },
+      ],
+    });
+    const probeModelsRaw = readProbeModelsRaw(OPENCODE_PREFLIGHT_SESSION_CONTROLS);
+
+    expect(probeModelsRaw).toBeTypeOf('function');
+    if (!probeModelsRaw) throw new Error('OpenCode preflight model probe is missing');
+
+    await expect(probeModelsRaw({
+      exec: fixture.exec,
+      cwd: '/workspace',
+      timeoutMs: 1_500,
+    })).resolves.toEqual([
+      { id: 'opencode/big-pickle', name: 'opencode/big-pickle' },
+      { id: 'openai/gpt-5.5', name: 'openai/gpt-5.5' },
+    ]);
+    expect(fixture.runs.map((run) => run.input.args)).toEqual([
+      ['models', '--verbose'],
+      ['models'],
+    ]);
+  });
+
+  it('treats failed verbose and plain model probes as unavailable instead of using partial output', async () => {
+    const fixture = createExecRunFixture({
+      results: [
+        {
+          exitCode: 1,
+          stdout: 'openai/codex-mini-latest\n{}',
+          stderr: 'verbose boom',
+        },
+        {
+          exitCode: 1,
+          stdout: 'openai/codex-mini-latest',
+          stderr: 'plain boom',
+        },
+      ],
     });
     const probeModelsRaw = readProbeModelsRaw(OPENCODE_PREFLIGHT_SESSION_CONTROLS);
 
@@ -216,5 +298,9 @@ describe('OpenCode preflight model parsing', () => {
       cwd: '/workspace',
       timeoutMs: 1_500,
     })).resolves.toBeNull();
+    expect(fixture.runs.map((run) => run.input.args)).toEqual([
+      ['models', '--verbose'],
+      ['models'],
+    ]);
   });
 });

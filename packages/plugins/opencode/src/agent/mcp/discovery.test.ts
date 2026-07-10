@@ -4,9 +4,9 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { detectOpenCodeMcpServers } from './discovery.js';
+import { readOpenCodeMcpConfigServers } from './discovery.js';
 
-describe('detectOpenCodeMcpServers', () => {
+describe('readOpenCodeMcpConfigServers', () => {
   it('reads OpenCode MCP stdio servers from the final plugin agent path', async () => {
     const configRoot = await mkdtemp(join(tmpdir(), 'opencode-mcp-config-'));
     const opencodeDir = join(configRoot, 'opencode');
@@ -27,7 +27,7 @@ describe('detectOpenCodeMcpServers', () => {
       'utf8',
     );
 
-    const result = await detectOpenCodeMcpServers({
+    const result = await readOpenCodeMcpConfigServers({
       env: {
         XDG_CONFIG_HOME: configRoot,
       },
@@ -72,7 +72,7 @@ describe('detectOpenCodeMcpServers', () => {
       'utf8',
     );
 
-    const result = await detectOpenCodeMcpServers({
+    const result = await readOpenCodeMcpConfigServers({
       directory: projectRoot,
       env: {
         XDG_CONFIG_HOME: join(projectRoot, 'empty-config-root'),

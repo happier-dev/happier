@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createPluginContextV1Fixture } from '@happier-dev/plugin-sdk/experimental/testing/adapterHarness';
 
 import { activate } from './activate.js';
 
@@ -31,16 +32,35 @@ describe('activate', () => {
     vi.stubEnv('HOME', root);
     vi.stubEnv('XDG_CONFIG_HOME', '');
 
-    const registerBackendEngine = vi.fn();
+    const registerAgentRuntime = vi.fn();
     const registerMcpDiscoveryProvider = vi.fn();
     activate({
-      registerBackendEngine,
+      registerAgentRuntime,
       registerMcpDiscoveryProvider,
     });
 
-    expect(registerBackendEngine).toHaveBeenCalledWith(expect.objectContaining({
-      backendId: 'opencode',
+    expect(registerAgentRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: 'opencode',
+      create: expect.any(Function),
     }));
+    const backendRegistration = registerAgentRuntime.mock.calls[0]?.[0] as Readonly<{
+      create: (ctx: unknown) => Promise<unknown>;
+    }>;
+    const fixture = createPluginContextV1Fixture();
+    const pluginContext = {
+      ...fixture.ctx,
+      logger: {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+      },
+    };
+    await expect(backendRegistration.create(pluginContext)).resolves.toEqual(expect.objectContaining({
+      runtimeCore: expect.any(Object),
+    }));
+    expect(pluginContext.logger.debug).toHaveBeenCalledWith('[plugins/opencode] Creating backend engine');
+    expect(pluginContext.logger.info).not.toHaveBeenCalled();
     expect(registerMcpDiscoveryProvider).toHaveBeenCalledWith(expect.objectContaining({
       id: 'opencode.config',
       discover: expect.any(Function),

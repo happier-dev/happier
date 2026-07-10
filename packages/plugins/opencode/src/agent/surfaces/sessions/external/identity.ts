@@ -1,11 +1,9 @@
 import {
   type ExternalSessionsSource,
   type RuntimeDescriptorV1,
-} from '@happier-dev/protocol';
-import {
   type ExternalSessionResolvedIdentityV1,
   type SessionStateUpdateV1,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk/sessions';
 
 import {
   buildOpenCodeAgentRuntimeDescriptorV1,

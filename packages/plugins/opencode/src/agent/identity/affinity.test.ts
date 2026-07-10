@@ -10,11 +10,11 @@ describe('OpenCode session affinity metadata', () => {
   it('builds launch environment variables from affinity values', () => {
     expect(buildOpenCodeSessionEnvironmentVariables({
       backendMode: 'server',
-      serverBaseUrl: 'http://127.0.0.1:4096',
+      serverBaseUrl: 'http://127.0.0.1:49196',
       serverBaseUrlExplicit: true,
     })).toEqual({
       HAPPIER_OPENCODE_BACKEND_MODE: 'server',
-      HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:4096',
+      HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:49196',
       HAPPIER_OPENCODE_SERVER_URL_EXPLICIT: '1',
     });
   });
@@ -23,12 +23,12 @@ describe('OpenCode session affinity metadata', () => {
     expect(applyOpenCodeSessionAffinityMetadata({
       backendMode: 'server',
       providerSessionId: ' oc-session ',
-      serverBaseUrl: 'http://127.0.0.1:4096',
+      serverBaseUrl: 'http://127.0.0.1:49196',
       serverBaseUrlExplicit: true,
     })).toEqual({
       opencodeSessionId: 'oc-session',
       opencodeBackendMode: 'server',
-      opencodeServerBaseUrl: 'http://127.0.0.1:4096',
+      opencodeServerBaseUrl: 'http://127.0.0.1:49196',
       opencodeServerBaseUrlExplicit: true,
     });
   });

@@ -7,14 +7,13 @@ import {
   readOpenCodeToolPart,
 } from '../state.js';
 
-export async function refreshOpenCodeProviderActivityFromHistory(params: Readonly<{
-  client: OpenCodeServerClient;
+export function refreshOpenCodeProviderActivityFromHistoryMessages(params: Readonly<{
+  messages: readonly unknown[];
   state: OpenCodeServerRuntimeState;
   tracker: OpenCodeProviderActivityTracker;
-}>): Promise<void> {
+}>): void {
   if (!params.state.providerSessionId) return;
-  const messages = await params.client.sessionMessages({ sessionId: params.state.providerSessionId });
-  for (const message of messages) {
+  for (const message of params.messages) {
     const messageRecord = asRecord(message);
     const messageId = normalizeString(asRecord(messageRecord?.info)?.id);
     const messageMatchesActiveTurn = messageId
@@ -39,4 +38,18 @@ export async function refreshOpenCodeProviderActivityFromHistory(params: Readonl
       });
     }
   }
+}
+
+export async function refreshOpenCodeProviderActivityFromHistory(params: Readonly<{
+  client: OpenCodeServerClient;
+  state: OpenCodeServerRuntimeState;
+  tracker: OpenCodeProviderActivityTracker;
+}>): Promise<void> {
+  if (!params.state.providerSessionId) return;
+  const messages = await params.client.sessionMessages({ sessionId: params.state.providerSessionId });
+  refreshOpenCodeProviderActivityFromHistoryMessages({
+    messages,
+    state: params.state,
+    tracker: params.tracker,
+  });
 }

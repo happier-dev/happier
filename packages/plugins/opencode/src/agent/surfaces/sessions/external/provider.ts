@@ -1,10 +1,8 @@
 import type {
   ExternalSessionSurfaceV1,
   ExternalSessionTranscriptPageV1,
-} from '@happier-dev/agents';
-import type {
   RuntimeDescriptorV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/sessions';
 
 import {
   getOpenCodeExternalSessionActivity as readOpenCodeExternalSessionActivity,
@@ -26,7 +24,7 @@ function ok<T>(value: T) {
 function providerError(message: string) {
   return {
     ok: false as const,
-    code: 'provider_unavailable' as const,
+    code: 'agent_unavailable' as const,
     message,
     retryable: true,
   };

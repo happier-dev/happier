@@ -1,9 +1,11 @@
-import type { ConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol';
+import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 export type OpenCodeUsageLimitRetryTiming = Readonly<{
   retryAfterMs: number | null;
   resetAtMs: number | null;
 }>;
+
+type OpenCodeRuntimeLimitCategory = 'usage_limit' | 'rate_limit';
 
 export type OpenCodeUsageLimitRetryParser = (params: Readonly<{
   headers: unknown;
@@ -13,21 +15,13 @@ export type OpenCodeUsageLimitRetryParser = (params: Readonly<{
 
 export type OpenCodeUsageLimitClassification = Readonly<{
   kind: 'usage_limit' | 'rate_limit';
-  limitCategory: Extract<ConnectedServiceLimitCategoryV1, 'usage_limit' | 'rate_limit'>;
+  limitCategory: OpenCodeRuntimeLimitCategory;
   retryAfterMs: number | null;
   resetAtMs: number | null;
   quotaScope: 'account' | 'workspace' | 'unknown';
   providerLimitId: string | null;
   action: Readonly<{ kind: 'open_url'; url: string }> | null;
 }>;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function readString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
 
 function readErrorName(record: Readonly<Record<string, unknown>>): string | null {
   return readString(record.name)

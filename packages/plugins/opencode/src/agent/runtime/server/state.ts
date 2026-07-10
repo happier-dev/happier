@@ -7,10 +7,19 @@ export type OpenCodeServerRuntimeState = {
   turnInFlight: boolean;
   disposed: boolean;
   subscriptionAbort: AbortController | null;
+  subscriptionReconnectTimer: ReturnType<typeof setTimeout> | null;
   promptVariant: string | null;
   promptConfig: Readonly<Record<string, unknown>> | null;
   currentTurnObservedMessageIds: Set<string>;
   currentTurnObservedToolCallKeys: Set<string>;
+  currentTurnPublishedToolCallKeys: Set<string>;
+  currentTurnPublishedToolResultKeys: Set<string>;
+  currentTurnProviderUserMessageIds: Set<string>;
+  currentTurnProviderPromptTexts: Set<string>;
+  currentTurnPromptSubmittedAtMs: number | null;
+  currentTurnPromptAcceptedAtMs: number | null;
+  currentTurnPublishedAssistantMessageIds: Set<string>;
+  emittedAssistantMessageIds: Set<string>;
   pendingProviderAutonomousBackgroundWake: {
     source: 'native-background-task' | 'oh-my-openagent-background-task';
     observedAtMs: number;
@@ -25,10 +34,19 @@ export function createOpenCodeServerRuntimeState(): OpenCodeServerRuntimeState {
     turnInFlight: false,
     disposed: false,
     subscriptionAbort: null,
+    subscriptionReconnectTimer: null,
     promptVariant: null,
     promptConfig: null,
     currentTurnObservedMessageIds: new Set<string>(),
     currentTurnObservedToolCallKeys: new Set<string>(),
+    currentTurnPublishedToolCallKeys: new Set<string>(),
+    currentTurnPublishedToolResultKeys: new Set<string>(),
+    currentTurnProviderUserMessageIds: new Set<string>(),
+    currentTurnProviderPromptTexts: new Set<string>(),
+    currentTurnPromptSubmittedAtMs: null,
+    currentTurnPromptAcceptedAtMs: null,
+    currentTurnPublishedAssistantMessageIds: new Set<string>(),
+    emittedAssistantMessageIds: new Set<string>(),
     pendingProviderAutonomousBackgroundWake: null,
   };
 }
@@ -40,6 +58,16 @@ export function readStatusType(status: unknown): string {
 
 export function createOpenCodeTurnId(): string {
   return `turn_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function claimOpenCodeActiveTurnForTerminalEvent(
+  state: OpenCodeServerRuntimeState,
+): string | null {
+  if (!state.turnInFlight || !state.activeTurnId) return null;
+  const turnId = state.activeTurnId;
+  state.turnInFlight = false;
+  state.activeTurnId = null;
+  return turnId;
 }
 
 export function readProviderEvent(event: unknown): Readonly<{
@@ -78,6 +106,7 @@ export function readOpenCodeToolPart(value: unknown): OpenCodeToolPart | null {
       status,
       input: asRecord(record.state)?.input,
       output: asRecord(record.state)?.output,
+      title: normalizeString(asRecord(record.state)?.title) || undefined,
       metadata: asRecord(record.state)?.metadata,
     },
   };

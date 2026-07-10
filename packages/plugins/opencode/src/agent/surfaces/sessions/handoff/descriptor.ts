@@ -4,15 +4,17 @@ import { join } from 'node:path';
 
 import {
   type ExternalSessionsSource,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/sessions';
 import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
 import {
-  resolveVendorResumeIdFromSessionMetadata,
   type HandoffSurfaceV1,
   type SessionStateUpdateV1,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk';
 import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
 
+import {
+  readOpenCodeProviderSessionIdFromMetadata,
+} from '../../../identity/session.js';
 import {
   buildOpenCodeSessionEnvironmentVariables,
   readOpenCodeSessionAffinityFromMetadata,
@@ -25,7 +27,7 @@ const OPEN_CODE_EXPORT_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 type OpenCodeSessionBundle = Readonly<{
-  providerId: 'opencode';
+  agentId: 'opencode';
   remoteSessionId: string;
   exportJsonBase64: string;
   affinity: OpenCodeSessionAffinity;
@@ -83,13 +85,13 @@ function sessionStateUpdatesForImportedSession(params: Readonly<{
 }
 
 export function createOpenCodeHandoffSurface(ctx: PluginContextV1): HandoffSurfaceV1 {
-  return createOpenCodeHandoffSurfaceForExec(ctx.exec);
+  return createOpenCodeHandoffSurfaceForExec(ctx.agentRuntime.exec);
 }
 
 export function createOpenCodeHandoffSurfaceForExec(exec: Pick<ExecRuntimeServiceV1, 'run'>): HandoffSurfaceV1 {
   return {
     exportBundle: async (params) => {
-      const providerSessionId = resolveVendorResumeIdFromSessionMetadata('opencode', params.metadata);
+      const providerSessionId = readOpenCodeProviderSessionIdFromMetadata(params.metadata);
       if (!providerSessionId) {
         return {
           ok: false,
@@ -115,7 +117,7 @@ export function createOpenCodeHandoffSurfaceForExec(exec: Pick<ExecRuntimeServic
         }
 
         const bundle: OpenCodeSessionBundle = {
-          providerId: 'opencode',
+          agentId: 'opencode',
           remoteSessionId: providerSessionId,
           exportJsonBase64: Buffer.from(result.stdout, 'utf8').toString('base64'),
           affinity: readOpenCodeSessionAffinityFromMetadata(params.metadata),
@@ -131,7 +133,7 @@ export function createOpenCodeHandoffSurfaceForExec(exec: Pick<ExecRuntimeServic
     },
     importBundle: async (params) => {
       const bundle = params.bundle as Partial<OpenCodeSessionBundle>;
-      if (bundle.providerId !== 'opencode' || typeof bundle.remoteSessionId !== 'string' || typeof bundle.exportJsonBase64 !== 'string') {
+      if (bundle.agentId !== 'opencode' || typeof bundle.remoteSessionId !== 'string' || typeof bundle.exportJsonBase64 !== 'string') {
         return {
           ok: false,
           code: 'bundle_invalid',

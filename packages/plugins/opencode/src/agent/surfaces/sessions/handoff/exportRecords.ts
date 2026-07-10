@@ -21,11 +21,11 @@ function decodeBase64Utf8(value: string): string {
   return Buffer.from(value, 'base64').toString('utf8');
 }
 
-export function extractOpenCodeSessionHandoffProviderBundleRecords(
-  providerBundle: Readonly<Record<string, unknown>>,
+export function extractOpenCodeSessionHandoffAgentBundleRecords(
+  agentBundle: Readonly<Record<string, unknown>>,
 ): readonly unknown[] {
-  if (providerBundle.providerId !== 'opencode' || typeof providerBundle.exportJsonBase64 !== 'string') {
+  if (agentBundle.agentId !== 'opencode' || typeof agentBundle.exportJsonBase64 !== 'string') {
     return [];
   }
-  return parseOpenCodeSessionExportRecords(decodeBase64Utf8(providerBundle.exportJsonBase64));
+  return parseOpenCodeSessionExportRecords(decodeBase64Utf8(agentBundle.exportJsonBase64));
 }

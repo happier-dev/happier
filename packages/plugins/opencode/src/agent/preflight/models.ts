@@ -17,7 +17,7 @@ type KnownUnavailableOpenCodeModel = Readonly<{
 
 const OPENCODE_CLI_MODELS_COMMAND_ARGS = ['models'] as const;
 const OPENCODE_VERBOSE_MODELS_COMMAND_ARGS = ['models', '--verbose'] as const;
-const MIN_PREFLIGHT_MODELS_TIMEOUT_MS = 250;
+const MIN_PREFLIGHT_MODELS_TIMEOUT_MS = 120_000;
 
 function buildOpenCodePreflightEnv(env: NodeJS.ProcessEnv | undefined): Readonly<Record<string, string>> {
   const output: Record<string, string> = {};
@@ -188,23 +188,51 @@ export function buildOpenCodePreflightModelsFromVerboseOutput(
   return models.length > 0 ? models : null;
 }
 
+function buildOpenCodePreflightModelsFromPlainOutput(outputRaw: string): readonly OpenCodePreflightModel[] | null {
+  const seen = new Set<string>();
+  const models: OpenCodePreflightModel[] = [];
+
+  for (const rawLine of outputRaw.split('\n')) {
+    const id = rawLine.trim();
+    if (!isVerboseModelIdLine(id) || seen.has(id)) continue;
+    seen.add(id);
+    models.push({ id, name: id });
+  }
+
+  return models.length > 0 ? models : null;
+}
+
 export async function probeOpenCodePreflightModelsRaw(params: Readonly<{
   exec: ExecRuntimeServiceV1;
   cwd: string;
   timeoutMs: number;
   env?: NodeJS.ProcessEnv;
 }>): Promise<readonly OpenCodePreflightModel[] | null> {
-  const result = await params.exec.run({
+  const env = buildOpenCodePreflightEnv(params.env);
+  const timeoutMs = Math.max(MIN_PREFLIGHT_MODELS_TIMEOUT_MS, params.timeoutMs);
+  const verboseResult = await params.exec.run({
     kind: 'agent-cli',
     agentId: 'opencode',
     args: OPENCODE_VERBOSE_MODELS_COMMAND_ARGS,
     cwd: params.cwd,
-    env: buildOpenCodePreflightEnv(params.env),
-  }, {
-    timeoutMs: Math.max(MIN_PREFLIGHT_MODELS_TIMEOUT_MS, params.timeoutMs),
-  });
-  if (result.exitCode !== 0) return null;
-  return buildOpenCodePreflightModelsFromVerboseOutput(result.stdout);
+    env,
+  }, { timeoutMs });
+
+  if (verboseResult.exitCode === 0) {
+    const verboseModels = buildOpenCodePreflightModelsFromVerboseOutput(verboseResult.stdout);
+    if (verboseModels) return verboseModels;
+  }
+
+  const plainResult = await params.exec.run({
+    kind: 'agent-cli',
+    agentId: 'opencode',
+    args: OPENCODE_CLI_MODELS_COMMAND_ARGS,
+    cwd: params.cwd,
+    env,
+  }, { timeoutMs });
+
+  if (plainResult.exitCode !== 0) return null;
+  return buildOpenCodePreflightModelsFromPlainOutput(plainResult.stdout);
 }
 
 export const OPENCODE_PREFLIGHT_SESSION_CONTROLS = Object.freeze({

@@ -63,7 +63,7 @@ describe('OpenCode transcript projection', () => {
       kind: 'unknown',
       role: null,
       messageId: 'msg_system',
-      createdAtMs: 12,
+      createdAtMs: 12_000,
     });
   });
 

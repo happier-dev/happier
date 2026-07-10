@@ -22,6 +22,14 @@
       "types": "./dist/agent/auth/services/materialize.d.ts",
       "default": "./dist/agent/auth/services/materialize.js"
     },
+    "./agent/auth/services/broker/capabilityToken": {
+      "types": "./dist/agent/auth/services/broker/capabilityToken.d.ts",
+      "default": "./dist/agent/auth/services/broker/capabilityToken.js"
+    },
+    "./agent/auth/services/broker/loadHandshake": {
+      "types": "./dist/agent/auth/services/broker/loadHandshake.d.ts",
+      "default": "./dist/agent/auth/services/broker/loadHandshake.js"
+    },
     "./agent/auth/services/resumeReachability": {
       "types": "./dist/agent/auth/services/resumeReachability.d.ts",
       "default": "./dist/agent/auth/services/resumeReachability.js"
@@ -96,14 +104,13 @@
     "package.json"
   ],
   "scripts": {
+    "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node ../../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
     "test": "vitest run",
     "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@happier-dev/agents": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
-    "@happier-dev/protocol": "0.0.0",
     "zod": "4.3.6"
   },
   "devDependencies": {

@@ -21,6 +21,7 @@ import {
 } from '../auth/services/selection.js';
 import { materializeOpenCodeAuthEnvironment } from '../auth/services/materialize.js';
 import { resolveOpenCodeResumeReachabilityUnsupported } from '../auth/services/resumeReachability.js';
+import { createOpenCodeConnectedServiceRuntimeAuthAdapter } from '../auth/services/runtime/failure.js';
 import { OPEN_CODE_AUTH_SERVICE_SHARING_DESCRIPTOR } from '../auth/services/stateSharing.js';
 import {
   OPENCODE_RESTART_REMATERIALIZE_REQUIRED_REASON,
@@ -33,7 +34,7 @@ import {
 import { readOpenCodeSessionMetadataRuntimeDescriptor } from '../identity/runtimeDescriptor.js';
 import { resolveOpenCodeSessionRuntimePreferences } from '../preferences/session.js';
 import { OPENCODE_SESSION_CONTROL_ADAPTER } from '../surfaces/sessions/controls/adapter.js';
-import { extractOpenCodeSessionHandoffProviderBundleRecords } from '../surfaces/sessions/handoff/exportRecords.js';
+import { extractOpenCodeSessionHandoffAgentBundleRecords } from '../surfaces/sessions/handoff/exportRecords.js';
 
 const OPENCODE_CONNECTED_SERVICE_STATE_SHARING_DESCRIPTOR = Object.freeze({
   providerId: OPEN_CODE_AUTH_SERVICE_SHARING_DESCRIPTOR.providerId,
@@ -57,9 +58,14 @@ const OPENCODE_CONNECTED_SERVICE_STATE_SHARING_DESCRIPTOR = Object.freeze({
   },
 } as const);
 
-export const OPENCODE_PROVIDER_RUNTIME_CONTRIBUTION = Object.freeze({
+export const OPENCODE_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'opencode',
   builtInAcpCatalog: true,
+  cliSessionCommand: {
+    backendIdForSessionRuntime: 'opencode',
+    agentIdForAccountSettings: 'opencode',
+    providerInfoCommandPrefixes: [['providers', 'list']],
+  },
   sessionControlAdapter: OPENCODE_SESSION_CONTROL_ADAPTER,
   runtimeDescriptorReader: readOpenCodeSessionMetadataRuntimeDescriptor,
   cliAuth: {
@@ -82,8 +88,8 @@ export const OPENCODE_PROVIDER_RUNTIME_CONTRIBUTION = Object.freeze({
     resolve: resolveOpenCodeSessionRuntimePreferences,
   },
   sessionHandoff: {
-    providerBundleRecords: {
-      extract: extractOpenCodeSessionHandoffProviderBundleRecords,
+    agentBundleRecords: {
+      extract: extractOpenCodeSessionHandoffAgentBundleRecords,
     },
   },
   managedServer: {
@@ -121,6 +127,7 @@ export const OPENCODE_PROVIDER_RUNTIME_CONTRIBUTION = Object.freeze({
     restartRematerializeRequiredReason: OPENCODE_RESTART_REMATERIALIZE_REQUIRED_REASON,
     resolveResumeReachabilityUnsupported: resolveOpenCodeResumeReachabilityUnsupported,
     classifyUsageLimitError: classifyOpenCodeUsageLimitError,
+    runtimeAuthAdapter: createOpenCodeConnectedServiceRuntimeAuthAdapter(),
     usageLimitRecovery: OPEN_CODE_USAGE_LIMIT_RECOVERY,
   },
   preflightSessionControls: OPENCODE_PREFLIGHT_SESSION_CONTROLS,

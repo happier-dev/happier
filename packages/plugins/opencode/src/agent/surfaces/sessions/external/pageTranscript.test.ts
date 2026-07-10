@@ -65,7 +65,29 @@ describe('pageOpenCodeTranscript', () => {
       maxItems: 2,
     });
 
-    expect(second.items.map((item) => item.id)).toEqual(['msg-visible']);
+    expect(second.items.map((item) => item.id)).toEqual(['opencode:sess-1:msg-visible']);
     expect(second.hasMore).toBe(false);
+  });
+
+  it('marks an oversized first visible item as truncated while advancing backward pagination', async () => {
+    sessionMessagesList.mockResolvedValueOnce([
+      {
+        info: { id: 'msg-long', role: 'assistant', time: { created: 1 } },
+        parts: [{ type: 'text', text: 'x'.repeat(10_000) }],
+      },
+    ]);
+
+    const page = await pageOpenCodeTranscript({
+      source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4099' },
+      providerSessionId: 'sess-1',
+      direction: 'older',
+      maxBytes: 16,
+      maxItems: 10,
+    });
+
+    expect(page.items.map((item) => item.id)).toEqual(['opencode:sess-1:msg-long']);
+    expect(page.hasMore).toBe(false);
+    expect(page.nextCursor).toBeNull();
+    expect(page.truncated).toBe(true);
   });
 });

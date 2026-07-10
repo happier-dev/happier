@@ -2,9 +2,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import type { DaemonMcpServersDetectWarningV1, DetectedMcpServerV1 } from '@happier-dev/protocol';
+import {
+    normalizeDetectedMcpServerV1,
+    type DaemonMcpServersDetectWarningV1,
+    type DetectedMcpServerV1,
+} from '@happier-dev/plugin-sdk/mcp';
 
-export type DetectOpenCodeMcpServersResult = Readonly<{
+export type ReadOpenCodeMcpConfigServersResult = Readonly<{
     servers: ReadonlyArray<DetectedMcpServerV1>;
     warnings: ReadonlyArray<DaemonMcpServersDetectWarningV1>;
 }>;
@@ -53,7 +57,7 @@ function normalizeDetectedServer(params: Readonly<{
     const envKeys = parseRecordKeys(obj.env);
 
     if (command) {
-        return {
+        return normalizeDetectedMcpServerV1({
             provider: 'opencode',
             name: params.name,
             transport: 'stdio',
@@ -61,7 +65,7 @@ function normalizeDetectedServer(params: Readonly<{
             envKeys,
             enabled,
             source: params.source,
-        };
+        });
     }
 
     const urlRaw = typeof obj.url === 'string'
@@ -73,7 +77,7 @@ function normalizeDetectedServer(params: Readonly<{
     if (!url) return null;
 
     const transport = obj.transport === 'sse' || obj.type === 'sse' ? 'sse' : 'http';
-    return {
+    return normalizeDetectedMcpServerV1({
         provider: 'opencode',
         name: params.name,
         transport,
@@ -84,12 +88,12 @@ function normalizeDetectedServer(params: Readonly<{
         envKeys,
         enabled,
         source: params.source,
-    };
+    });
 }
 
-export async function detectOpenCodeMcpServers(
+export async function readOpenCodeMcpConfigServers(
     params: Readonly<{ directory?: string | null; env?: NodeJS.ProcessEnv }>,
-): Promise<DetectOpenCodeMcpServersResult> {
+): Promise<ReadOpenCodeMcpConfigServersResult> {
     const env = params.env ?? process.env;
     const candidates: Array<Readonly<{ kind: 'user' | 'project'; path: string }>> = [
         { kind: 'user', path: resolveOpenCodeConfigJsonPath(env) },

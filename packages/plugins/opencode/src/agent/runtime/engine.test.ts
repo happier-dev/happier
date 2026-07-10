@@ -4,8 +4,40 @@ import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
 
 import { createOpenCodeBackendEngine } from './engine.js';
 
+function isSessionCreateRequest(request: Readonly<{ url: string; method?: string }>): boolean {
+  return request.method === 'POST' && new URL(request.url).pathname === '/session';
+}
+
 function createPluginContextFixture(): PluginContextV1 {
-  // Unit fixture: this test only verifies context forwarding to plugin-owned runtime leaves.
+  const managedServerHandle = {
+    snapshot: () => ({
+      id: 'opencode-server',
+      state: 'healthy',
+      mode: 'managed-spawn',
+      baseUrl: 'http://127.0.0.1:49197',
+      port: 49197,
+      credentialEnvKey: 'OPENCODE_SERVER_PASSWORD',
+      pid: 123,
+      startedAt: 100,
+      lastHealthyAt: 101,
+      lastErrorMessage: null,
+      diagnostics: {},
+    }),
+    waitUntilHealthy: vi.fn(async () => ({
+      id: 'opencode-server',
+      state: 'healthy',
+      mode: 'managed-spawn',
+      baseUrl: 'http://127.0.0.1:49197',
+      port: 49197,
+      credentialEnvKey: 'OPENCODE_SERVER_PASSWORD',
+      pid: 123,
+      startedAt: 100,
+      lastHealthyAt: 101,
+      lastErrorMessage: null,
+      diagnostics: {},
+    })),
+    dispose: vi.fn(async () => undefined),
+  };
   return {
     logger: {
       info: vi.fn(),
@@ -13,27 +45,96 @@ function createPluginContextFixture(): PluginContextV1 {
       error: vi.fn(),
       debug: vi.fn(),
     },
+    env: {
+      get: () => null,
+      require: (name: string) => {
+        throw new Error(`Missing required fixture env value "${name}"`);
+      },
+      list: () => ({}),
+    },
+    managedServer: {
+      supervise: vi.fn(async () => managedServerHandle),
+    },
+    agentRuntime: {
+      transcripts: {
+        append: vi.fn(async () => undefined),
+        defineSource: vi.fn(async (definition: { id: string }) => ({
+          id: definition.id,
+          dispose: vi.fn(async () => undefined),
+        })),
+      },
+    },
+    mcp: {
+      resolveForSession: vi.fn(async () => []),
+      list: vi.fn(async () => []),
+      startServer: vi.fn(),
+      createClient: vi.fn(),
+    },
+    sessions: {
+      current: {
+        permissions: {
+          requestDecision: vi.fn(async () => ({ decision: 'approved' })),
+        },
+      },
+      writeStateField: vi.fn(async () => undefined),
+    },
+    events: {
+      emit: vi.fn(async () => undefined),
+      subscribe: vi.fn(() => ({ unsubscribe: vi.fn() })),
+    },
+    fetch: vi.fn(async (request) => {
+      if (isSessionCreateRequest(request)) {
+        return {
+          ok: true,
+          status: 200,
+          headers: {},
+          text: async () => JSON.stringify({ id: 'oc-session-1' }),
+          json: async () => ({ id: 'oc-session-1' }),
+          arrayBuffer: async () => new ArrayBuffer(0),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        headers: {},
+        text: async () => JSON.stringify({}),
+        json: async () => ({}),
+        arrayBuffer: async () => new ArrayBuffer(0),
+      };
+    }),
   } as unknown as PluginContextV1;
 }
 
 describe('createOpenCodeBackendEngine', () => {
-  it('creates a server session runtime plan through the default plugin-owned leaf', async () => {
+  it('creates a public server session runtime through the default plugin-owned leaf', async () => {
     const ctx = createPluginContextFixture();
     const engine = createOpenCodeBackendEngine(ctx);
 
-    await expect(
-      engine.runtimeCore?.createSessionRuntime({ cwd: '/tmp/opencode' }),
-    ).resolves.toMatchObject({
-      kind: 'hostSessionRuntimePlan',
-      providerId: 'opencode',
-      config: {
-        backendDisplayName: 'OpenCode',
-        providerName: 'opencode',
-      },
+    const runtime = await engine.runtimeCore?.createSessionRuntime({ cwd: '/tmp/opencode' });
+
+    expect(runtime).toMatchObject({
+      identity: { read: expect.any(Function) },
+      events: { subscribe: expect.any(Function) },
+      send: expect.any(Function),
+      cancel: expect.any(Function),
+      dispose: expect.any(Function),
     });
+    expect(runtime?.identity.read()).toEqual({ providerSessionId: null });
+    expect(ctx.managedServer.supervise).not.toHaveBeenCalled();
+    await expect(runtime?.send({ v: 1, text: 'hello' })).resolves.toMatchObject({
+      status: 'accepted',
+    });
+    expect(runtime?.identity.read()).toEqual({ providerSessionId: 'oc-session-1' });
+    expect(ctx.managedServer.supervise).toHaveBeenCalledWith(expect.objectContaining({
+      mode: expect.objectContaining({
+        kind: 'managed-spawn',
+        portArg: '--port',
+      }),
+    }));
+    await runtime?.dispose('session_closed');
   });
 
-  it('creates an ACP backend through ctx.acp.defineAcpBackend by default', async () => {
+  it('creates an ACP backend through ctx.agentRuntime.acp.defineAcpBackend by default', async () => {
     const acpRuntime = { kind: 'acp-runtime' };
     const acpEngine = {
       runtimeCore: {
@@ -41,10 +142,14 @@ describe('createOpenCodeBackendEngine', () => {
         createExecutionRunBackend: vi.fn(),
       },
     };
+    const base = createPluginContextFixture();
     const ctx = {
-      ...createPluginContextFixture(),
-      acp: {
-        defineAcpBackend: vi.fn(() => acpEngine),
+      ...base,
+      agentRuntime: {
+        ...base.agentRuntime,
+        acp: {
+          defineAcpBackend: vi.fn(() => acpEngine),
+        },
       },
     } as unknown as PluginContextV1;
     const engine = createOpenCodeBackendEngine(ctx);
@@ -55,7 +160,7 @@ describe('createOpenCodeBackendEngine', () => {
       }),
     ).resolves.toBe(acpRuntime);
 
-    expect(ctx.acp.defineAcpBackend).toHaveBeenCalledWith(expect.objectContaining({
+    expect(ctx.agentRuntime.acp.defineAcpBackend).toHaveBeenCalledWith(expect.objectContaining({
       backendId: 'opencode',
       mcp: { policy: 'pass_through' },
     }));

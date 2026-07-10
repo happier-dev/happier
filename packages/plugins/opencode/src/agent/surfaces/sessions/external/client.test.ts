@@ -24,13 +24,13 @@ describe('validateOpenCodeExternalSessionsSource', () => {
         directory: ' /tmp/repo ',
       },
       env: {
-        HAPPIER_OPENCODE_SERVER_URL: ' http://127.0.0.1:4096/?ignored=true#hash ',
+        HAPPIER_OPENCODE_SERVER_URL: ' http://127.0.0.1:49196/?ignored=true#hash ',
       },
     })).toEqual({
       ok: true,
       source: {
         kind: 'opencodeServer',
-        baseUrl: 'http://127.0.0.1:4096',
+        baseUrl: 'http://127.0.0.1:49196',
         directory: '/tmp/repo',
       },
     });

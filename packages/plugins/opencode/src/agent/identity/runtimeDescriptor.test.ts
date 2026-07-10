@@ -7,20 +7,20 @@ describe('OpenCode runtime descriptor metadata reader', () => {
     expect(readOpenCodeSessionMetadataRuntimeDescriptor({
       opencodeBackendMode: ' acp ',
       opencodeSessionId: ' opencode-session-legacy ',
-      opencodeServerBaseUrl: 'http://127.0.0.1:4096',
+      opencodeServerBaseUrl: 'http://127.0.0.1:49196',
       opencodeServerBaseUrlExplicit: true,
     })).toEqual({
-      providerId: 'opencode',
+      agentId: 'opencode',
       runtimeKind: 'acp',
       backendMode: 'acp',
       providerSessionId: 'opencode-session-legacy',
       runtimeHandle: {
         backendMode: 'acp',
         providerSessionId: 'opencode-session-legacy',
-        serverBaseUrl: 'http://127.0.0.1:4096/',
+        serverBaseUrl: 'http://127.0.0.1:49196/',
         serverBaseUrlExplicit: true,
       },
-      serverBaseUrl: 'http://127.0.0.1:4096/',
+      serverBaseUrl: 'http://127.0.0.1:49196/',
       serverBaseUrlExplicit: true,
     });
   });
@@ -33,10 +33,10 @@ describe('OpenCode runtime descriptor metadata reader', () => {
 
     expect(readOpenCodeSessionMetadataRuntimeDescriptor({
       opencodeBackendMode: 'acp',
-      opencodeServerBaseUrl: 'ftp://127.0.0.1:4096',
+      opencodeServerBaseUrl: 'ftp://127.0.0.1:49196',
       opencodeServerBaseUrlExplicit: true,
     })).toEqual({
-      providerId: 'opencode',
+      agentId: 'opencode',
       runtimeKind: 'acp',
       backendMode: 'acp',
       providerSessionId: null,

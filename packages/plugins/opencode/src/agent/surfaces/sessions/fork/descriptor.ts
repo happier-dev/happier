@@ -1,7 +1,7 @@
 import type {
   BackendSessionLaunchHintsV1,
   ForkSurfaceV1,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk';
 
 import {
   applyOpenCodeSessionAffinityMetadata,

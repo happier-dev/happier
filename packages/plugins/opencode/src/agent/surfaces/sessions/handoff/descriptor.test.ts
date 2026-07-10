@@ -8,11 +8,13 @@ function encodeExportPayload(value: unknown): string {
   return Buffer.from(JSON.stringify(value), 'utf8').toString('base64');
 }
 
-function createPluginContextFixture(execRun: PluginContextV1['exec']['run']): PluginContextV1 {
+function createPluginContextFixture(execRun: PluginContextV1['agentRuntime']['exec']['run']): PluginContextV1 {
   return {
-    exec: {
-      run: execRun,
-      systemTools: { resolve: vi.fn() },
+    agentRuntime: {
+      exec: {
+        run: execRun,
+        systemTools: { resolve: vi.fn() },
+      },
     },
   } as unknown as PluginContextV1;
 }
@@ -24,12 +26,12 @@ describe('createOpenCodeHandoffSurface', () => {
 
     const result = await surface.importBundle({
       bundle: {
-        providerId: 'opencode',
+        agentId: 'opencode',
         remoteSessionId: 'oc-import-1',
         exportJsonBase64: encodeExportPayload({ id: 'oc-import-1' }),
         affinity: {
           backendMode: 'server',
-          serverBaseUrl: 'http://127.0.0.1:4096/',
+          serverBaseUrl: 'http://127.0.0.1:49196/',
           serverBaseUrlExplicit: true,
         },
       },
@@ -47,15 +49,15 @@ describe('createOpenCodeHandoffSurface', () => {
               fieldId: 'identity.runtimeDescriptor',
               value: {
                 v: 1,
-                providerId: 'opencode',
-                provider: {
+                agentId: 'opencode',
+                agent: {
                   backendMode: 'server',
                   providerSessionId: 'oc-import-1',
-                  providerExtra: {
+                  agentExtra: {
                     runtimeHandle: {
                       backendMode: 'server',
                       providerSessionId: 'oc-import-1',
-                      serverBaseUrl: 'http://127.0.0.1:4096/',
+                      serverBaseUrl: 'http://127.0.0.1:49196/',
                       serverBaseUrlExplicit: true,
                     },
                   },

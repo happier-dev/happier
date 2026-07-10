@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { raceWithTimeout } from '@happier-dev/plugin-sdk/experimental/timeout';
+
 import { buildOpenCodeRetryStatusError } from './openCodeRetryStatus.js';
 import { createOpenCodeProviderActivityTracker } from './providerActivity/createOpenCodeProviderActivityTracker.js';
-import { raceWithTimeout } from './raceWithTimeout.js';
 
 describe('OpenCode server runtime utilities', () => {
   it('classifies retry status next as retry timing without quota reset fields', () => {

@@ -1,4 +1,4 @@
-import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/acp';
+import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/experimental/acp';
 
 import { normalizeOpenCodeAcpPermissionRulesetMessage } from './permission.js';
 

@@ -1,19 +1,11 @@
 import type {
+  PluginApi,
   McpServerSpecV1,
-  PluginApiMcpDiscoveryProviderRegistrationV1,
-  PluginDisposable,
 } from '@happier-dev/plugin-sdk';
-import type { BundledRegisterBackendEngineV1 } from '@happier-dev/plugin-sdk/internal/runtime/session';
 
-import { detectOpenCodeMcpServers } from './agent/mcp/discovery.js';
+import { readOpenCodeMcpConfigServers } from './agent/mcp/discovery.js';
 import { createOpenCodeBackendEngine } from './agent/runtime/engine.js';
-
-type PluginApiForOpenCodeV1 = Readonly<{
-  registerBackendEngine: (registration: BundledRegisterBackendEngineV1) => PluginDisposable | unknown;
-  registerMcpDiscoveryProvider: (
-    registration: PluginApiMcpDiscoveryProviderRegistrationV1,
-  ) => PluginDisposable | unknown;
-}>;
+import { PLUGIN_MANIFEST } from './manifest.js';
 
 function toRedactedEnvKeys(envKeys: readonly string[]): Readonly<Record<string, string>> | undefined {
   if (envKeys.length === 0) return undefined;
@@ -30,7 +22,7 @@ function normalizeOpenCodeMcpServerIdSegment(name: string): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-function toOpenCodeMcpServerSpec(server: Awaited<ReturnType<typeof detectOpenCodeMcpServers>>['servers'][number]): McpServerSpecV1 | null {
+function toOpenCodeMcpServerSpec(server: Awaited<ReturnType<typeof readOpenCodeMcpConfigServers>>['servers'][number]): McpServerSpecV1 | null {
   if (server.enabled === false) return null;
   const idSegment = normalizeOpenCodeMcpServerIdSegment(server.name);
   if (!idSegment) return null;
@@ -63,18 +55,27 @@ function toOpenCodeMcpServerSpec(server: Awaited<ReturnType<typeof detectOpenCod
   return null;
 }
 
-export function activate(api: PluginApiForOpenCodeV1): void {
-  api.registerBackendEngine({
-    backendId: 'opencode',
+function readOpenCodeConfigDiscoveryProvider(): typeof PLUGIN_MANIFEST.contributes.mcp.discoveryProviders[number] {
+  const provider = PLUGIN_MANIFEST.contributes.mcp.discoveryProviders.find((entry) => entry.id === 'opencode.config');
+  if (!provider) {
+    throw new Error('OpenCode plugin manifest must declare opencode.config MCP discovery provider');
+  }
+  return provider;
+}
+
+export function activate(api: PluginApi): void {
+  api.registerAgentRuntime({
+    agentId: 'opencode',
     create: async (ctx) => {
-      ctx.logger.info('[plugins/opencode] Creating backend engine');
+      ctx.logger.debug('[plugins/opencode] Creating backend engine');
       return createOpenCodeBackendEngine(ctx);
     },
   });
+  const configDiscoveryProvider = readOpenCodeConfigDiscoveryProvider();
   api.registerMcpDiscoveryProvider({
-    id: 'opencode.config',
+    id: configDiscoveryProvider.id,
     discover: async (input) => {
-      const detected = await detectOpenCodeMcpServers({
+      const detected = await readOpenCodeMcpConfigServers({
         directory: input?.directory ?? null,
       });
       const servers = detected.servers

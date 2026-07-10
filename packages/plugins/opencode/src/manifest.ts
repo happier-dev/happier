@@ -1,14 +1,17 @@
 import {
   definePluginManifest,
-  type PluginBackendContributionV2,
+  type PluginAgentContributionV2,
   type PluginManifestV2,
   type PluginMcpContributesV1,
+  type PluginAgentSettingsContributionV1,
 } from '@happier-dev/plugin-sdk';
-import { BackendSurfaceOperationCatalogV1 } from '@happier-dev/protocol';
+import { BackendSurfaceOperationCatalogV1 } from '@happier-dev/plugin-sdk/manifest';
+
+import { OPENCODE_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
 const OPENCODE_BACKEND_ID = 'opencode';
 const SURFACE_OPERATIONS = BackendSurfaceOperationCatalogV1;
-type BackendSurfaceHandlerV1 = NonNullable<PluginBackendContributionV2['surfaceHandlers']>[number];
+type BackendSurfaceHandlerV1 = NonNullable<PluginAgentContributionV2['surfaceHandlers']>[number];
 
 function surfaceHandler(params: Readonly<{
   id: string;
@@ -27,8 +30,9 @@ function surfaceHandler(params: Readonly<{
 
 type OpenCodePluginManifestV2 = Omit<PluginManifestV2, 'contributes'> & Readonly<{
   contributes: Readonly<{
-    backends: ReadonlyArray<PluginBackendContributionV2>;
+    agents: ReadonlyArray<PluginAgentContributionV2>;
     mcp: PluginMcpContributesV1;
+    agentSettings: ReadonlyArray<PluginAgentSettingsContributionV1>;
   }>;
 }>;
 
@@ -41,16 +45,22 @@ export const PLUGIN_MANIFEST = definePluginManifest({
   displayName: 'opencode',
   description: undefined,
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: ['backends', 'mcp'] },
-  targets: {},
-  capabilities: { permissions: [] },
+  activationEvents: ['onAgent:opencode'],
+  uses: ['agents', 'mcp'],
+  entrypoints: { main: './dist/index.js' },
+  permissions: { required: [
+      {
+        capability: 'network',
+        scope: '*',
+        reason: 'Connect to the plugin-owned OpenCode loopback server on its dynamically allocated local port.',
+      },
+    ], optional: [] },
   contributes: {
-    backends: [
+    agents: [
       {
         kindVersion: 1,
         id: OPENCODE_BACKEND_ID,
-        agentId: 'opencode',
-        engine: { kind: 'custom' },
+        runtime: { kind: 'custom' },
         surfaceHandlers: [
           surfaceHandler({
             id: 'opencode.externalSession.resolveSource',
@@ -119,6 +129,30 @@ export const PLUGIN_MANIFEST = definePluginManifest({
             exportName: 'resolveOpenCodeReplayForkChildLaunch',
           }),
         ],
+        surfaces: {
+          externalSession: {
+            sources: [
+              {
+                sourceKind: 'opencodeServer',
+                schema: {
+                  passthrough: true,
+                  fields: [
+                    { name: 'kind', kind: 'literal', value: 'opencodeServer' },
+                    { name: 'baseUrl', kind: 'unknown', optional: true },
+                    { name: 'directory', kind: 'unknown', optional: true },
+                  ],
+                },
+                key: {
+                  segments: [
+                    { kind: 'literal', value: 'opencodeServer' },
+                    { kind: 'field', field: 'baseUrl' },
+                    { kind: 'field', field: 'directory' },
+                  ],
+                },
+              },
+            ],
+          },
+        },
         capabilities: {
           executionRun: { supported: true },
           session: {
@@ -144,9 +178,10 @@ export const PLUGIN_MANIFEST = definePluginManifest({
           permissionGates: [],
           redaction: 'none',
           hidden: false,
-          providerId: OPENCODE_BACKEND_ID,
+          agentId: OPENCODE_BACKEND_ID,
         },
       ],
     },
+    agentSettings: [OPENCODE_AGENT_SETTINGS_CONTRIBUTION],
   },
 } satisfies OpenCodePluginManifestV2);

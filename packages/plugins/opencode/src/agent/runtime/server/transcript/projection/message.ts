@@ -38,7 +38,7 @@ function readCreatedAtMs(info: Record<string, unknown> | null): number {
   if (directCreatedAtSnake !== null) return directCreatedAtSnake;
 
   const time = readOpenCodeNestedRecord(info, 'time');
-  const timeCreated = readOpenCodeTimestampMs(time?.created, { allowSecondsNumber: false });
+  const timeCreated = readOpenCodeTimestampMs(time?.created, { allowSecondsNumber: true });
   if (timeCreated !== null) return timeCreated;
 
   const timeCompleted = readOpenCodeTimestampMs(time?.completed, { allowSecondsNumber: false });

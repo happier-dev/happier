@@ -2,12 +2,14 @@ import {
   type ExternalSessionActivityV1,
   type ExternalSessionCandidateV1,
   type ExternalSessionsSource,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/sessions';
 
 import { buildOpenCodeAgentRuntimeDescriptorV1 } from '../../../identity/runtimeDescriptor.js';
+import {
+  decodeOpenCodeIndexCursor,
+  encodeOpenCodeIndexCursor,
+} from '../../../runtime/server/transcript/indexedTranscript.js';
 import { createOpenCodeExternalSessionClient } from './client.js';
-
-type IndexCursorV1 = Readonly<{ v: 1; kind: 'index'; offset: number }>;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -28,21 +30,12 @@ function getNumber(value: unknown, key: string): number | null {
 }
 
 function encodeIndexCursor(offset: number): string {
-  const cursor: IndexCursorV1 = { v: 1, kind: 'index', offset: Math.max(0, Math.trunc(offset)) };
-  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+  return encodeOpenCodeIndexCursor({ v: 1, kind: 'index', offset: Math.max(0, Math.trunc(offset)) });
 }
 
 function decodeIndexCursor(raw: string | undefined): number {
-  if (typeof raw !== 'string' || raw.trim().length === 0) return 0;
-  try {
-    const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as unknown;
-    const record = asRecord(parsed);
-    if (!record || record.v !== 1 || record.kind !== 'index') return 0;
-    const offset = typeof record.offset === 'number' && Number.isFinite(record.offset) ? Math.trunc(record.offset) : 0;
-    return Math.max(0, offset);
-  } catch {
-    return 0;
-  }
+  const decoded = decodeOpenCodeIndexCursor(raw, 'index');
+  return decoded?.kind === 'index' ? decoded.offset : 0;
 }
 
 function resolveRecentActivityWindowMs(env: Readonly<Record<string, string | undefined>>): number {

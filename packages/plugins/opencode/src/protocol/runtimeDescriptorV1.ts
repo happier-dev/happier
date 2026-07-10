@@ -1,6 +1,6 @@
 export type OpenCodeBackendMode = 'server' | 'acp';
 
-type RuntimeDescriptorProviderExtra = Readonly<{
+type RuntimeDescriptorAgentExtra = Readonly<{
   owner: 'opencode';
   schemaId: 'opencode.agentRuntimeDescriptorExtra';
   v: 1;
@@ -14,18 +14,18 @@ type RuntimeDescriptorProviderExtra = Readonly<{
 
 export type OpenCodeAgentRuntimeDescriptorV1 = Readonly<{
   v: 1;
-  providerId: 'opencode';
-  provider: Readonly<{
+  agentId: 'opencode';
+  agent: Readonly<{
     backendMode: OpenCodeBackendMode;
     providerSessionId?: string;
     serverBaseUrl?: string;
     serverBaseUrlExplicit?: true;
-    providerExtra: RuntimeDescriptorProviderExtra;
+    agentExtra: RuntimeDescriptorAgentExtra;
   }>;
 } & Record<string, unknown>>;
 
 export type CanonicalOpenCodeAgentRuntimeDescriptorV1 = Readonly<{
-  providerId: 'opencode';
+  agentId: 'opencode';
   backendMode: OpenCodeBackendMode;
   providerSessionId: string | null;
   serverBaseUrl: string | null;
@@ -51,9 +51,19 @@ function normalizeTrimmedString(value: unknown): string | null {
   return trimmed || null;
 }
 
+function readAgentIdCompat(record: Readonly<Record<string, unknown>>): string | null {
+  const hasAgentId = Object.hasOwn(record, 'agentId');
+  const hasProviderId = Object.hasOwn(record, 'providerId');
+  const agentId = normalizeTrimmedString(record.agentId);
+  const providerId = normalizeTrimmedString(record.providerId);
+  if ((hasAgentId && !agentId) || (hasProviderId && !providerId)) return null;
+  if (agentId && providerId && agentId !== providerId) return null;
+  return agentId ?? providerId;
+}
+
 function readProviderSessionIdCompat(record: Readonly<Record<string, unknown>>): string | null {
   return normalizeTrimmedString(record.providerSessionId)
-    ?? normalizeTrimmedString(record.vendorSessionId);
+    ?? normalizeTrimmedString(record.vendorSessionId); // legacy vendorSessionId read-compat
 }
 
 export function normalizeOpenCodeBackendMode(raw: unknown): OpenCodeBackendMode {
@@ -95,7 +105,7 @@ export function normalizeOpenCodeServerBaseUrlExplicit(raw: unknown): boolean {
   return value === '1' || value === 'true' || value === 'yes';
 }
 
-function buildOpenCodeRuntimeDescriptorProviderExtra(params: BuildOpenCodeAgentRuntimeDescriptorParams): RuntimeDescriptorProviderExtra {
+function buildOpenCodeRuntimeDescriptorAgentExtra(params: BuildOpenCodeAgentRuntimeDescriptorParams): RuntimeDescriptorAgentExtra {
   const backendMode = normalizeOpenCodeBackendMode(params.backendMode);
   const providerSessionId = normalizeTrimmedString(params.providerSessionId);
   const requestedServerBaseUrlExplicit = normalizeOpenCodeServerBaseUrlExplicit(params.serverBaseUrlExplicit);
@@ -115,7 +125,7 @@ function buildOpenCodeRuntimeDescriptorProviderExtra(params: BuildOpenCodeAgentR
   };
 }
 
-function readOpenCodeRuntimeDescriptorProviderExtra(value: unknown): CanonicalOpenCodeAgentRuntimeDescriptorV1 | null {
+function readOpenCodeRuntimeDescriptorAgentExtra(value: unknown): CanonicalOpenCodeAgentRuntimeDescriptorV1 | null {
   const extra = asRecord(value);
   if (!extra || extra.owner !== 'opencode' || extra.schemaId !== 'opencode.agentRuntimeDescriptorExtra' || extra.v !== 1) {
     return null;
@@ -133,7 +143,7 @@ function readOpenCodeRuntimeDescriptorProviderExtra(value: unknown): CanonicalOp
 
   if (!backendMode && !providerSessionId && !serverBaseUrl) return null;
   return {
-    providerId: 'opencode',
+    agentId: 'opencode',
     backendMode: backendMode ?? 'server',
     providerSessionId,
     serverBaseUrl,
@@ -143,14 +153,25 @@ function readOpenCodeRuntimeDescriptorProviderExtra(value: unknown): CanonicalOp
 
 function readOpenCodeRuntimeDescriptorV1(value: unknown): OpenCodeAgentRuntimeDescriptorV1 | null {
   const descriptor = asRecord(value);
-  if (!descriptor || descriptor.v !== 1 || descriptor.providerId !== 'opencode') return null;
-  const provider = asRecord(descriptor.provider);
-  if (!provider) return null;
+  if (!descriptor || descriptor.v !== 1 || readAgentIdCompat(descriptor) !== 'opencode') return null;
+  const rawAgentPayload = asRecord(descriptor.agent) ?? asRecord(descriptor.provider); // legacy `provider` payload-key read-compat
+  if (!rawAgentPayload) return null;
+  const agentPayload = Object.hasOwn(rawAgentPayload, 'agentExtra')
+    ? rawAgentPayload
+    : (() => {
+      const { providerExtra: legacyExtra, ...rest } = rawAgentPayload; // legacy `providerExtra` read-compat
+      return legacyExtra === undefined ? rawAgentPayload : { ...rest, agentExtra: legacyExtra };
+    })();
+  const {
+    providerId: _legacyProviderId,
+    provider: _legacyProviderPayload,
+    ...canonicalDescriptor
+  } = descriptor;
   return {
-    ...descriptor,
+    ...canonicalDescriptor,
     v: 1,
-    providerId: 'opencode',
-    provider,
+    agentId: 'opencode',
+    agent: agentPayload,
   } as OpenCodeAgentRuntimeDescriptorV1;
 }
 
@@ -165,13 +186,13 @@ export function buildOpenCodeAgentRuntimeDescriptorV1(
 
   return {
     v: 1,
-    providerId: 'opencode',
-    provider: {
+    agentId: 'opencode',
+    agent: {
       backendMode,
       ...(providerSessionId ? { providerSessionId } : {}),
       ...(serverBaseUrl ? { serverBaseUrl } : {}),
       ...(serverBaseUrlExplicit ? { serverBaseUrlExplicit: true } : {}),
-      providerExtra: buildOpenCodeRuntimeDescriptorProviderExtra({
+      agentExtra: buildOpenCodeRuntimeDescriptorAgentExtra({
         backendMode,
         providerSessionId,
         serverBaseUrl,
@@ -189,22 +210,22 @@ export function readCanonicalOpenCodeAgentRuntimeDescriptorV1(
 ): CanonicalOpenCodeAgentRuntimeDescriptorV1 | null {
   const descriptor = readOpenCodeRuntimeDescriptorV1(value);
   if (!descriptor) return null;
-  const provider = descriptor.provider;
+  const agentPayload = descriptor.agent;
 
-  const providerExtra = readOpenCodeRuntimeDescriptorProviderExtra(provider.providerExtra);
-  const backendMode = providerExtra?.backendMode ?? normalizeOptionalOpenCodeBackendMode(provider.backendMode) ?? 'server';
-  const providerSessionId = providerExtra?.providerSessionId ?? readProviderSessionIdCompat(provider);
-  const providerServerBaseUrl = normalizeOpenCodeServerBaseUrl(provider.serverBaseUrl);
-  const providerServerBaseUrlExplicit = providerServerBaseUrl
-    ? normalizeOpenCodeServerBaseUrlExplicit(provider.serverBaseUrlExplicit)
+  const agentExtra = readOpenCodeRuntimeDescriptorAgentExtra(agentPayload.agentExtra);
+  const backendMode = agentExtra?.backendMode ?? normalizeOptionalOpenCodeBackendMode(agentPayload.backendMode) ?? 'server';
+  const providerSessionId = agentExtra?.providerSessionId ?? readProviderSessionIdCompat(agentPayload);
+  const payloadServerBaseUrl = normalizeOpenCodeServerBaseUrl(agentPayload.serverBaseUrl);
+  const payloadServerBaseUrlExplicit = payloadServerBaseUrl
+    ? normalizeOpenCodeServerBaseUrlExplicit(agentPayload.serverBaseUrlExplicit)
     : false;
-  const serverBaseUrl = providerExtra?.serverBaseUrl ?? providerServerBaseUrl;
+  const serverBaseUrl = agentExtra?.serverBaseUrl ?? payloadServerBaseUrl;
   const serverBaseUrlExplicit = serverBaseUrl
-    ? (providerExtra?.serverBaseUrl ? providerExtra.serverBaseUrlExplicit : providerServerBaseUrlExplicit)
+    ? (agentExtra?.serverBaseUrl ? agentExtra.serverBaseUrlExplicit : payloadServerBaseUrlExplicit)
     : false;
 
   return {
-    providerId: 'opencode',
+    agentId: 'opencode',
     backendMode,
     providerSessionId,
     serverBaseUrl,

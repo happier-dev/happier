@@ -155,3 +155,27 @@ export async function registerOpenCodeMcpServers(params: Readonly<{
     });
   }
 }
+
+export function scheduleOpenCodeMcpServerRegistration(params: Readonly<{
+  ctx: PluginContextV1;
+  client: OpenCodeServerClient;
+  directory: string;
+  happierSessionId: string;
+  mcpServers: unknown;
+}>): void {
+  void (async () => {
+    const resolvedMcpServers = await params.ctx.mcp.resolveForSession({
+      sessionId: params.happierSessionId,
+      directory: params.directory,
+    });
+    await registerOpenCodeMcpServers({
+      ctx: params.ctx,
+      client: params.client,
+      directory: params.directory,
+      mcpServers: params.mcpServers,
+      resolvedMcpServers,
+    });
+  })().catch((error: unknown) => {
+    params.ctx.logger.debug('[OpenCodeServer] MCP server registration setup failed (non-fatal)', { error });
+  });
+}
