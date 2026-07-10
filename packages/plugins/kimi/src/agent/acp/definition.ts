@@ -1,4 +1,4 @@
-import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/acp';
+import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/experimental/acp';
 
 import { buildKimiAcpArgv, buildKimiAcpEnv } from './callbacks.js';
 import { KIMI_ACP_TIMEOUTS, KIMI_STDERR_RULES, KIMI_TOOL_NAME_INFERENCE, resolveKimiAcpToolName } from './transport.js';

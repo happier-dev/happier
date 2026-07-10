@@ -10,7 +10,7 @@ const FORBIDDEN_NO_EXECUTE_KEYS = new Set([
   'uiBehaviorOverride',
   'sessionProviderBehavior',
   'messageMetaOverride',
-  'providerSettings',
+  'agentSettings',
   'visibleMessageResolver',
   'svgIconXml',
 ]);
@@ -44,7 +44,7 @@ describe('KIMI_UI_DESCRIPTOR', () => {
         connectedService: { serviceId: null, labelKey: 'agentInput.agent.kimi', connectRoute: null },
         icon: { assetId: 'kimi' },
       },
-      settings: { descriptorId: 'kimi.providerSettings.v1' },
+      settings: { descriptorId: 'kimi.agentSettings.v1' },
     });
   });
 

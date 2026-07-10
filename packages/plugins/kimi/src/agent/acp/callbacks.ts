@@ -1,23 +1,18 @@
 import type {
   AcpTier2ArgvBuilderV1,
   AcpTier2EnvBuilderV1,
-} from '@happier-dev/plugin-sdk/acp';
+} from '@happier-dev/plugin-sdk/experimental/acp';
+import { normalizeAcpPermissionIntent } from '@happier-dev/plugin-sdk/experimental/acp';
 
 import { ensureKimiReadOnlyAgentFile } from '../bootstrap/readonlyAgentFile.js';
+import { HAPPIER_KIMI_ACP_SELECTOR_ENV } from '../preferences/pythonSelector.js';
 import { resolveKimiAcpPythonSelectorChildEnv } from './pythonSelectorEnv.js';
 
-function normalizePermissionMode(mode: string | null | undefined): string {
-  const normalized = String(mode ?? 'default').trim();
-  if (!normalized) return 'default';
-  if (normalized === 'read_only') return 'read-only';
-  return normalized;
-}
-
 export const buildKimiAcpArgv: AcpTier2ArgvBuilderV1 = (params) => {
-  const intent = normalizePermissionMode(params.permissionMode);
+  const intent = normalizeAcpPermissionIntent(params.permissionMode);
   const args: string[] = ['--work-dir', params.cwd];
 
-  if (intent === 'yolo' || intent === 'bypassPermissions') {
+  if (intent === 'yolo') {
     args.push('--yolo');
   }
 
@@ -30,7 +25,7 @@ export const buildKimiAcpArgv: AcpTier2ArgvBuilderV1 = (params) => {
 };
 
 export const buildKimiAcpEnv: AcpTier2EnvBuilderV1 = (params) => resolveKimiAcpPythonSelectorChildEnv({
-  selector: params.env.HAPPIER_KIMI_ACP_SELECTOR,
+  selector: params.env[HAPPIER_KIMI_ACP_SELECTOR_ENV],
   env: params.env,
   inheritedEnv: params.env,
 });

@@ -1,16 +1,12 @@
-export type KimiAcpPythonSelector = 'auto' | 'poll';
-
-const HAPPIER_KIMI_ACP_SELECTOR_ENV = 'HAPPIER_KIMI_ACP_SELECTOR';
+import {
+  HAPPIER_KIMI_ACP_SELECTOR_ENV,
+  normalizeKimiAcpPythonSelector,
+  type KimiAcpPythonSelector,
+} from './pythonSelector.js';
 
 type KimiSessionRuntimePreferences = Readonly<{
   environmentVariables?: Readonly<Record<string, string>>;
 }>;
-
-export function normalizeKimiAcpPythonSelector(raw: unknown): KimiAcpPythonSelector | null {
-  if (typeof raw !== 'string') return null;
-  const value = raw.trim().toLowerCase();
-  return value === 'auto' || value === 'poll' ? value : null;
-}
 
 function buildKimiAcpSelectorEnvironment(selector: KimiAcpPythonSelector): KimiSessionRuntimePreferences {
   return {

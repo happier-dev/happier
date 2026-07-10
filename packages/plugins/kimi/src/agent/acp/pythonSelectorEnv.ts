@@ -2,7 +2,13 @@ import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
-export type KimiAcpPythonSelector = 'auto' | 'poll';
+import {
+  normalizeKimiAcpPythonSelector,
+  type KimiAcpPythonSelector,
+} from '../preferences/pythonSelector.js';
+
+export { normalizeKimiAcpPythonSelector };
+export type { KimiAcpPythonSelector };
 
 const SITE_CUSTOMIZE = `import selectors
 
@@ -11,10 +17,6 @@ selectors.DefaultSelector = selectors.PollSelector
 `;
 
 const SHIM_DIR_PREFIX = 'kimi-acp-poll-selector-';
-
-export function normalizeKimiAcpPythonSelector(value: unknown): KimiAcpPythonSelector {
-  return value === 'poll' ? 'poll' : 'auto';
-}
 
 export function resolveKimiAcpPythonSelectorChildEnv(params: Readonly<{
   selector?: unknown;
@@ -28,7 +30,7 @@ export function resolveKimiAcpPythonSelectorChildEnv(params: Readonly<{
     if (typeof value === 'string') env[key] = value;
   }
 
-  const selector = normalizeKimiAcpPythonSelector(params.selector);
+  const selector = normalizeKimiAcpPythonSelector(params.selector) ?? 'auto';
   const platform = params.platform ?? process.platform;
   if (selector !== 'poll' || platform !== 'linux') {
     return env;

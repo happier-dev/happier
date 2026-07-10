@@ -1,23 +1,25 @@
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
 
-import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/acp';
-import type { BackendEngineV1 } from '@happier-dev/plugin-sdk';
-import { createAcpBackendEngine, readAcpBackendSpec } from '@happier-dev/plugin-sdk/acp';
+import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/experimental/acp';
+import type { AgentRuntimeV1 } from '@happier-dev/plugin-sdk';
+import { createAcpBackendEngine, readAcpBackendSpec } from '@happier-dev/plugin-sdk/experimental/acp';
 import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
 
 type KimiBackendRegistration = Readonly<{
-  backendId: string;
+  agentId: string;
   create: (ctx: Readonly<{
-    acp: Readonly<{
-      defineAcpBackend: (spec: AcpBackendSpecV1) => BackendEngineV1;
+    agentRuntime: Readonly<{
+      acp: Readonly<{
+        defineAcpBackend: (spec: AcpBackendSpecV1) => AgentRuntimeV1;
+      }>;
     }>;
-  }>) => BackendEngineV1 | Promise<BackendEngineV1>;
+  }>) => AgentRuntimeV1 | Promise<AgentRuntimeV1>;
 }>;
 
-function readRegisteredBackend(registerBackendEngine: ReturnType<typeof vi.fn>): KimiBackendRegistration {
-  const registration = registerBackendEngine.mock.calls[0]?.[0];
+function readRegisteredBackend(registerAgentRuntime: ReturnType<typeof vi.fn>): KimiBackendRegistration {
+  const registration = registerAgentRuntime.mock.calls[0]?.[0];
   if (!registration || typeof registration !== 'object') {
     throw new Error('Expected Kimi activation to register a backend engine');
   }
@@ -25,18 +27,33 @@ function readRegisteredBackend(registerBackendEngine: ReturnType<typeof vi.fn>):
 }
 
 async function readKimiSpec(): Promise<AcpBackendSpecV1> {
-  const registerBackendEngine = vi.fn();
-  activate({ registerBackendEngine });
-  const registration = readRegisteredBackend(registerBackendEngine);
+  const registerAgentRuntime = vi.fn();
+  activate({ registerAgentRuntime, registerHook: vi.fn() });
+  const registration = readRegisteredBackend(registerAgentRuntime);
   const engine = await registration.create({
-    acp: {
-      defineAcpBackend: createAcpBackendEngine,
+    agentRuntime: {
+      acp: {
+        defineAcpBackend: createAcpBackendEngine,
+      },
     },
   });
   return readAcpBackendSpec(engine);
 }
 
 describe('activate', () => {
+  it('registers the Kimi ACP spawn prerequisite hook through the plugin API', async () => {
+    const registerAgentRuntime = vi.fn();
+    const registerHook = vi.fn();
+    activate({ registerAgentRuntime, registerHook });
+
+    expect(registerHook).toHaveBeenCalledWith(expect.objectContaining({
+      hookId: 'agent.resolvePrerequisites',
+      filters: { agentId: 'kimi' },
+      executionKind: 'decide',
+      handler: expect.any(Function),
+    }));
+  });
+
   it('registers the Kimi ACP backend through the plugin API', async () => {
     const spec = await readKimiSpec();
 

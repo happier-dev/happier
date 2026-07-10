@@ -1,14 +1,18 @@
 import {
   definePluginManifest,
-  type PluginBackendContributionV2,
+  type PluginAgentContributionV2,
   type PluginManifestV2,
+  type PluginAgentSettingsContributionV1,
 } from '@happier-dev/plugin-sdk';
 
 import { KIMI_ACP_BACKEND_SPEC } from './agent/acp/definition.js';
+import { KIMI_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
 type KimiPluginManifestV2 = Omit<PluginManifestV2, 'contributes'> & Readonly<{
   contributes: Readonly<{
-    backends: ReadonlyArray<PluginBackendContributionV2>;
+    agents: ReadonlyArray<PluginAgentContributionV2>;
+    hooks: NonNullable<NonNullable<PluginManifestV2['contributes']>['hooks']>;
+    agentSettings: ReadonlyArray<PluginAgentSettingsContributionV1>;
   }>;
 }>;
 
@@ -19,16 +23,16 @@ export const PLUGIN_MANIFEST = definePluginManifest({
   displayName: 'kimi',
   description: undefined,
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: ['backends'] },
-  targets: {},
-  capabilities: { permissions: [] },
+  activationEvents: ['onAgent:kimi'],
+  uses: ['agents', 'hooks'],
+  entrypoints: { main: './dist/index.js' },
+  permissions: { required: [], optional: [] },
   contributes: {
-    backends: [
+    agents: [
       {
         kindVersion: 1,
         id: 'kimi',
-        agentId: 'kimi',
-        engine: {
+        runtime: {
           kind: 'acp',
           transport: KIMI_ACP_BACKEND_SPEC.transport,
           ux: KIMI_ACP_BACKEND_SPEC.ux,
@@ -50,5 +54,20 @@ export const PLUGIN_MANIFEST = definePluginManifest({
         },
       },
     ],
+    hooks: [
+      {
+        id: 'agent.resolvePrerequisites',
+        hookApiVersion: 1,
+        category: 'decision',
+        scope: 'agent',
+        filters: { agentId: 'kimi' },
+        executionKind: 'decide',
+        handler: {
+          target: 'plugin',
+          exportName: 'resolveKimiDaemonSpawnPrerequisites',
+        },
+      },
+    ],
+    agentSettings: [KIMI_AGENT_SETTINGS_CONTRIBUTION],
   },
 } satisfies KimiPluginManifestV2);

@@ -2,7 +2,7 @@ import type {
   AcpStderrRulesV1,
   AcpToolNameInferenceV1,
   AcpToolNameResolverV1,
-} from '@happier-dev/plugin-sdk/acp';
+} from '@happier-dev/plugin-sdk/experimental/acp';
 
 export const KIMI_ACP_TIMEOUTS = Object.freeze({
   initMs: 90_000,

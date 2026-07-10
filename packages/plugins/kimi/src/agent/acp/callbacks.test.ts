@@ -1,0 +1,65 @@
+import { rmSync } from 'node:fs';
+import { basename, delimiter } from 'node:path';
+
+import { describe, expect, it } from 'vitest';
+
+import { buildKimiAcpArgv, buildKimiAcpEnv } from './callbacks.js';
+
+function collectKimiShimDir(env: Readonly<Record<string, string>> | undefined): string | null {
+  const firstPythonPathEntry = env?.PYTHONPATH?.split(delimiter)[0];
+  if (!firstPythonPathEntry || !basename(firstPythonPathEntry).startsWith('kimi-acp-poll-selector-')) {
+    return null;
+  }
+  return firstPythonPathEntry;
+}
+
+describe('Kimi ACP callbacks', () => {
+  it('normalizes danger-full-access aliases through the shared ACP permission intent parser', () => {
+    expect(buildKimiAcpArgv({
+      baseArgs: ['--model', 'kimi-k2'],
+      cwd: '/workspace',
+      env: {},
+      permissionMode: 'danger-full-access',
+    })).toEqual([
+      '--work-dir',
+      '/workspace',
+      '--yolo',
+      '--model',
+      'kimi-k2',
+    ]);
+  });
+
+  it('normalizes mixed-case Python selector env values through the callback env builder', async () => {
+    const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+    const envs: Array<Readonly<Record<string, string>> | undefined> = [];
+
+    Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'linux' });
+    try {
+      for (const selector of ['poll', 'POLL', ' PoLl ']) {
+        const env = await buildKimiAcpEnv({
+          cwd: '/workspace',
+          env: {
+            HAPPIER_KIMI_ACP_SELECTOR: selector,
+            PYTHONPATH: '/existing',
+          },
+        });
+        envs.push(env);
+      }
+
+      for (const env of envs) {
+        expect(collectKimiShimDir(env)).toEqual(expect.stringContaining('kimi-acp-poll-selector-'));
+        expect(env?.PYTHONPATH).toContain('/existing');
+      }
+    } finally {
+      if (originalPlatformDescriptor) {
+        Object.defineProperty(process, 'platform', originalPlatformDescriptor);
+      }
+      for (const env of envs) {
+        const shimDir = collectKimiShimDir(env);
+        if (shimDir) {
+          rmSync(shimDir, { recursive: true, force: true });
+        }
+      }
+    }
+  });
+});

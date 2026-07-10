@@ -34,7 +34,7 @@ export const KIMI_UI_DESCRIPTOR = Object.freeze({
     icon: { assetId: 'kimi' },
   },
   settings: {
-    descriptorId: 'kimi.providerSettings.v1',
+    descriptorId: 'kimi.agentSettings.v1',
   },
   behavior: {},
   session: {},

@@ -73,10 +73,10 @@ export const AGENT_DEFINITION = Object.freeze({
     installGuideUrl: 'https://kimi.moonshot.cn/docs/cli',
     docsUrl: 'https://code.kimi.com',
   },
-  providerSettings: null,
+  agentSettings: null,
   runtimeContributions: {
-    providerCatalogEntry: {
-      importName: 'KIMI_PROVIDER_RUNTIME_CONTRIBUTION',
+    agentCatalogEntry: {
+      importName: 'KIMI_AGENT_RUNTIME_CONTRIBUTION',
       source: './agent/contributions/runtime',
     },
   },
