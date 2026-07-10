@@ -45,7 +45,12 @@ export type ConnectedServicesProviderStateSharingModeV1 = z.infer<
 export const ConnectedServicesProviderStateSharingPolicyV1Schema = z
   .object({
     configMode: ConnectedServicesProviderConfigSharingModeV1Schema.default('linked'),
-    stateMode: ConnectedServicesProviderStateSharingModeV1Schema.default('isolated'),
+    // Default to shared session state: most users connect multiple accounts for
+    // usage/quota and expect their provider sessions to continue across accounts.
+    // Turning this off (via `defaults.stateMode` or a per-agent `byAgentId`
+    // override) is the opt-out. Providers whose descriptor reports
+    // `state.supported: false` ignore `shared` and stay isolated.
+    stateMode: ConnectedServicesProviderStateSharingModeV1Schema.default('shared'),
   })
   .strict();
 
@@ -72,7 +77,7 @@ export const ConnectedServicesProviderStateSharingSettingsV1Schema = z
     v: z.literal(1).default(1),
     defaults: ConnectedServicesProviderStateSharingPolicyV1Schema.default({
       configMode: 'linked',
-      stateMode: 'isolated',
+      stateMode: 'shared',
     }),
     byAgentId: z
       .record(AgentIdSettingsKeySchema, ConnectedServicesProviderStateSharingOverrideV1Schema)
@@ -86,7 +91,7 @@ export const ConnectedServicesProviderStateSharingSettingsV1Schema = z
     v: 1,
     defaults: {
       configMode: 'linked',
-      stateMode: 'isolated',
+      stateMode: 'shared',
     },
     byAgentId: {},
     acknowledgedRisksByAgentId: {},

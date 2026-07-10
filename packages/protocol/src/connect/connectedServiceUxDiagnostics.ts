@@ -130,12 +130,16 @@ const ConnectedServiceUxDiagnosticDiagnosticsV1Schema = z
     `diagnostics must include at most ${CONNECTED_SERVICE_UX_DIAGNOSTIC_MAX_DIAGNOSTIC_KEYS} keys`,
   );
 
-export const ConnectedServiceUxDiagnosticV1Schema = z.object({
+// R.17 classification (2026-07-10): the former `providerId` field carried
+// `ConnectedServiceStateSharingDescriptor.providerId` values, which are typed
+// `CatalogAgentId` (agent-meaning, e.g. 'codex') — NOT connected-service ids
+// (those travel in `serviceId`). It was merged into `agentId`; legacy persisted
+// diagnostics are normalized below.
+const ConnectedServiceUxDiagnosticV1ObjectSchema = z.object({
   code: ConnectedServiceUxDiagnosticCodeV1Schema,
   failurePhase: ConnectedServiceUxDiagnosticFailurePhaseV1Schema,
   source: ConnectedServiceUxDiagnosticSourceV1Schema,
   serviceId: ConnectedServiceIdSchema.optional(),
-  providerId: z.string().trim().min(1).optional(),
   agentId: z.string().trim().min(1).optional(),
   profileId: ConnectedServiceProfileIdSchema.optional(),
   groupId: ConnectedServiceAuthGroupIdSchema.optional(),
@@ -144,7 +148,24 @@ export const ConnectedServiceUxDiagnosticV1Schema = z.object({
   diagnostics: ConnectedServiceUxDiagnosticDiagnosticsV1Schema.optional(),
 }).strict();
 
-export type ConnectedServiceUxDiagnosticV1 = z.infer<typeof ConnectedServiceUxDiagnosticV1Schema>;
+// legacy `providerId` read-compat (pre-rename persisted diagnostics in transcripts)
+function normalizeLegacyConnectedServiceUxDiagnosticAgentId(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  if (!Object.hasOwn(record, 'providerId')) return value;
+  const { providerId: legacyProviderId, ...rest } = record;
+  if (Object.hasOwn(record, 'agentId')) return rest;
+  return typeof legacyProviderId === 'string' && legacyProviderId.trim()
+    ? { ...rest, agentId: legacyProviderId }
+    : rest;
+}
+
+export const ConnectedServiceUxDiagnosticV1Schema = z.preprocess(
+  normalizeLegacyConnectedServiceUxDiagnosticAgentId,
+  ConnectedServiceUxDiagnosticV1ObjectSchema,
+);
+
+export type ConnectedServiceUxDiagnosticV1 = z.infer<typeof ConnectedServiceUxDiagnosticV1ObjectSchema>;
 
 export function normalizeConnectedServiceUxDiagnosticV1(
   value: unknown,

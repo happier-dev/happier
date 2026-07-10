@@ -101,14 +101,10 @@ describe('accountSettings', () => {
     });
   });
 
-  it('defaults session provider usage gauge settings to automatic most constrained display', () => {
+  it('no longer materializes a sessionProviderUsageSettingsV1 default (dead duplicate of the flat gauge keys)', () => {
     const parsed = accountSettingsParse({});
 
-    expect(parsed.sessionProviderUsageSettingsV1).toEqual({
-      v: 1,
-      gaugeMode: 'auto',
-      gaugeWindowMode: 'most_constrained',
-    });
+    expect((parsed as Record<string, unknown>).sessionProviderUsageSettingsV1).toBeUndefined();
   });
 
   it('defaults pending queue draining to one message per wake', () => {
@@ -122,7 +118,17 @@ describe('accountSettings', () => {
     expect(accountSettingsParse({ sessionPendingQueueDrainMode: 'everything' }).sessionPendingQueueDrainMode).toBe('one_at_a_time');
   });
 
-  it('accepts hidden session provider usage gauge settings', () => {
+  it('defaults pending queue delivery timing to foreground-ready and falls back for malformed values', () => {
+    expect(accountSettingsParse({}).sessionPendingQueueDeliveryTiming).toBe('after_foreground_ready');
+    expect(accountSettingsParse({ sessionPendingQueueDeliveryTiming: 'after_runtime_idle' }).sessionPendingQueueDeliveryTiming)
+      .toBe('after_runtime_idle');
+    expect(accountSettingsParse({ sessionPendingQueueDeliveryTiming: 'after_everything' }).sessionPendingQueueDeliveryTiming)
+      .toBe('after_foreground_ready');
+  });
+
+  it('preserves a stored legacy sessionProviderUsageSettingsV1 blob as an inert unknown key', () => {
+    // Migration safety: AccountSettingsSchema is passthrough, so stored blobs that still carry the
+    // removed nested key parse fine — the key is preserved but has no application reader.
     const parsed = accountSettingsParse({
       sessionProviderUsageSettingsV1: {
         v: 1,
@@ -131,24 +137,61 @@ describe('accountSettings', () => {
       },
     });
 
-    expect(parsed.sessionProviderUsageSettingsV1).toEqual({
+    expect((parsed as Record<string, unknown>).sessionProviderUsageSettingsV1).toEqual({
       v: 1,
       gaugeMode: 'hidden',
       gaugeWindowMode: 'weekly',
     });
   });
 
-  it('defaults connected-service provider state sharing to shared configuration with isolated session state', () => {
+  it('defaults connected-service provider state sharing to shared configuration and shared session state', () => {
     const parsed = accountSettingsParse({});
 
     expect(parsed.connectedServicesProviderStateSharingSettingsV1).toEqual({
       v: 1,
       defaults: {
         configMode: 'linked',
-        stateMode: 'isolated',
+        stateMode: 'shared',
       },
       byAgentId: {},
       acknowledgedRisksByAgentId: {},
+    });
+  });
+
+  it('resolves shared session state by default while per-agent overrides can opt out', () => {
+    const parsed = accountSettingsParse({});
+    expect(resolveConnectedServicesProviderStateSharingPolicyV1(
+      parsed.connectedServicesProviderStateSharingSettingsV1,
+      'codex',
+    )).toEqual({
+      configMode: 'linked',
+      stateMode: 'shared',
+    });
+
+    const overridden = accountSettingsParse({
+      connectedServicesProviderStateSharingSettingsV1: {
+        v: 1,
+        byAgentId: {
+          codex: {
+            stateMode: 'isolated',
+          },
+        },
+      },
+    });
+    expect(resolveConnectedServicesProviderStateSharingPolicyV1(
+      overridden.connectedServicesProviderStateSharingSettingsV1,
+      'codex',
+    )).toEqual({
+      configMode: 'linked',
+      stateMode: 'isolated',
+    });
+    // Other agents keep the shared default.
+    expect(resolveConnectedServicesProviderStateSharingPolicyV1(
+      overridden.connectedServicesProviderStateSharingSettingsV1,
+      'pi',
+    )).toEqual({
+      configMode: 'linked',
+      stateMode: 'shared',
     });
   });
 
@@ -255,7 +298,7 @@ describe('accountSettings', () => {
       v: 1,
       defaults: {
         configMode: 'linked',
-        stateMode: 'isolated',
+        stateMode: 'shared',
       },
       byAgentId: {},
       acknowledgedRisksByAgentId: {},
@@ -584,7 +627,7 @@ describe('accountSettings', () => {
     expect(parsed.futureField).toEqual({ keep: true });
   });
 
-  it('disables cross-session session-agent controls by default (opt-in)', () => {
+  it('allows agent coordination by default while keeping destructive actions opt-in', () => {
     const parsed = accountSettingsParse({});
     const settings = parsed.actionsSettingsV1;
 
@@ -592,18 +635,70 @@ describe('accountSettings', () => {
     expectActionSurfaceEnabled('session.stop', settings, 'mcp', true);
     expectActionSurfaceEnabled('session.stop', settings, 'cli', true);
 
-    // Session agents controlling other sessions is opt-in and must be fail-closed by default.
-    expectActionSurfaceEnabled('session.stop', settings, 'session_agent', false);
+    // Destructive actions remain opt-in.
+    expectActionSurfaceEnabled('session.stop', settings, 'agent', false);
+    expectActionSurfaceEnabled('session.archive', settings, 'agent', false);
+    expectActionSurfaceEnabled('session.unarchive', settings, 'agent', false);
+    expectActionSurfaceEnabled('session.usageLimit.consumeResetCredit', settings, 'agent', false);
+    expectActionSurfaceEnabled('session.permission.respond', settings, 'agent', false);
+    expectActionSurfaceEnabled('session.user_action.answer', settings, 'agent', false);
+
+    // Coordination and non-destructive runtime controls are Allowed by default.
     // Title changes are safe and are required for provider UX (auto-title on first message).
-    expectActionSurfaceEnabled('session.title.set', settings, 'session_agent', true);
-    expectActionSurfaceEnabled('session.message.send', settings, 'session_agent', false);
-    expectActionSurfaceEnabled('session.list', settings, 'session_agent', false);
-    expectActionSurfaceEnabled('session.usageLimit.waitResume.enable', settings, 'session_agent', false);
-    expectActionSurfaceEnabled('session.usageLimit.waitResume.cancel', settings, 'session_agent', false);
-    expectActionSurfaceEnabled('session.usageLimit.checkNow', settings, 'session_agent', false);
+    expectActionSurfaceEnabled('session.title.set', settings, 'agent', true);
+    expectActionSurfaceEnabled('session.message.send', settings, 'agent', true);
+    expectActionSurfaceEnabled('session.list', settings, 'agent', true);
+    expectActionSurfaceEnabled('session.status.get', settings, 'agent', true);
+    expectActionSurfaceEnabled('session.history.get', settings, 'agent', true);
+    expectActionSurfaceEnabled('session.wait.idle', settings, 'agent', true);
+    expectActionSurfaceEnabled('session.permission_mode.set', settings, 'agent', true);
+    expectActionSurfaceEnabled('session.model.set', settings, 'agent', true);
+    expectActionSurfaceEnabled('session.mode.set', settings, 'agent', true);
+    expectActionSurfaceEnabled('session.usageLimit.waitResume.enable', settings, 'agent', true);
+    expectActionSurfaceEnabled('session.usageLimit.waitResume.cancel', settings, 'agent', true);
+    expectActionSurfaceEnabled('session.usageLimit.checkNow', settings, 'agent', true);
   });
 
-  it('migrates legacy default session-agent action settings to keep session.title.set enabled', () => {
+  it('defaults agent spawn policy to open override controls', () => {
+    const parsed = accountSettingsParse({});
+
+    expect(parsed.sessionAgentSpawnPolicyV1).toEqual({
+      v: 1,
+      allowCustomDirectory: true,
+      allowCrossMachine: true,
+      allowBackendTargetOverride: true,
+      allowModelOverride: true,
+      allowPermissionModeOverride: true,
+      allowAgentModeOverride: true,
+      allowConfigOptionOverrides: true,
+      allowProfileOverride: true,
+      allowEnvironmentVariables: true,
+      allowConnectedServicesOverride: true,
+      allowMcpSelectionOverride: true,
+      allowTranscriptStorageOverride: true,
+      permissionCeiling: null,
+    });
+  });
+
+  it('sanitizes invalid agent spawn policy values back to safe defaults', () => {
+    const parsed = accountSettingsParse({
+      sessionAgentSpawnPolicyV1: {
+        v: 1,
+        allowCustomDirectory: false,
+        allowEnvironmentVariables: false,
+        permissionCeiling: 'not-a-real-mode',
+      },
+    });
+
+    expect(parsed.sessionAgentSpawnPolicyV1).toMatchObject({
+      v: 1,
+      allowCustomDirectory: false,
+      allowEnvironmentVariables: false,
+      permissionCeiling: null,
+    });
+  });
+
+  it('migrates legacy default agent action settings to the current agent default matrix', () => {
     const legacyDefaultDisabled = [
       'session.stop',
       'session.title.set',
@@ -627,17 +722,21 @@ describe('accountSettings', () => {
       actionsSettingsV1: {
         v: 1,
         actions: Object.fromEntries(
-          legacyDefaultDisabled.map((id) => [id, { disabledSurfaces: ['session_agent'] }]),
+          legacyDefaultDisabled.map((id) => [id, { disabledSurfaces: ['agent'] }]),
         ),
       },
     });
     const settings = parsed.actionsSettingsV1;
 
-    expectActionSurfaceEnabled('session.stop', settings, 'session_agent', false);
-    expectActionSurfaceEnabled('session.title.set', settings, 'session_agent', true);
+    expectActionSurfaceEnabled('session.stop', settings, 'agent', false);
+    expectActionSurfaceEnabled('session.title.set', settings, 'agent', true);
+    expectActionSurfaceEnabled('session.message.send', settings, 'agent', true);
+    expectActionSurfaceEnabled('session.list', settings, 'agent', true);
+    expectActionSurfaceEnabled('session.permission_mode.set', settings, 'agent', true);
+    expectActionSurfaceEnabled('session.usageLimit.consumeResetCredit', settings, 'agent', false);
   });
 
-  it('keeps session.title.set enabled even when legacy actions settings also contain approval requirements', () => {
+  it('migrates legacy agent locks while preserving unrelated action settings fields', () => {
     const legacyDefaultDisabled = [
       'session.stop',
       'session.title.set',
@@ -661,14 +760,33 @@ describe('accountSettings', () => {
       actionsSettingsV1: {
         v: 1,
         actions: Object.fromEntries([
-          ...legacyDefaultDisabled.map((id) => [id, { disabledSurfaces: ['session_agent'] }]),
-          ['session.message.send', { disabledSurfaces: ['session_agent'], approvalRequiredSurfaces: ['cli'] }],
+          ...legacyDefaultDisabled.map((id) => [id, { disabledSurfaces: ['agent'] }]),
+          ['session.message.send', { disabledSurfaces: ['agent'], approvalRequiredSurfaces: ['cli'] }],
         ]),
       },
     });
 
-    expectActionSurfaceEnabled('session.title.set', parsed.actionsSettingsV1, 'session_agent', true);
-    expectActionSurfaceEnabled('session.message.send', parsed.actionsSettingsV1, 'session_agent', false);
+    expectActionSurfaceEnabled('session.title.set', parsed.actionsSettingsV1, 'agent', true);
+    expectActionSurfaceEnabled('session.message.send', parsed.actionsSettingsV1, 'agent', true);
+    expect(parsed.actionsSettingsV1.actions['session.message.send']?.approvalRequiredSurfaces).toEqual(['cli']);
+  });
+
+  it('migrates partial legacy agent locks for actions that are now default-open', () => {
+    const parsed = accountSettingsParse({
+      actionsSettingsV1: {
+        v: 1,
+        actions: {
+          'session.permission_mode.set': { disabledSurfaces: ['agent'] },
+          'session.message.send': { disabledSurfaces: ['agent'], approvalRequiredSurfaces: ['cli'] },
+          'session.stop': { disabledSurfaces: ['agent'] },
+        },
+      },
+    });
+
+    expectActionSurfaceEnabled('session.permission_mode.set', parsed.actionsSettingsV1, 'agent', true);
+    expectActionSurfaceEnabled('session.message.send', parsed.actionsSettingsV1, 'agent', true);
+    expect(parsed.actionsSettingsV1.actions['session.message.send']?.approvalRequiredSurfaces).toEqual(['cli']);
+    expectActionSurfaceEnabled('session.stop', parsed.actionsSettingsV1, 'agent', false);
   });
 
   it('adds the forward-compatible attention delivery policy while preserving unknown settings fields', () => {

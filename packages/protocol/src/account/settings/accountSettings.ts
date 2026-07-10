@@ -5,7 +5,7 @@ import {
   type ActionSettingsOverride,
   type ActionsSettingsV1,
 } from '../../actions/actionSettings.js';
-import { AcpCatalogSettingsV1Schema } from '../../acpCatalog/settingsV1.js';
+import { AcpCatalogSettingsV1Schema } from '../../acp/catalog/settingsV1.js';
 import {
   CodingPromptBehaviorV1Schema,
   DEFAULT_CODING_PROMPT_BEHAVIOR_V1,
@@ -40,6 +40,17 @@ import {
   type NotificationChannelV1,
   type NotificationChannelsV1,
 } from './notificationChannels.js';
+import {
+  DEFAULT_SESSION_PENDING_QUEUE_DELIVERY_TIMING,
+  SessionPendingQueueDeliveryTimingSchema,
+} from './sessionPendingQueueDeliveryTiming.js';
+import { SESSION_PERMISSION_MODES } from '../../sessions/metadata/sessionPermissionModes.js';
+export {
+  DEFAULT_SESSION_PENDING_QUEUE_DELIVERY_TIMING,
+  SESSION_PENDING_QUEUE_DELIVERY_TIMINGS,
+  SessionPendingQueueDeliveryTimingSchema,
+  type SessionPendingQueueDeliveryTiming,
+} from './sessionPendingQueueDeliveryTiming.js';
 
 function rekeyLegacyBuiltInAgentMap<T>(raw: unknown): Record<string, T> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
@@ -102,31 +113,78 @@ export type NotificationsSettingsV1 = z.infer<typeof NotificationsSettingsV1Sche
 
 export const DEFAULT_NOTIFICATIONS_SETTINGS_V1: NotificationsSettingsV1 = NotificationsSettingsV1Schema.parse({});
 
+const SessionAgentSpawnPermissionCeilingV1Schema = z
+  .enum(SESSION_PERMISSION_MODES)
+  .nullable()
+  .default(null)
+  .catch(null);
+
+export const SessionAgentSpawnPolicyV1Schema = z
+  .object({
+    v: z.literal(1).default(1),
+    allowCustomDirectory: z.boolean().default(true),
+    allowCrossMachine: z.boolean().default(true),
+    allowBackendTargetOverride: z.boolean().default(true),
+    allowModelOverride: z.boolean().default(true),
+    allowPermissionModeOverride: z.boolean().default(true),
+    allowAgentModeOverride: z.boolean().default(true),
+    allowConfigOptionOverrides: z.boolean().default(true),
+    allowProfileOverride: z.boolean().default(true),
+    allowEnvironmentVariables: z.boolean().default(true),
+    allowConnectedServicesOverride: z.boolean().default(true),
+    allowMcpSelectionOverride: z.boolean().default(true),
+    allowTranscriptStorageOverride: z.boolean().default(true),
+    permissionCeiling: SessionAgentSpawnPermissionCeilingV1Schema,
+  })
+  .strict()
+  .catch({
+    v: 1,
+    allowCustomDirectory: true,
+    allowCrossMachine: true,
+    allowBackendTargetOverride: true,
+    allowModelOverride: true,
+    allowPermissionModeOverride: true,
+    allowAgentModeOverride: true,
+    allowConfigOptionOverrides: true,
+    allowProfileOverride: true,
+    allowEnvironmentVariables: true,
+    allowConnectedServicesOverride: true,
+    allowMcpSelectionOverride: true,
+    allowTranscriptStorageOverride: true,
+    permissionCeiling: null,
+  });
+
+export type SessionAgentSpawnPolicyV1 = z.infer<typeof SessionAgentSpawnPolicyV1Schema>;
+
+export const DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1: SessionAgentSpawnPolicyV1 =
+  SessionAgentSpawnPolicyV1Schema.parse({});
+
 export const DEFAULT_ACTIONS_SETTINGS_V1: ActionsSettingsV1 = ActionsSettingsV1Schema.parse({
   v: 1,
   actions: {
-    // Fail-closed: session agents must not control other sessions by default.
-    // Users can explicitly opt in per action via settings.
-    'session.stop': { disabledSurfaces: ['session_agent'] },
-    'session.permission_mode.set': { disabledSurfaces: ['session_agent'] },
-    'session.model.set': { disabledSurfaces: ['session_agent'] },
-    'session.archive': { disabledSurfaces: ['session_agent'] },
-    'session.unarchive': { disabledSurfaces: ['session_agent'] },
-    'session.status.get': { disabledSurfaces: ['session_agent'] },
-    'session.history.get': { disabledSurfaces: ['session_agent'] },
-    'session.wait.idle': { disabledSurfaces: ['session_agent'] },
-    'session.usageLimit.waitResume.enable': { disabledSurfaces: ['session_agent'] },
-    'session.usageLimit.waitResume.cancel': { disabledSurfaces: ['session_agent'] },
-    'session.usageLimit.checkNow': { disabledSurfaces: ['session_agent'] },
-    'session.message.send': { disabledSurfaces: ['session_agent'] },
-    'session.permission.respond': { disabledSurfaces: ['session_agent'] },
-    'session.user_action.answer': { disabledSurfaces: ['session_agent'] },
-    'session.mode.set': { disabledSurfaces: ['session_agent'] },
-    'session.list': { disabledSurfaces: ['session_agent'] },
-    'session.activity.get': { disabledSurfaces: ['session_agent'] },
-    'session.messages.recent.get': { disabledSurfaces: ['session_agent'] },
+    // Agent-surface coordination is enabled by default; destructive or human-decision
+    // actions stay opt-in as a product courtesy.
+    'session.stop': { disabledSurfaces: ['agent'] },
+    'session.archive': { disabledSurfaces: ['agent'] },
+    'session.unarchive': { disabledSurfaces: ['agent'] },
+    'session.usageLimit.consumeResetCredit': { disabledSurfaces: ['agent'] },
+    'session.permission.respond': { disabledSurfaces: ['agent'] },
+    'session.user_action.answer': { disabledSurfaces: ['agent'] },
   },
 });
+
+const CURRENT_DEFAULT_SESSION_AGENT_DISABLED_ACTION_IDS_V1 = Object.freeze([
+  'session.stop',
+  'session.archive',
+  'session.unarchive',
+  'session.usageLimit.consumeResetCredit',
+  'session.permission.respond',
+  'session.user_action.answer',
+] as const satisfies readonly string[]);
+
+const CURRENT_DEFAULT_SESSION_AGENT_DISABLED_ACTION_ID_SET_V1 = new Set<string>(
+  CURRENT_DEFAULT_SESSION_AGENT_DISABLED_ACTION_IDS_V1,
+);
 
 export const UsageLimitRecoverySettingsV1Schema = z
   .object({
@@ -152,26 +210,6 @@ export const UsageLimitRecoverySettingsV1Schema = z
 export type UsageLimitRecoverySettingsV1 = z.infer<typeof UsageLimitRecoverySettingsV1Schema>;
 
 export const DEFAULT_USAGE_LIMIT_RECOVERY_SETTINGS_V1: UsageLimitRecoverySettingsV1 = UsageLimitRecoverySettingsV1Schema.parse({});
-
-export const SessionProviderUsageSettingsV1Schema = z
-  .object({
-    v: z.literal(1).default(1),
-    gaugeMode: z.enum(['auto', 'hidden']).default('auto'),
-    gaugeWindowMode: z
-      .enum(['most_constrained', 'daily', 'weekly', 'primary', 'secondary', 'session'])
-      .default('most_constrained'),
-  })
-  .strict()
-  .catch({
-    v: 1,
-    gaugeMode: 'auto',
-    gaugeWindowMode: 'most_constrained',
-  });
-
-export type SessionProviderUsageSettingsV1 = z.infer<typeof SessionProviderUsageSettingsV1Schema>;
-
-export const DEFAULT_SESSION_PROVIDER_USAGE_SETTINGS_V1: SessionProviderUsageSettingsV1 =
-  SessionProviderUsageSettingsV1Schema.parse({});
 
 export const SESSION_PENDING_QUEUE_DRAIN_MODES = ['one_at_a_time', 'drain_all'] as const;
 export const DEFAULT_SESSION_PENDING_QUEUE_DRAIN_MODE = 'one_at_a_time' as const;
@@ -199,6 +237,10 @@ const LEGACY_DEFAULT_SESSION_AGENT_DISABLED_ACTION_IDS_V1 = Object.freeze([
   'session.messages.recent.get',
 ] as const satisfies readonly string[]);
 
+const LEGACY_DEFAULT_SESSION_AGENT_DISABLED_ACTION_ID_SET_V1 = new Set<string>(
+  LEGACY_DEFAULT_SESSION_AGENT_DISABLED_ACTION_IDS_V1,
+);
+
 function isLegacyDefaultSessionAgentActionLockdownV1(settings: ActionsSettingsV1): boolean {
   const known = new Set<string>(LEGACY_DEFAULT_SESSION_AGENT_DISABLED_ACTION_IDS_V1);
   const actions: Partial<Record<string, ActionSettingsOverride>> = settings.actions;
@@ -211,21 +253,85 @@ function isLegacyDefaultSessionAgentActionLockdownV1(settings: ActionsSettingsV1
     if (!override || typeof override !== 'object' || Array.isArray(override)) return false;
     if (override.enabled === false) return false;
     const disabledSurfaces = Array.isArray(override.disabledSurfaces) ? override.disabledSurfaces : [];
-    if (disabledSurfaces.length !== 1 || disabledSurfaces[0] !== 'session_agent') return false;
+    if (disabledSurfaces.length !== 1 || disabledSurfaces[0] !== 'agent') return false;
     const enabledPlacements = Array.isArray(override.enabledPlacements) ? override.enabledPlacements : [];
     if (enabledPlacements.length > 0) return false;
     const disabledPlacements = Array.isArray(override.disabledPlacements) ? override.disabledPlacements : [];
     if (disabledPlacements.length > 0) return false;
+    const approvalRequiredSurfaces = Array.isArray(override.approvalRequiredSurfaces)
+      ? override.approvalRequiredSurfaces
+      : [];
+    if (approvalRequiredSurfaces.length > 0) return false;
+    const toolExposureModes = override.toolExposureModes && typeof override.toolExposureModes === 'object'
+      ? Object.keys(override.toolExposureModes)
+      : [];
+    if (toolExposureModes.length > 0) return false;
   }
   return true;
 }
 
-function migrateLegacyDefaultActionsSettingsV1(settings: ActionsSettingsV1): ActionsSettingsV1 {
-  if (!isLegacyDefaultSessionAgentActionLockdownV1(settings)) return settings;
-  const actions = Object.fromEntries(
-    Object.entries(settings.actions).filter(([actionId]) => actionId !== 'session.title.set'),
+function hasOnlyEmptyActionSettingsFieldsV1(override: Readonly<Record<string, unknown>>): boolean {
+  const enabledPlacements = Array.isArray(override.enabledPlacements) ? override.enabledPlacements : [];
+  const disabledSurfaces = Array.isArray(override.disabledSurfaces) ? override.disabledSurfaces : [];
+  const disabledPlacements = Array.isArray(override.disabledPlacements) ? override.disabledPlacements : [];
+  const approvalRequiredSurfaces = Array.isArray(override.approvalRequiredSurfaces)
+    ? override.approvalRequiredSurfaces
+    : [];
+  const toolExposureModes = override.toolExposureModes && typeof override.toolExposureModes === 'object'
+    ? override.toolExposureModes
+    : {};
+  return (
+    override.enabled !== false &&
+    disabledSurfaces.length === 0 &&
+    enabledPlacements.length === 0 &&
+    disabledPlacements.length === 0 &&
+    approvalRequiredSurfaces.length === 0 &&
+    Object.keys(toolExposureModes).length === 0
   );
-  return ActionsSettingsV1Schema.parse({ ...settings, actions });
+}
+
+function migrateLegacyDefaultActionsSettingsV1(settings: ActionsSettingsV1): ActionsSettingsV1 {
+  const actions: Partial<Record<string, ActionSettingsOverride>> = { ...settings.actions };
+  let changed = false;
+
+  const shouldMigrateAllLegacyDefaults = isLegacyDefaultSessionAgentActionLockdownV1(settings);
+  for (const id of Object.keys(actions)) {
+    if (!shouldMigrateAllLegacyDefaults && !LEGACY_DEFAULT_SESSION_AGENT_DISABLED_ACTION_ID_SET_V1.has(id)) continue;
+    if (CURRENT_DEFAULT_SESSION_AGENT_DISABLED_ACTION_ID_SET_V1.has(id)) continue;
+    const existing = actions[id];
+    if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
+      delete actions[id];
+      changed = true;
+      continue;
+    }
+
+    const previousDisabledSurfaces = Array.isArray(existing.disabledSurfaces) ? existing.disabledSurfaces : [];
+    const disabledSurfaces = previousDisabledSurfaces.filter((surface: unknown) => surface !== 'agent');
+    if (disabledSurfaces.length === previousDisabledSurfaces.length) continue;
+
+    changed = true;
+    const next = {
+      ...existing,
+      disabledSurfaces,
+    };
+    if (hasOnlyEmptyActionSettingsFieldsV1(next as Record<string, unknown>)) {
+      delete actions[id];
+    } else {
+      actions[id] = next;
+    }
+  }
+
+  if (shouldMigrateAllLegacyDefaults) {
+    for (const id of CURRENT_DEFAULT_SESSION_AGENT_DISABLED_ACTION_IDS_V1) {
+      if (actions[id]) continue;
+      const defaultOverride = DEFAULT_ACTIONS_SETTINGS_V1.actions[id as keyof typeof DEFAULT_ACTIONS_SETTINGS_V1.actions];
+      if (!defaultOverride) continue;
+      actions[id] = defaultOverride;
+      changed = true;
+    }
+  }
+
+  return changed ? { ...settings, actions: actions as ActionsSettingsV1['actions'] } : settings;
 }
 
 const BackendEnabledByTargetKeySchema = z.record(z.string(), z.boolean()).catch({});
@@ -322,8 +428,11 @@ export const AccountSettingsSchema = z.preprocess(
         .catch(DEFAULT_PEER_MEDIATION_PREFERENCES_V1)
         .default(DEFAULT_PEER_MEDIATION_PREFERENCES_V1),
       usageLimitRecoverySettingsV1: UsageLimitRecoverySettingsV1Schema.default(DEFAULT_USAGE_LIMIT_RECOVERY_SETTINGS_V1),
-      sessionProviderUsageSettingsV1: SessionProviderUsageSettingsV1Schema.default(DEFAULT_SESSION_PROVIDER_USAGE_SETTINGS_V1),
       sessionPendingQueueDrainMode: SessionPendingQueueDrainModeSchema.default(DEFAULT_SESSION_PENDING_QUEUE_DRAIN_MODE),
+      sessionPendingQueueDeliveryTiming: SessionPendingQueueDeliveryTimingSchema.default(
+        DEFAULT_SESSION_PENDING_QUEUE_DELIVERY_TIMING,
+      ),
+      sessionAgentSpawnPolicyV1: SessionAgentSpawnPolicyV1Schema.default(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1),
       connectedServicesDefaultAuthByAgentIdV1: ConnectedServicesDefaultAuthByAgentIdV1Schema.default(
         DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1,
       ),
@@ -333,6 +442,7 @@ export const AccountSettingsSchema = z.preprocess(
         ),
       acpCatalogSettingsV1: AcpCatalogSettingsV1Schema.catch({ v: 2, backends: [] }).default({ v: 2, backends: [] }),
       workspaceRefsV1: z.array(WorkspaceRefV1Schema).catch([]).default([]),
+      providerSettingsV1: z.unknown().optional(),
     })
     .passthrough(),
 );
