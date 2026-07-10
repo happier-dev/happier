@@ -1,3 +1,3 @@
-Skeleton plugin package for `kiro` reserved per amendment-x Wave C 2026-04-27. Substantive content lands during Stage E.6 extraction (see `.project/plans/runtime-unification/stages/stage-E/E.6.md`). Currently no-op scaffolding.
+Bundled first-party plugin package for Kiro.
 
-Kiro is a Tier 1 PLACEHOLDER — the vendor CLI is not generally available. This package is reservation-only scaffolding and is explicitly excluded from bundled-plugin shipping until Stage E.6 lands the real backend/provider topology and the protocol/runtime vendor-incomplete contract. The `src/protocol/` directory is reserved for the canonical Kiro ACP catalog constants (`KIRO_ACP_CATALOG_AUTH_PARSER_ID`, `KIRO_ACP_CATALOG_TRANSPORT_PROFILE_ID`) per E.6 layout.
+Kiro runs through the generic ACP plugin surface. The package owns the Kiro ACP launch/auth/stderr facts, agent definition data, and UI projection descriptor used by generated host registries.
