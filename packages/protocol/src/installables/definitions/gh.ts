@@ -1,4 +1,4 @@
-import type { CapabilityId } from '../../capabilities.js';
+import type { CapabilityId } from '../../capabilities/index.js';
 import { InstallableDependencyDescriptorSchema } from '../descriptor.js';
 
 export const GH_INSTALLABLE_KEY = 'gh' as const;

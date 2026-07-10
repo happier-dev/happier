@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import type { CapabilityId } from '../capabilities.js';
+import type { CapabilityId } from '../capabilities/index.js';
 import { PluginDescriptorBaseV1Schema } from '../plugins/contributions/_descriptors.js';
 import { InstallableSourceSchema } from './sourceKind.js';
 
