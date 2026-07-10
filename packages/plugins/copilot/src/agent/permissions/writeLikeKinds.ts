@@ -1,4 +1,3 @@
-export const COPILOT_WRITE_LIKE_PERMISSION_KINDS = Object.freeze([
-  'external_directory',
-  'doom_loop',
-] as const);
+import { ACP_WRITE_LIKE_PERMISSION_KINDS } from '@happier-dev/plugin-sdk/experimental/acp';
+
+export const COPILOT_WRITE_LIKE_PERMISSION_KINDS = ACP_WRITE_LIKE_PERMISSION_KINDS;

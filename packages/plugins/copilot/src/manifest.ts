@@ -1,14 +1,17 @@
 import {
   definePluginManifest,
-  type PluginBackendContributionV2,
+  type PluginAgentContributionV2,
   type PluginManifestV2,
+  type PluginAgentSettingsContributionV1,
 } from '@happier-dev/plugin-sdk';
 
 import { COPILOT_ACP_BACKEND_SPEC } from './agent/acp/definition.js';
+import { COPILOT_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
 type CopilotPluginManifestV2 = Omit<PluginManifestV2, 'contributes'> & Readonly<{
   contributes: Readonly<{
-    backends: ReadonlyArray<PluginBackendContributionV2>;
+    agents: ReadonlyArray<PluginAgentContributionV2>;
+    agentSettings: ReadonlyArray<PluginAgentSettingsContributionV1>;
   }>;
 }>;
 
@@ -19,16 +22,16 @@ export const PLUGIN_MANIFEST = definePluginManifest({
   displayName: 'copilot',
   description: undefined,
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: ['backends'] },
-  targets: {},
-  capabilities: { permissions: [] },
+  activationEvents: ['onAgent:copilot'],
+  uses: ['agents'],
+  entrypoints: { main: './dist/index.js' },
+  permissions: { required: [], optional: [] },
   contributes: {
-    backends: [
+    agents: [
       {
         kindVersion: 1,
         id: 'copilot',
-        agentId: 'copilot',
-        engine: {
+        runtime: {
           kind: 'acp',
           transport: COPILOT_ACP_BACKEND_SPEC.transport,
           ux: COPILOT_ACP_BACKEND_SPEC.ux,
@@ -50,5 +53,6 @@ export const PLUGIN_MANIFEST = definePluginManifest({
         },
       },
     ],
+    agentSettings: [COPILOT_AGENT_SETTINGS_CONTRIBUTION],
   },
 } satisfies CopilotPluginManifestV2);

@@ -10,7 +10,7 @@ const FORBIDDEN_NO_EXECUTE_KEYS = new Set([
   'uiBehaviorOverride',
   'sessionProviderBehavior',
   'messageMetaOverride',
-  'providerSettings',
+  'agentSettings',
   'visibleMessageResolver',
   'svgIconXml',
 ]);
@@ -44,7 +44,7 @@ describe('COPILOT_UI_DESCRIPTOR', () => {
         connectedService: { serviceId: null, labelKey: 'agentInput.agent.copilot', connectRoute: null },
         icon: { assetId: 'copilot' },
       },
-      settings: { descriptorId: 'copilot.providerSettings.v1' },
+      settings: { descriptorId: 'copilot.agentSettings.v1' },
     });
   });
 

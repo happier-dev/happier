@@ -64,10 +64,10 @@ export const AGENT_DEFINITION = Object.freeze({
     installGuideUrl: null,
     docsUrl: 'https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli',
   },
-  providerSettings: null,
+  agentSettings: null,
   runtimeContributions: {
-    providerCatalogEntry: {
-      importName: 'COPILOT_PROVIDER_RUNTIME_CONTRIBUTION',
+    agentCatalogEntry: {
+      importName: 'COPILOT_AGENT_RUNTIME_CONTRIBUTION',
       source: './agent/contributions/runtime',
     },
   },

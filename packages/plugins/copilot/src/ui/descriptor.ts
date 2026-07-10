@@ -39,7 +39,7 @@ export const COPILOT_UI_DESCRIPTOR = Object.freeze({
     resume: 'experimental',
   },
   settings: {
-    descriptorId: 'copilot.providerSettings.v1',
+    descriptorId: 'copilot.agentSettings.v1',
   },
   behavior: {},
   session: {},
