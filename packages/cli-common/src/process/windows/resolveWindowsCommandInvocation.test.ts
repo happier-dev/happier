@@ -75,4 +75,28 @@ describe('resolveWindowsCommandInvocation', () => {
     expect(invocation.args[3]?.toLowerCase()).toContain(cmdShimPath.toLowerCase());
     expect(invocation.windowsVerbatimArguments).toBe(true);
   });
+
+  it('resolves cmd.exe through COMSPEC when the command is not available on PATH', async () => {
+    if (!originalPlatformDescriptor) {
+      throw new Error('Expected process.platform to be configurable for this test');
+    }
+    Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
+
+    const { resolveWindowsCommandInvocation } = await import('./resolveWindowsCommandInvocation.js');
+
+    const invocation = resolveWindowsCommandInvocation({
+      command: 'cmd.exe',
+      args: ['/c', 'npm install -g opencode-ai'],
+      env: {
+        PATH: '',
+        PATHEXT: '.EXE;.CMD;.BAT;.COM',
+        COMSPEC: 'C:\\WINDOWS\\system32\\cmd.exe',
+      },
+    });
+
+    expect(invocation).toEqual({
+      command: 'C:\\WINDOWS\\system32\\cmd.exe',
+      args: ['/c', 'npm install -g opencode-ai'],
+    });
+  });
 });

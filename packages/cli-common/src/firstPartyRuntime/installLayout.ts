@@ -1,7 +1,7 @@
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import { joinPathForPathShape } from '../path/pathShape.js';
-import { resolveHappyHomeDirFromEnvironment } from '../providers/resolveHappyHomeDir.js';
+import { resolveHappyHomeDirFromEnvironment } from '../agents/resolveHappyHomeDir.js';
 import type { FirstPartyComponentId } from './componentCatalog.js';
 import {
   resolveFirstPartyComponentPublicReleaseVariant,

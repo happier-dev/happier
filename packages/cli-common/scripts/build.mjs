@@ -1,88 +1,34 @@
 import { spawnSync } from 'node:child_process';
-import {
-  existsSync,
-  closeSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  rmSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs';
-import { cp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { existsSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs';
+import { createPackageDistBuildPlan } from './packageDistBuildPlan.mjs';
+import {
+  cleanupPackageDistBuildArtifacts,
+  resolveTypeScriptBuildInvocation,
+  restorePackageDistFromBackup,
+  stagePackageDistBuild,
+  swapStagedPackageDistIntoPlace,
+  verifyStagedPackageDistExports,
+} from './packageDistBuildPhases.mjs';
 import { verifyPackageExportTargets } from './verifyExports.mjs';
 
-function rand() {
-  return Math.random().toString(16).slice(2);
-}
+export {
+  cleanupPackageDistBuildArtifacts,
+  createPackageDistBuildPlan,
+  resolveTypeScriptBuildInvocation,
+  restorePackageDistFromBackup,
+  stagePackageDistBuild,
+  swapStagedPackageDistIntoPlace,
+  verifyStagedPackageDistExports,
+};
 
-function sanitizeBuildId(value) {
-  const raw = String(value ?? '').trim();
-  return raw.replace(/[^a-zA-Z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '') || `${Date.now()}.${process.pid}.${rand()}`;
-}
+const TRANSIENT_REMOVE_ERROR_CODES = new Set(['ENOTEMPTY', 'EBUSY', 'EPERM', 'EACCES']);
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
-}
-
-function collectTargetStrings(value, acc) {
-  if (typeof value === 'string') {
-    acc.push(value);
-    return;
-  }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return;
-  }
-  for (const nested of Object.values(value)) {
-    collectTargetStrings(nested, acc);
-  }
-}
-
-function collectExpectedPackageTargets(packageJson) {
-  const targets = [];
-  for (const key of ['main', 'module', 'types']) {
-    const value = packageJson?.[key];
-    if (typeof value === 'string' && value.trim()) {
-      targets.push(value.trim());
-    }
-  }
-  collectTargetStrings(packageJson?.exports ?? {}, targets);
-  return [...new Set(targets.map((target) => String(target).trim()).filter(Boolean))];
-}
-
-function resolveTargetInStagedBuild({ packageDir, tempDistDir, target }) {
-  const normalized = String(target ?? '').replace(/^\.\//, '');
-  if (normalized === 'dist') {
-    return tempDistDir;
-  }
-  if (normalized.startsWith('dist/')) {
-    return join(tempDistDir, normalized.slice('dist/'.length));
-  }
-  return resolve(packageDir, normalized);
-}
-
-function verifyStagedExportTargets({ packageDir, tempDistDir, packageJson }) {
-  const missing = collectExpectedPackageTargets(packageJson)
-    .filter((target) => target.startsWith('./') || target.startsWith('dist/'))
-    .map((target) => ({
-      target,
-      path: resolveTargetInStagedBuild({ packageDir, tempDistDir, target }),
-    }))
-    .filter(({ path }) => !existsSync(path));
-
-  if (missing.length === 0) {
-    return;
-  }
-
-  throw new Error(
-    `Staged cli-common build is missing declared package export files:\n` +
-      missing.map(({ target }) => `- ${target}`).join('\n'),
-  );
 }
 
 function workspacePackageLockSlug(packageDir, packageJson) {
@@ -210,158 +156,155 @@ function runChecked(command, args, options, runCommandImpl) {
   }
 }
 
-export function resolveCliCommonBuildTscInvocations({
-  env = process.env,
-  platform = process.platform,
-  tscArgs,
-} = {}) {
-  const args = Array.isArray(tscArgs) ? tscArgs : [];
-  const npmExecPath = typeof env?.npm_execpath === 'string' ? env.npm_execpath.trim() : '';
-  return [
-    resolveYarnCommandInvocation(args, {
-      npmExecPath,
-      platform,
-      processExecPath: process.execPath,
-      comspec: env?.COMSPEC ?? env?.ComSpec ?? env?.comspec,
-    }),
-  ];
+function sleepSync(ms) {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function runFirstAvailableChecked(candidates, options, runCommandImpl) {
-  let lastError = null;
-  for (const candidate of candidates) {
+function isTransientRemoveError(error) {
+  return TRANSIENT_REMOVE_ERROR_CODES.has(String(error?.code ?? ''));
+}
+
+export function cleanPackageDistSync({
+  targetDir = 'dist',
+  rmSyncImpl = rmSync,
+  retries = 3,
+  delayMs = 50,
+} = {}) {
+  let attempt = 0;
+  while (true) {
     try {
-      runChecked(candidate.command, candidate.args, {
-        ...options,
-        ...(candidate.windowsVerbatimArguments
-          ? { windowsVerbatimArguments: candidate.windowsVerbatimArguments }
-          : {}),
-      }, runCommandImpl);
+      rmSyncImpl(targetDir, { recursive: true, force: true });
       return;
     } catch (error) {
-      lastError = error;
-      if (!error?.code || candidate === candidates.at(-1)) {
+      if (attempt >= retries || !isTransientRemoveError(error)) {
         throw error;
       }
+      attempt += 1;
+      sleepSync(delayMs);
     }
-  }
-  throw lastError ?? new Error('No package-manager command candidates were available');
-}
-
-async function replaceDistWithStagedBuild({ distDir, tempDistDir, backupDir }) {
-  const isRetryableRenameError = (error) => {
-    const code = error?.code;
-    return code === 'ENOTEMPTY' || code === 'EBUSY' || code === 'EPERM' || code === 'EACCES';
-  };
-
-  let hadExisting = false;
-  await rm(backupDir, { recursive: true, force: true });
-  try {
-    await rename(distDir, backupDir);
-    hadExisting = true;
-  } catch (error) {
-    if (error?.code !== 'ENOENT') throw error;
-  }
-
-  try {
-    await rename(tempDistDir, distDir);
-  } catch (error) {
-    if (isRetryableRenameError(error)) {
-      try {
-        await rm(distDir, { recursive: true, force: true });
-        await cp(tempDistDir, distDir, {
-          recursive: true,
-          force: true,
-          preserveTimestamps: true,
-        });
-        if (hadExisting) {
-          await rm(backupDir, { recursive: true, force: true }).catch(() => {});
-        }
-        return;
-      } catch (copyError) {
-        error.copyError = copyError;
-      }
-    }
-    if (hadExisting) {
-      await rename(backupDir, distDir).catch((restoreError) => {
-        error.restoreError = restoreError;
-      });
-    }
-    throw error;
-  }
-
-  if (hadExisting) {
-    await rm(backupDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
-export async function buildCliCommonDist(options = {}) {
+export function resolveBuildScriptMode(argv = process.argv.slice(2)) {
+  return argv.includes('--clean') ? 'clean' : 'build';
+}
+
+function parsePositiveInteger(value, fallback) {
+  const parsed = Number(String(value ?? '').trim());
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+async function runTscBuild({
+  packageDir,
+  stagingDistDir,
+  env,
+  stdio = 'inherit',
+  runCommandImpl = spawnSync,
+}) {
+  const invocation = resolveTypeScriptBuildInvocation({
+    packageDir,
+    outDir: stagingDistDir,
+  });
+  runChecked(invocation.command, invocation.args, { cwd: packageDir, env, stdio }, runCommandImpl);
+}
+
+function resolveDefaultPackageDir() {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
-  const packageDir = resolve(options.packageDir ?? dirname(scriptsDir));
-  const packageJson = readJson(join(packageDir, 'package.json'));
-  const buildId = sanitizeBuildId(options.buildId);
-  const distDir = join(packageDir, 'dist');
-  const tempDistDir = join(packageDir, `.dist.build.${buildId}`);
-  const backupDir = join(packageDir, `.dist.backup.${buildId}`);
-  const tempTsconfigPath = join(packageDir, `.tsconfig.build.${buildId}.json`);
-  const lockPath = options.lockPath ?? resolveCliCommonDistBuildLockPath(packageDir);
-  const runCommandImpl = options.runCommandImpl ?? spawnSync;
+  return dirname(scriptsDir);
+}
+
+export async function buildPackageDistAtomically(options = {}) {
+  const packageDir = resolve(options.packageDir ?? resolveDefaultPackageDir());
+  const packageJson = options.packageJson ?? readJson(join(packageDir, 'package.json'));
   const commandEnv = {
     ...process.env,
     ...(options.env ?? {}),
   };
+  const buildPlan = options.buildPlan ?? createPackageDistBuildPlan({
+    packageDir,
+    packageName: packageJson.name,
+    pid: options.pid ?? process.pid,
+    now: options.now ?? Date.now(),
+  });
+  const lockPath = options.lockPath ?? buildPlan.lockPath;
+  const lockTimeoutMs = options.lockTimeoutMs
+    ?? parsePositiveInteger(commandEnv.HAPPIER_PACKAGE_DIST_BUILD_LOCK_TIMEOUT_MS, 240_000);
+  const lockPollMs = options.lockPollMs
+    ?? parsePositiveInteger(commandEnv.HAPPIER_PACKAGE_DIST_BUILD_LOCK_POLL_MS, 250);
 
   return await withWorkspaceDistBuildLock(async () => {
-    await rm(tempDistDir, { recursive: true, force: true });
-    await rm(backupDir, { recursive: true, force: true });
-    await mkdir(tempDistDir, { recursive: true });
-
-    const tempTsconfig = {
-      extends: './tsconfig.json',
-      compilerOptions: {
-        outDir: tempDistDir,
-        tsBuildInfoFile: join(tempDistDir, '.tsbuildinfo'),
-      },
-    };
-
-    await writeFile(tempTsconfigPath, `${JSON.stringify(tempTsconfig, null, 2)}\n`, 'utf8');
+    let stageRoot = null;
+    let distMovedToBackup = false;
 
     try {
-      runFirstAvailableChecked(
-        resolveCliCommonBuildTscInvocations({
-          env: commandEnv,
-          platform: options.platform ?? process.platform,
-          tscArgs: ['-s', 'tsc', '-p', tempTsconfigPath],
-        }),
-        {
-          cwd: packageDir,
+      const stagedBuild = await stagePackageDistBuild({
+        buildPlan,
+        packageJson,
+        buildIntoDistDir: options.buildIntoDistDir ?? ((params) => runTscBuild({
+          ...params,
           stdio: options.stdio ?? 'inherit',
-          env: {
-            ...commandEnv,
-            HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: lockPath,
-          },
+          runCommandImpl: options.runCommandImpl ?? spawnSync,
+        })),
+        env: {
+          ...commandEnv,
+          HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: lockPath,
         },
-        runCommandImpl,
-      );
+      });
+      stageRoot = stagedBuild.stageRoot;
 
-      verifyStagedExportTargets({ packageDir, tempDistDir, packageJson });
-      await replaceDistWithStagedBuild({ distDir, tempDistDir, backupDir });
-      verifyPackageExportTargets({ packageDir, packageJson });
+      verifyStagedPackageDistExports({
+        stageRoot: stagedBuild.stageRoot,
+        packageJson,
+      });
+
+      try {
+        const swapResult = await swapStagedPackageDistIntoPlace({
+          buildPlan,
+          stageDistDir: stagedBuild.stageDistDir,
+        });
+        distMovedToBackup = Boolean(swapResult?.distMovedToBackup);
+        verifyPackageExportTargets({ packageDir, packageJson });
+      } catch (error) {
+        distMovedToBackup = distMovedToBackup || existsSync(buildPlan.backupDir);
+        await restorePackageDistFromBackup({
+          buildPlan,
+          distMovedToBackup,
+        });
+        throw error;
+      }
     } finally {
-      await rm(tempDistDir, { recursive: true, force: true }).catch(() => {});
-      await rm(backupDir, { recursive: true, force: true }).catch(() => {});
-      await rm(tempTsconfigPath, { force: true }).catch(() => {});
+      if (stageRoot) {
+        await cleanupPackageDistBuildArtifacts({
+          buildPlan,
+          stageRoot,
+        }).catch(() => {});
+      }
     }
 
-    const indexPath = join(distDir, 'index.js');
-    const marker = await readFile(indexPath, 'utf8').catch(() => '');
+    const indexPath = join(buildPlan.distDir, 'index.js');
+    const marker = readFileSync(indexPath, 'utf8');
     if (!marker.trim()) {
       throw new Error(`cli-common build produced an empty dist entrypoint: ${relative(packageDir, indexPath)}`);
     }
-  }, { lockPath, env: commandEnv });
+  }, {
+    lockPath,
+    env: commandEnv,
+    timeoutMs: lockTimeoutMs,
+    pollIntervalMs: lockPollMs,
+    staleAfterMs: lockTimeoutMs,
+  });
 }
 
-export async function main() {
+export async function buildCliCommonDist(options = {}) {
+  return await buildPackageDistAtomically(options);
+}
+
+async function main() {
+  if (resolveBuildScriptMode(process.argv.slice(2)) === 'clean') {
+    cleanPackageDistSync();
+    return;
+  }
   await buildCliCommonDist();
 }
 

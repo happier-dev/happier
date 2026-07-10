@@ -117,6 +117,7 @@ async function resolveWindowsRetryPayloadRoot(params: Readonly<{
   componentId: FirstPartyComponentId;
   versionId: string;
   payloadRoot: string;
+  payloadRootAlreadyFiltered?: boolean;
   channel?: PublicReleaseRingId;
   releaseRing?: PublicReleaseRingId;
   processEnv?: NodeJS.ProcessEnv;
@@ -165,6 +166,7 @@ export async function installVersionedPayload(params: Readonly<{
   componentId: FirstPartyComponentId;
   versionId: string;
   payloadRoot: string;
+  payloadRootAlreadyFiltered?: boolean;
   channel?: PublicReleaseRingId;
   releaseRing?: PublicReleaseRingId;
   processEnv?: NodeJS.ProcessEnv;
@@ -200,6 +202,7 @@ async function installVersionedPayloadOnce(params: Readonly<{
   componentId: FirstPartyComponentId;
   versionId: string;
   payloadRoot: string;
+  payloadRootAlreadyFiltered?: boolean;
   channel?: PublicReleaseRingId;
   releaseRing?: PublicReleaseRingId;
   processEnv?: NodeJS.ProcessEnv;
@@ -208,6 +211,7 @@ async function installVersionedPayloadOnce(params: Readonly<{
     componentId: params.componentId,
     versionId: params.versionId,
     stagedPayloadPath: params.payloadRoot,
+    stagedPayloadAlreadyFiltered: params.payloadRootAlreadyFiltered === true,
     channel: params.channel,
     releaseRing: params.releaseRing,
     processEnv: params.processEnv,

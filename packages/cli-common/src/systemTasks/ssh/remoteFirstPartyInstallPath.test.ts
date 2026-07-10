@@ -38,9 +38,9 @@ describe('remote first-party install layout', () => {
       'mkdir -p $HOME/.happier/cli/versions',
       'rm -rf $HOME/.happier/cli/versions/1.2.3',
       'cp -R "$payload_root" $HOME/.happier/cli/versions/1.2.3',
+      'chmod +x $HOME/.happier/cli/versions/1.2.3/happier',
       'if [ -L $HOME/.happier/cli/current ]; then prev="$(readlink $HOME/.happier/cli/current || true)"; if [ -n "$prev" ]; then ln -sfn "$prev" $HOME/.happier/cli/previous; fi; fi',
       'ln -sfn $HOME/.happier/cli/versions/1.2.3 $HOME/.happier/cli/current',
-      'chmod +x $HOME/.happier/cli/current/happier',
     ].join('; '));
   });
 });

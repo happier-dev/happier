@@ -2,7 +2,7 @@ import { cp } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
-  bundleWorkspacePackages,
+  bundleWorkspacePackageWithRuntimeDependencies,
   resolveWorkspaceBundlesFromPackageJson,
   vendorBundledPackageRuntimeDependencies,
 } from '../workspaces/index.js';
@@ -47,23 +47,11 @@ function stageCliNodeRuntimeWorkspaceBundles(
   payloadDir: string,
   workspaceBundles: ReadonlyArray<CliNodeRuntimeWorkspaceBundle>,
 ): void {
-  bundleWorkspacePackages({
-    bundles: workspaceBundles.map(({ packageName, srcDir }) => ({
+  for (const { packageName, srcDir } of workspaceBundles) {
+    bundleWorkspacePackageWithRuntimeDependencies({
       packageName,
       srcDir,
       destDir: join(payloadDir, 'node_modules', ...packageName.split('/')),
-    })),
-  });
-}
-
-function vendorCliNodeRuntimeWorkspaceBundleDependencies(
-  payloadDir: string,
-  workspaceBundles: ReadonlyArray<CliNodeRuntimeWorkspaceBundle>,
-): void {
-  for (const { packageName, srcDir } of workspaceBundles) {
-    vendorBundledPackageRuntimeDependencies({
-      srcPackageJsonPath: join(srcDir, 'package.json'),
-      destPackageDir: join(payloadDir, 'node_modules', ...packageName.split('/')),
     });
   }
 }
@@ -94,5 +82,4 @@ export async function copyCliNodeRuntimePayload({
   await copyCliNodeRuntimeDist(distDir, payloadDir);
   vendorCliNodeRuntimeHostPackageDependencies(repoRoot, payloadDir);
   stageCliNodeRuntimeWorkspaceBundles(payloadDir, workspaceBundles);
-  vendorCliNodeRuntimeWorkspaceBundleDependencies(payloadDir, workspaceBundles);
 }

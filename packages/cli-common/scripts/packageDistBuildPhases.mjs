@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, rename, rm } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
-import { join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import { verifyPackageExportTargets } from './verifyExports.mjs';
 import { resolveTypeScriptCliInvocation } from '../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
@@ -10,13 +10,46 @@ async function removeDir(path) {
     await rm(path, { recursive: true, force: true });
 }
 
+function collectExportTargetStrings(value, acc) {
+    if (typeof value === 'string') {
+        acc.push(value);
+        return;
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return;
+    }
+
+    for (const nested of Object.values(value)) {
+        collectExportTargetStrings(nested, acc);
+    }
+}
+
+function isWithinDirectory(candidatePath, directoryPath) {
+    const relativePath = relative(directoryPath, candidatePath);
+    return relativePath === '' || (!relativePath.startsWith('..') && !isAbsolute(relativePath));
+}
+
+function collectPackageRootExportTargets(packageJson) {
+    const targets = [];
+    collectExportTargetStrings(packageJson?.exports ?? {}, targets);
+    return [...new Set(targets)]
+        .map((target) => String(target).trim())
+        .filter((target) => target.startsWith('./'))
+        .filter((target) => target !== './dist')
+        .filter((target) => !target.startsWith('./dist/'));
+}
+
+function isTransientRenameError(error) {
+    const code = error?.code;
+    return code === 'ENOTEMPTY' || code === 'EBUSY' || code === 'EPERM' || code === 'EACCES';
+}
+
 export function resolveTypeScriptBuildInvocation({
     packageDir,
     repoRoot = resolve(packageDir, '..', '..'),
     processExecPath = process.execPath,
     requireResolve,
-    existsSync: existsSyncImpl,
-    platform,
+    readFileSyncImpl,
     tsconfigPath = 'tsconfig.json',
     outDir,
 } = {}) {
@@ -25,8 +58,7 @@ export function resolveTypeScriptBuildInvocation({
         workspaceDir: packageDir,
         processExecPath,
         requireResolve,
-        existsSync: existsSyncImpl,
-        platform,
+        readFileSyncImpl,
     });
 
     return {
@@ -55,10 +87,14 @@ async function runTscBuild({ packageDir, stagingDistDir, env }) {
 
 export async function stagePackageDistBuild({
     buildPlan,
+    packageJson,
     buildIntoDistDir = runTscBuild,
     env = process.env,
     mkdtempImpl = mkdtemp,
     removeDirImpl = removeDir,
+    copyImpl = cp,
+    mkdirImpl = mkdir,
+    existsSyncImpl = existsSync,
 } = {}) {
     if (!buildPlan) {
         throw new Error('stagePackageDistBuild requires buildPlan');
@@ -73,6 +109,19 @@ export async function stagePackageDistBuild({
             stagingDistDir: stageDistDir,
             env,
         });
+        for (const target of collectPackageRootExportTargets(packageJson)) {
+            const sourcePath = resolve(buildPlan.packageDir, target);
+            const stagedPath = resolve(stageRoot, target);
+            if (!isWithinDirectory(stagedPath, stageRoot) || !existsSyncImpl(sourcePath)) {
+                continue;
+            }
+            await mkdirImpl(dirname(stagedPath), { recursive: true });
+            await copyImpl(sourcePath, stagedPath, {
+                recursive: true,
+                force: true,
+                preserveTimestamps: true,
+            });
+        }
         return { stageRoot, stageDistDir };
     } catch (error) {
         await removeDirImpl(stageRoot).catch(() => {});
@@ -96,6 +145,7 @@ export async function swapStagedPackageDistIntoPlace({
     stageDistDir,
     existsSyncImpl = existsSync,
     renameImpl = rename,
+    copyImpl = cp,
     removeDirImpl = removeDir,
 } = {}) {
     if (!buildPlan) {
@@ -112,7 +162,24 @@ export async function swapStagedPackageDistIntoPlace({
         distMovedToBackup = true;
     }
 
-    await renameImpl(stageDistDir, buildPlan.distDir);
+    try {
+        await renameImpl(stageDistDir, buildPlan.distDir);
+    } catch (error) {
+        if (isTransientRenameError(error)) {
+            try {
+                await removeDirImpl(buildPlan.distDir).catch(() => {});
+                await copyImpl(stageDistDir, buildPlan.distDir, {
+                    recursive: true,
+                    force: true,
+                    preserveTimestamps: true,
+                });
+                return { distMovedToBackup };
+            } catch (copyError) {
+                error.copyError = copyError;
+            }
+        }
+        throw error;
+    }
     return { distMovedToBackup };
 }
 

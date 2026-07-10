@@ -35,10 +35,7 @@ describe('cli-common build Windows rename fallback', () => {
     const { buildCliCommonDist } = await import(pathToFileURL(join(scriptsDir, 'build.mjs')).href);
     const fixtureDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-build-win32-'));
     tempDirs.push(fixtureDir);
-    const buildId = 'rename-fallback';
-
     const distDir = join(fixtureDir, 'dist');
-    const tempDistDir = join(fixtureDir, `.dist.build.${buildId}`);
 
     mkdirSync(distDir, { recursive: true });
     writeFileSync(join(distDir, 'index.js'), 'export const oldValue = true;\n', 'utf8');
@@ -65,7 +62,7 @@ describe('cli-common build Windows rename fallback', () => {
     }
 
     renameMock.mockImplementation(async (from, to) => {
-      if (from === tempDistDir && to === distDir) {
+      if (to === distDir && String(from).includes('.dist.hstack-stage-')) {
         const error = new Error(`EPERM: operation not permitted, rename '${from}' -> '${to}'`);
         error.code = 'EPERM';
         throw error;
@@ -75,12 +72,9 @@ describe('cli-common build Windows rename fallback', () => {
 
     await buildCliCommonDist({
       packageDir: fixtureDir,
-      buildId,
       lockPath: join(fixtureDir, 'build.lock'),
       runCommandImpl: (_cmd, args) => {
-        const tsconfigPath = join(fixtureDir, `.tsconfig.build.${buildId}.json`);
-        const tsconfig = JSON.parse(readFileSync(tsconfigPath, 'utf8'));
-        const outDir = tsconfig.compilerOptions.outDir;
+        const outDir = args.at(args.indexOf('--outDir') + 1);
         mkdirSync(outDir, { recursive: true });
         writeFileSync(join(outDir, 'index.js'), 'export const newValue = true;\n', 'utf8');
         writeFileSync(join(outDir, 'index.d.ts'), 'export declare const newValue: boolean;\n', 'utf8');

@@ -33,6 +33,36 @@ function writeWorkspacePackageFixture({ repoRoot, packageName, relativeDir }) {
   writeFileSync(join(distDir, 'index.mjs'), `export const packageName = ${JSON.stringify(packageName)};\n`, 'utf8');
 }
 
+function writeCliToolUnpackFixture(repoRoot) {
+  const cliScriptsDir = join(repoRoot, 'apps', 'cli', 'scripts');
+  const cliToolsArchivesDir = join(repoRoot, 'apps', 'cli', 'tools', 'archives');
+  mkdirSync(cliScriptsDir, { recursive: true });
+  mkdirSync(cliToolsArchivesDir, { recursive: true });
+  writeFileSync(join(cliToolsArchivesDir, 'checksums.sha256'), '', 'utf8');
+  writeFileSync(join(cliToolsArchivesDir, 'zellij-no-web-x86_64-unknown-linux-musl.tar.gz'), 'fake zellij archive\n', 'utf8');
+  writeFileSync(join(cliToolsArchivesDir, 'zellij-LICENSE'), 'fake zellij license\n', 'utf8');
+  writeFileSync(join(cliScriptsDir, 'unpack-tools.cjs'), `
+const fs = require('fs');
+const path = require('path');
+
+async function unpackTools(options = {}) {
+  const platformDir = options.platformDir || 'unknown';
+  const toolsDir = options.toolsDir || path.resolve(__dirname, '..', 'tools');
+  const unpackedPath = path.join(toolsDir, 'unpacked');
+  fs.mkdirSync(unpackedPath, { recursive: true });
+  const binaryName = platformDir === 'x64-win32' ? 'zellij.exe' : 'zellij';
+  fs.writeFileSync(path.join(unpackedPath, binaryName), 'zellij 0.44.3 for ' + platformDir + '\\n');
+  fs.writeFileSync(path.join(unpackedPath, '.happier-tools-manifest.json'), JSON.stringify({
+    platformDir,
+    tools: { zellij: { version: '0.44.3' } },
+  }, null, 2) + '\\n');
+  return { success: true, alreadyUnpacked: false };
+}
+
+module.exports = { unpackTools };
+`, 'utf8');
+}
+
 function writeCliArtifactFixtures(repoRoot) {
   const cliDir = join(repoRoot, 'apps', 'cli');
   const cliScriptsDir = join(repoRoot, 'apps', 'cli', 'scripts');
@@ -86,6 +116,7 @@ function writeCliArtifactFixtures(repoRoot) {
     ),
     'utf8',
   );
+  writeCliToolUnpackFixture(repoRoot);
   writeWorkspacePackageFixture({ repoRoot, packageName: '@happier-dev/agents', relativeDir: ['packages', 'agents'] });
   writeWorkspacePackageFixture({ repoRoot, packageName: '@happier-dev/cli-common', relativeDir: ['packages', 'cli-common'] });
   writeWorkspacePackageFixture({ repoRoot, packageName: '@happier-dev/connection-supervisor', relativeDir: ['packages', 'connection-supervisor'] });
@@ -104,6 +135,9 @@ function writeCliArtifactFixtures(repoRoot) {
   writeFileSync(join(cliScriptsDir, 'session_hook_forwarder.cjs'), 'console.log("session");\n', 'utf8');
   writeFileSync(join(cliScriptsDir, 'permission_hook_forwarder.cjs'), 'console.log("permission");\n', 'utf8');
   writeFileSync(join(cliScriptsDir, 'ripgrep_launcher.cjs'), 'require("./childProcessOptions.cjs");\n', 'utf8');
+  writeFileSync(join(cliScriptsDir, 'statusline_forwarder.cjs'), 'console.log("statusline");\n', 'utf8');
+  writeFileSync(join(cliScriptsDir, 'terminal_launch_spec_runner.cjs'), 'console.log("terminal launch spec");\n', 'utf8');
+  writeFileSync(join(cliScriptsDir, 'node_pty_relay.cjs'), 'console.log("node pty relay");\n', 'utf8');
   writeFileSync(join(cliRuntimeDir, 'loadTransformersFromRuntime.mjs'), 'export const env = {}; export async function pipeline() { return () => null; }\n', 'utf8');
   writeFileSync(
     join(cliRuntimeDir, 'loadVoiceInferenceRuntime.mjs'),
@@ -240,6 +274,8 @@ test('buildCliBinaryArtifactPayload reuses the first completed dist build across
     assert.equal(existsSync(join(payloadDirB, 'node_modules', 'ffmpeg-static')), false);
     assert.equal(existsSync(join(payloadDirB, 'node_modules', 'sherpa-onnx-node')), false);
     assert.equal(existsSync(join(payloadDirB, 'tools', 'archives', `voice-inference-runtime-${target.os}-${target.arch}.tar.gz`)), true);
+    assert.equal(existsSync(join(payloadDirA, 'tools', 'unpacked', target.os === 'windows' ? 'zellij.exe' : 'zellij')), true);
+    assert.equal(existsSync(join(payloadDirB, 'tools', 'unpacked', target.os === 'windows' ? 'zellij.exe' : 'zellij')), true);
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }

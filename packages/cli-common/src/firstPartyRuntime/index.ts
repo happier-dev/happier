@@ -105,10 +105,12 @@ export {
   applyEnvOverridesToEnvText,
   appendPrismaSqliteConnectionParams,
   DEFAULT_PRISMA_SQLITE_BUSY_TIMEOUT_MS,
+  DEFAULT_SERVER_LIGHT_SQLITE_CONNECTION_LIMIT,
   parseEnvText,
   renderPrismaCompatibleSqliteDatabaseUrl,
   renderSelfHostServerEnvText,
   resolvePrismaSqliteDatabaseUrlOptionsFromEnv,
+  resolveServerLightSqliteDatabaseUrlOptionsFromEnv,
 } from './selfHostServerEnv.js';
 export type { PrismaSqliteDatabaseUrlOptions } from './selfHostServerEnv.js';
 

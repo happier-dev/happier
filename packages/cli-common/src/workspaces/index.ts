@@ -1,11 +1,27 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  type Dirent,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readlinkSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
-import { basename, dirname, resolve } from 'node:path';
+import { basename, dirname, extname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const EXTENSIONS_PACKAGE_PREFIX = '@happier-dev/extensions-';
 const PLUGINS_PACKAGE_PREFIX = '@happier-dev/plugins-';
 const INTERNAL_PACKAGE_PREFIX = '@happier-dev/';
+
+type ReaddirWithFileTypesSync = (path: string) => Dirent[];
 
 export function findRepoRoot(startDir: string): string {
   let dir = startDir;
@@ -203,16 +219,18 @@ export function atomicReplaceDirSync(params: Readonly<{
     params.buildInto(tempDir);
 
     if (exists(params.destDir)) {
-      try {
-        rename(params.destDir, backupDir);
-        didRenameDestToBackup = true;
-      } catch (error) {
-        if (isMissingPathError(error)) {
-          // Another process already removed/replaced the destination after our existence check.
-        } else if (!isRetryableRenameError(error)) {
-          throw error;
-        } else {
-          rmDirSafeSync(params.destDir, { rmSyncImpl: rm });
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          rename(params.destDir, backupDir);
+          didRenameDestToBackup = true;
+          break;
+        } catch (error) {
+          if (isMissingPathError(error)) {
+            // Another process already removed/replaced the destination after our existence check.
+            break;
+          }
+          if (!isRetryableRenameError(error) || attempt === 3) throw error;
+          sleepSync(25);
         }
       }
     }
@@ -239,21 +257,21 @@ export function atomicReplaceDirSync(params: Readonly<{
   } catch (error) {
     // Best-effort cleanup and rollback. Never leave a half-populated destination.
     try {
-      if (existsSync(tempDir)) rmDirSafeSync(tempDir);
+      if (exists(tempDir)) rmDirSafeSync(tempDir, { rmSyncImpl: rm });
     } catch {
       // ignore
     }
 
     if (didRenameDestToBackup) {
       try {
-        if (!existsSync(params.destDir) && existsSync(backupDir)) {
-          renameSync(backupDir, params.destDir);
+        if (!exists(params.destDir) && exists(backupDir)) {
+          rename(backupDir, params.destDir);
         }
       } catch {
         // ignore rollback errors; we'll still rethrow original
       }
       try {
-        if (existsSync(backupDir)) rmDirSafeSync(backupDir);
+        if (exists(backupDir)) rmDirSafeSync(backupDir, { rmSyncImpl: rm });
       } catch {
         // ignore
       }
@@ -279,7 +297,15 @@ export function copyDirSafeSync(
     dereference?: boolean;
     retries?: number;
     delayMs?: number;
-    cpSyncImpl?: typeof cpSync;
+    copyFileSyncImpl?: typeof copyFileSync;
+    existsSyncImpl?: typeof existsSync;
+    lstatSyncImpl?: typeof lstatSync;
+    mkdirSyncImpl?: typeof mkdirSync;
+    readlinkSyncImpl?: typeof readlinkSync;
+    readdirSyncImpl?: ReaddirWithFileTypesSync;
+    statSyncImpl?: typeof statSync;
+    symlinkSyncImpl?: typeof symlinkSync;
+    unlinkSyncImpl?: typeof unlinkSync;
   }> = {},
 ): void {
   const {
@@ -288,13 +314,45 @@ export function copyDirSafeSync(
     dereference = false,
     retries = 5,
     delayMs = 25,
-    cpSyncImpl = cpSync,
+    copyFileSyncImpl = copyFileSync,
+    existsSyncImpl = existsSync,
+    lstatSyncImpl = lstatSync,
+    mkdirSyncImpl = mkdirSync,
+    readlinkSyncImpl = readlinkSync,
+    statSyncImpl = statSync,
+    symlinkSyncImpl = symlinkSync,
+    unlinkSyncImpl = unlinkSync,
   } = opts;
+  const readDirWithFileTypes = opts.readdirSyncImpl ?? ((path: string) => readdirSync(path, { withFileTypes: true }));
+
+  const copyPath = (sourcePath: string, targetPath: string): void => {
+    const sourceStats = dereference ? statSyncImpl(sourcePath) : lstatSyncImpl(sourcePath);
+    if (sourceStats.isDirectory()) {
+      if (!recursive && sourcePath !== srcDir) return;
+      mkdirSyncImpl(targetPath, { recursive: true });
+      for (const entry of readDirWithFileTypes(sourcePath)) {
+        copyPath(resolve(sourcePath, entry.name), resolve(targetPath, entry.name));
+      }
+      return;
+    }
+
+    mkdirSyncImpl(dirname(targetPath), { recursive: true });
+    if (!dereference && sourceStats.isSymbolicLink()) {
+      if (force && existsSyncImpl(targetPath)) {
+        unlinkSyncImpl(targetPath);
+      }
+      symlinkSyncImpl(readlinkSyncImpl(sourcePath), targetPath);
+      return;
+    }
+
+    if (!force && existsSyncImpl(targetPath)) return;
+    copyFileSyncImpl(sourcePath, targetPath);
+  };
 
   const maxAttempts = Math.max(1, Number.isFinite(retries) ? retries + 1 : 1);
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      cpSyncImpl(srcDir, destDir, { recursive, force, dereference });
+      copyPath(srcDir, destDir);
       return;
     } catch (error) {
       if (!isRetryableCopyError(error) || attempt === maxAttempts - 1) throw error;
@@ -323,6 +381,32 @@ export function bundleWorkspacePackage(params: Readonly<{
   destDir: string;
   includeFiles?: string[];
 }>): void {
+  const packageDetails = readWorkspacePackageDetails(params);
+  const referencedFiles = collectWorkspacePackageReferencedFiles(packageDetails.rawPackageJson);
+
+  atomicReplaceDirSync({
+    destDir: params.destDir,
+    buildInto: (tempDir) => {
+      copyBundledWorkspacePackageContents({
+        srcDir: params.srcDir,
+        tempDir,
+        rawPackageJson: packageDetails.rawPackageJson,
+        distDir: packageDetails.distDir,
+        referencedFiles,
+        includeFiles: params.includeFiles,
+      });
+    },
+  });
+}
+
+function readWorkspacePackageDetails(params: Readonly<{
+  packageName: string;
+  srcDir: string;
+}>): Readonly<{
+  srcPackageJsonPath: string;
+  rawPackageJson: any;
+  distDir: string;
+}> {
   const srcPackageJsonPath = resolve(params.srcDir, 'package.json');
   if (!existsSync(srcPackageJsonPath)) {
     throw new Error(`Missing workspace package.json for ${params.packageName}: ${srcPackageJsonPath}`);
@@ -340,27 +424,66 @@ export function bundleWorkspacePackage(params: Readonly<{
     throw new Error(`Missing dist/ for ${params.packageName}. Run its build first.`);
   }
 
+  return { srcPackageJsonPath, rawPackageJson, distDir };
+}
+
+function collectWorkspacePackageReferencedFiles(rawPackageJson: any): Set<string> {
   const referencedFiles = new Set<string>();
   collectPackageJsonRelativeFileTargets(rawPackageJson.main, referencedFiles);
   collectPackageJsonRelativeFileTargets(rawPackageJson.module, referencedFiles);
   collectPackageJsonRelativeFileTargets(rawPackageJson.types, referencedFiles);
   collectPackageJsonRelativeFileTargets(rawPackageJson.exports, referencedFiles);
+  return referencedFiles;
+}
+
+function copyBundledWorkspacePackageContents(params: Readonly<{
+  srcDir: string;
+  tempDir: string;
+  rawPackageJson: any;
+  distDir: string;
+  referencedFiles: ReadonlySet<string>;
+  includeFiles?: string[];
+}>): void {
+  resetDir(params.tempDir);
+  copyDirSafeSync(params.distDir, resolve(params.tempDir, 'dist'));
+  writeJson(resolve(params.tempDir, 'package.json'), sanitizeBundledPackageJson(params.rawPackageJson));
+
+  const files = params.includeFiles ?? ['README.md'];
+  for (const f of files) {
+    copyIfExists(resolve(params.srcDir, f), resolve(params.tempDir, f));
+  }
+
+  for (const relativePath of [...params.referencedFiles].sort((left, right) => left.localeCompare(right))) {
+    copyIfExists(resolve(params.srcDir, relativePath), resolve(params.tempDir, relativePath));
+  }
+}
+
+export function bundleWorkspacePackageWithRuntimeDependencies(params: Readonly<{
+  packageName: string;
+  srcDir: string;
+  destDir: string;
+  includeFiles?: string[];
+  resolveFromPackageJsonPath?: string;
+}>): void {
+  const packageDetails = readWorkspacePackageDetails(params);
+  const referencedFiles = collectWorkspacePackageReferencedFiles(packageDetails.rawPackageJson);
 
   atomicReplaceDirSync({
     destDir: params.destDir,
     buildInto: (tempDir) => {
-      resetDir(tempDir);
-      copyDirSafeSync(distDir, resolve(tempDir, 'dist'));
-      writeJson(resolve(tempDir, 'package.json'), sanitizeBundledPackageJson(rawPackageJson));
-
-      const files = params.includeFiles ?? ['README.md'];
-      for (const f of files) {
-        copyIfExists(resolve(params.srcDir, f), resolve(tempDir, f));
-      }
-
-      for (const relativePath of [...referencedFiles].sort((left, right) => left.localeCompare(right))) {
-        copyIfExists(resolve(params.srcDir, relativePath), resolve(tempDir, relativePath));
-      }
+      copyBundledWorkspacePackageContents({
+        srcDir: params.srcDir,
+        tempDir,
+        rawPackageJson: packageDetails.rawPackageJson,
+        distDir: packageDetails.distDir,
+        referencedFiles,
+        includeFiles: params.includeFiles,
+      });
+      vendorRuntimeDependencyTree({
+        packageJsonPath: packageDetails.srcPackageJsonPath,
+        resolveFromPackageJsonPath: params.resolveFromPackageJsonPath,
+        destNodeModulesDir: resolve(tempDir, 'node_modules'),
+      });
     },
   });
 }
@@ -427,9 +550,6 @@ export function resolveWorkspaceSourceDir(params: Readonly<{
     throw new Error(`Unable to resolve workspace name from bundled dependency: ${packageName}`);
   }
 
-  if (packageName.startsWith(EXTENSIONS_PACKAGE_PREFIX)) {
-    return resolve(params.repoRoot, 'packages', 'extensions', packageName.slice(EXTENSIONS_PACKAGE_PREFIX.length));
-  }
   if (packageName.startsWith(PLUGINS_PACKAGE_PREFIX)) {
     return resolve(params.repoRoot, 'packages', 'plugins', packageName.slice(PLUGINS_PACKAGE_PREFIX.length));
   }
@@ -555,7 +675,100 @@ function hasBundledWorkspacePackageReferencedFiles(packageJsonPath: string): boo
   collectPackageJsonRelativeFileTargets(pkg.exports, relativeFileTargets);
 
   for (const relPath of relativeFileTargets) {
-    if (!existsSync(resolve(packageDir, relPath))) {
+    if (!packageFileTargetExists(packageDir, relPath)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function packageFileTargetExists(packageDir: string, relativePath: string): boolean {
+  const exactPath = resolve(packageDir, relativePath);
+  if (existsSync(exactPath)) return true;
+  if (extname(relativePath)) return false;
+
+  return ['.js', '.mjs', '.cjs', '.json'].some((extension) =>
+    existsSync(resolve(packageDir, `${relativePath}${extension}`)),
+  );
+}
+
+function collectRelativeRegularFilePaths(rootDir: string, relativePrefix = ''): string[] {
+  if (!existsSync(rootDir)) return [];
+
+  const result: string[] = [];
+  const walk = (dir: string, prefix: string): void => {
+    const entries = readdirSync(dir, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const absolutePath = resolve(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(absolutePath, relativePath);
+        continue;
+      }
+      if (entry.isFile()) {
+        result.push(relativePath);
+      }
+    }
+  };
+
+  walk(rootDir, relativePrefix);
+  return result;
+}
+
+function haveSameRelativeFileSet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
+function fileContentsMatch(leftPath: string, rightPath: string): boolean {
+  try {
+    const leftStats = statSync(leftPath);
+    const rightStats = statSync(rightPath);
+    if (!leftStats.isFile() || !rightStats.isFile() || leftStats.size !== rightStats.size) {
+      return false;
+    }
+    return readFileSync(leftPath).equals(readFileSync(rightPath));
+  } catch {
+    return false;
+  }
+}
+
+function isRuntimePackageContentPath(relativePath: string): boolean {
+  const normalized = relativePath.replace(/\\/g, '/');
+  return !(
+    normalized.endsWith('.tsbuildinfo')
+    || normalized.endsWith('.d.ts')
+    || normalized.endsWith('.d.ts.map')
+    || normalized.endsWith('.map')
+  );
+}
+
+function hasBundledWorkspaceSourceContentParity(
+  workspacePackageDir: string,
+  bundledPackageDir: string,
+  workspacePackageJson: any,
+): boolean {
+  const sourceDistFiles = collectRelativeRegularFilePaths(resolve(workspacePackageDir, 'dist'), 'dist')
+    .filter(isRuntimePackageContentPath);
+  const bundledDistFiles = collectRelativeRegularFilePaths(resolve(bundledPackageDir, 'dist'), 'dist')
+    .filter(isRuntimePackageContentPath);
+  if (!haveSameRelativeFileSet(sourceDistFiles, bundledDistFiles)) {
+    return false;
+  }
+
+  for (const relPath of sourceDistFiles) {
+    if (!fileContentsMatch(resolve(workspacePackageDir, relPath), resolve(bundledPackageDir, relPath))) {
+      return false;
+    }
+  }
+
+  const expectedOutputPaths = [...collectWorkspacePackageReferencedFiles(workspacePackageJson)]
+    .filter(isRuntimePackageContentPath);
+  if (expectedOutputPaths.length === 0) expectedOutputPaths.push('dist/index.js');
+
+  for (const relPath of expectedOutputPaths) {
+    if (!fileContentsMatch(resolve(workspacePackageDir, relPath), resolve(bundledPackageDir, relPath))) {
       return false;
     }
   }
@@ -636,19 +849,12 @@ function hasBundledWorkspacePackageHealthy(rootDir: string, hostPackageDir: stri
     return hasBundledWorkspaceRuntimeDependencyTreeHealthy(bundledPackageJsonPath);
   }
 
-  const workspacePackageJson = readJson(workspacePackageJsonPath) as { main?: unknown; exports?: unknown };
-  const expectedOutputPaths = new Set<string>();
-  collectPackageJsonRelativeFileTargets(workspacePackageJson.main, expectedOutputPaths);
-  collectPackageJsonRelativeFileTargets(workspacePackageJson.exports, expectedOutputPaths);
-  if (expectedOutputPaths.size === 0) expectedOutputPaths.add('dist/index.js');
-
-  for (const relPath of expectedOutputPaths) {
-    if (!existsSync(resolve(packageDir, relPath))) {
-      return false;
-    }
-  }
-
-  return hasBundledWorkspaceRuntimeDependencyTreeHealthy(bundledPackageJsonPath);
+  const workspacePackageDir = dirname(workspacePackageJsonPath);
+  const workspacePackageJson = readJson(workspacePackageJsonPath);
+  return (
+    hasBundledWorkspaceSourceContentParity(workspacePackageDir, packageDir, workspacePackageJson)
+    && hasBundledWorkspaceRuntimeDependencyTreeHealthy(bundledPackageJsonPath)
+  );
 }
 
 export function hasBundledWorkspacePackagesHealthy(params: Readonly<{

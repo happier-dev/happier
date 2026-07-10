@@ -11,6 +11,11 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./jsonOwnerBuildLockState": {
+      "import": "./jsonOwnerBuildLockState.cjs",
+      "require": "./jsonOwnerBuildLockState.cjs",
+      "default": "./jsonOwnerBuildLockState.cjs"
+    },
     "./links": {
       "types": "./dist/links.d.ts",
       "import": "./dist/links.js",
@@ -36,15 +41,15 @@
       "import": "./dist/service/discovery/index.js",
       "default": "./dist/service/discovery/index.js"
     },
-    "./providers": {
-      "types": "./dist/providers/index.d.ts",
-      "import": "./dist/providers/index.js",
-      "default": "./dist/providers/index.js"
+    "./agents": {
+      "types": "./dist/agents/index.d.ts",
+      "import": "./dist/agents/index.js",
+      "default": "./dist/agents/index.js"
     },
-    "./providers/managedJavaScriptRuntime": {
-      "types": "./dist/providers/managedJavaScriptRuntime.d.ts",
-      "import": "./dist/providers/managedJavaScriptRuntime.js",
-      "default": "./dist/providers/managedJavaScriptRuntime.js"
+    "./agents/managedJavaScriptRuntime": {
+      "types": "./dist/agents/managedJavaScriptRuntime.d.ts",
+      "import": "./dist/agents/managedJavaScriptRuntime.js",
+      "default": "./dist/agents/managedJavaScriptRuntime.js"
     },
     "./tailscale": {
       "types": "./dist/tailscale/index.d.ts",
@@ -113,6 +118,7 @@
     }
   },
   "scripts": {
+    "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node scripts/build.mjs",
     "build:clean": "node scripts/build.mjs --clean && yarn -s build",
     "clean": "node scripts/build.mjs --clean",
@@ -125,6 +131,7 @@
     "@noble/curves": "^1.9.0",
     "@noble/hashes": "^1.8.0",
     "@happier-dev/agents": "0.0.0",
+    "@happier-dev/protocol": "0.0.0",
     "@happier-dev/release-runtime": "0.0.0",
     "chalk": "^5.6.2",
     "extract-zip": "^2.0.1",

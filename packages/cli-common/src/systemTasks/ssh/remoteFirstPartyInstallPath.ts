@@ -97,13 +97,14 @@ export function buildRemoteFirstPartyPromotionCommand(params: Readonly<{
     throw new Error('Remote first-party payload root is required.');
   }
   const layout = params.layout;
+  const versionBinaryPath = `${layout.versionDir}${layout.binaryPath.slice(layout.currentPath.length)}`;
   return [
     `mkdir -p ${layout.versionsDir}`,
     `rm -rf ${layout.versionDir}`,
     `cp -R ${payloadRootExpression} ${layout.versionDir}`,
+    `chmod +x ${versionBinaryPath}`,
     `if [ -L ${layout.currentPath} ]; then prev="$(readlink ${layout.currentPath} || true)"; if [ -n "$prev" ]; then ln -sfn "$prev" ${layout.previousPath}; fi; fi`,
     `ln -sfn ${layout.versionDir} ${layout.currentPath}`,
-    `chmod +x ${layout.binaryPath}`,
   ].join('; ');
 }
 

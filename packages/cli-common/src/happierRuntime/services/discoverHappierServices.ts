@@ -5,7 +5,7 @@ import { basename, join, win32 as win32Path } from 'node:path';
 
 import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
 
-import { resolveHappyHomeDirFromEnvironment } from '../../providers/resolveHappyHomeDir.js';
+import { resolveHappyHomeDirFromEnvironment } from '../../agents/resolveHappyHomeDir.js';
 import {
     listKnownServiceDefinitionFiles,
     parseLaunchdPlist,

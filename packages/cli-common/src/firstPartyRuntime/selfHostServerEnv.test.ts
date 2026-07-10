@@ -78,6 +78,47 @@ describe('mergeSelfHostServerEnvText', () => {
         expect(merged).not.toContain('HAPPIER_SQLITE_MIGRATIONS_DIR=/old/migrations');
         expect(merged).not.toContain('HAPPIER_SERVER_UI_DIR=/old/ui');
     });
+
+    it('rejects explicit UI-dir overrides owned by the relay runtime installer', () => {
+        expect(() => mergeSelfHostServerEnvText({
+            baseEnvText: [
+                'PORT=3005',
+                'HAPPIER_SERVER_UI_DIR=/managed/ui',
+                '',
+            ].join('\n'),
+            overrides: {
+                HAPPIER_SERVER_UI_DIR: '/tmp/volatile-ui',
+            },
+        })).toThrow(/owned by the relay runtime installer/i);
+
+        expect(() => mergeSelfHostServerEnvText({
+            baseEnvText: [
+                'PORT=3005',
+                'HAPPIER_SERVER_UI_DIR=/managed/ui',
+                '',
+            ].join('\n'),
+            overrides: {
+                HAPPIER_SERVER_LIGHT_UI_DIR: '/tmp/legacy-volatile-ui',
+            },
+        })).toThrow(/owned by the relay runtime installer/i);
+    });
+
+    it('continues to allow non-UI runtime overrides used by relay smoke tests', () => {
+        const merged = mergeSelfHostServerEnvText({
+            baseEnvText: [
+                'PORT=3005',
+                'HAPPIER_DB_PROVIDER=sqlite',
+                'DATABASE_URL=file:/managed.sqlite',
+                'HAPPIER_SERVER_UI_DIR=/managed/ui',
+                '',
+            ].join('\n'),
+            overrides: {
+                HAPPIER_DB_PROVIDER: 'postgres',
+            },
+        });
+
+        expect(merged).toContain('HAPPIER_DB_PROVIDER=postgres');
+    });
 });
 
 describe('renderSelfHostServerEnvText', () => {
@@ -118,7 +159,22 @@ describe('renderSelfHostServerEnvText', () => {
         });
 
         expect(rendered).toContain(
-            'DATABASE_URL=file:C:/Users/me/Happier%20QA/self-host/data/happier-server-light.sqlite?socket_timeout=30',
+            'DATABASE_URL=file:C:/Users/me/Happier%20QA/self-host/data/happier-server-light.sqlite?socket_timeout=30&connection_limit=4',
+        );
+    });
+
+    it('renders generated sqlite DATABASE_URL with the server-light bounded connection pool by default', () => {
+        const rendered = renderSelfHostServerEnvText({
+            port: 3005,
+            host: '127.0.0.1',
+            dataDir: '/tmp/happier-data',
+            filesDir: '/tmp/happier-data/files',
+            dbDir: '/tmp/happier-data/pglite',
+            platform: 'darwin',
+        });
+
+        expect(rendered).toContain(
+            'DATABASE_URL=file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=4',
         );
     });
 

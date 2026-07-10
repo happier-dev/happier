@@ -123,6 +123,7 @@ export async function replaceRuntimePayloadTree(params: Readonly<{
   sourcePath: string;
   destinationPath: string;
   consumeSourcePath?: boolean;
+  sourcePathAlreadyFiltered?: boolean;
   onTempReady?: (tempPath: string) => Promise<void> | void;
 }>): Promise<void> {
   const destinationPath = params.destinationPath;
@@ -161,7 +162,7 @@ export async function replaceRuntimePayloadTree(params: Readonly<{
         recursive: true,
         filter: (sourcePath) => !shouldSkipPayloadPath(sourcePath),
       });
-    } else {
+    } else if (!params.sourcePathAlreadyFiltered) {
       await pruneSkippedPayloadPathsRecursively(tempPath);
     }
 

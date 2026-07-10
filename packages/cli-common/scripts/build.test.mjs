@@ -25,7 +25,7 @@ describe('cli-common atomic build contract', () => {
     expect(buildScript.resolveBuildScriptMode([])).toBe('build');
   });
 
-  it('resolves TypeScript package builds through the JavaScript CLI entrypoint instead of a shell wrapper', () => {
+  it('resolves TypeScript package builds through the native CLI entrypoint instead of a shell wrapper', () => {
     expect(buildScript).toMatchObject({
       resolveTypeScriptBuildInvocation: expect.any(Function),
     });
@@ -35,13 +35,12 @@ describe('cli-common atomic build contract', () => {
       packageDir: '/repo/packages/cli-common',
       processExecPath: '/node',
       requireResolve: (request) => {
-        if (request === 'typescript/lib/tsc.js') {
-          return '/repo/node_modules/typescript/lib/tsc.js';
+        if (request === '@typescript/native/package.json') {
+          return '/repo/node_modules/@typescript/native/package.json';
         }
         throw new Error(`Unexpected request: ${request}`);
       },
-      existsSync: () => false,
-      platform: 'linux',
+      readFileSyncImpl: () => JSON.stringify({ bin: { tsc: './bin/tsc' } }),
       tsconfigPath: 'tsconfig.json',
       outDir: '/repo/packages/cli-common/.dist-stage/dist',
     });
@@ -49,7 +48,7 @@ describe('cli-common atomic build contract', () => {
     expect(invocation).toEqual({
       command: '/node',
       args: [
-        '/repo/node_modules/typescript/lib/tsc.js',
+        '/repo/node_modules/@typescript/native/bin/tsc',
         '-p',
         'tsconfig.json',
         '--outDir',
@@ -195,6 +194,44 @@ describe('cli-common atomic build contract', () => {
       expect(sawOldDistDuringBuild).toBe(true);
       expect(readFileSync(join(distDir, 'index.js'), 'utf8')).toContain('"new"');
       expect(readFileSync(join(distDir, 'relayAccess', 'catalog.js'), 'utf8')).toContain('"new"');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('stages package-root export assets before verifying package exports', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-cli-common-root-export-'));
+    try {
+      const packageDir = join(root, 'packages', 'cli-common');
+      const distDir = join(packageDir, 'dist');
+      const packageJson = {
+        name: '@happier-dev/cli-common',
+        version: '0.0.0',
+        type: 'module',
+        main: './dist/index.js',
+        exports: {
+          '.': {
+            default: './dist/index.js',
+          },
+          './jsonOwnerBuildLockState': {
+            default: './jsonOwnerBuildLockState.cjs',
+          },
+        },
+      };
+      mkdirSync(packageDir, { recursive: true });
+      writeFileSync(join(packageDir, 'package.json'), JSON.stringify(packageJson, null, 2), 'utf8');
+      writeFileSync(join(packageDir, 'jsonOwnerBuildLockState.cjs'), 'module.exports = {};\n', 'utf8');
+
+      await buildPackageDistAtomically({
+        packageDir,
+        packageJson,
+        buildIntoDistDir: async ({ stagingDistDir }) => {
+          mkdirSync(stagingDistDir, { recursive: true });
+          writeFileSync(join(stagingDistDir, 'index.js'), 'export const version = "new";\n', 'utf8');
+        },
+      });
+
+      expect(readFileSync(join(distDir, 'index.js'), 'utf8')).toContain('"new"');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

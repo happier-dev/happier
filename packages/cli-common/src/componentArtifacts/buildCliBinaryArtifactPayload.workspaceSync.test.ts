@@ -1,6 +1,7 @@
-import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -20,6 +21,86 @@ async function writeRepoFile(path: string, content: string, timestamp?: Date): P
     if (timestamp) {
         await utimes(path, timestamp, timestamp);
     }
+}
+
+async function collectFiles(dir: string): Promise<string[]> {
+    const entries = await readdir(dir, { withFileTypes: true });
+    const files: string[] = [];
+    for (const entry of entries) {
+        const entryPath = join(dir, entry.name);
+        if (entry.isDirectory()) {
+            files.push(...await collectFiles(entryPath));
+            continue;
+        }
+        if (entry.isFile()) {
+            files.push(entryPath);
+        }
+    }
+    return files;
+}
+
+async function collectStaticRuntimeScriptAssetSegments(): Promise<string[][]> {
+    const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
+    const packagedRuntimeAssetOwnerDirs = [
+        join(repoRoot, 'apps', 'cli', 'src', 'plugins', 'runtime', 'hooks'),
+        join(repoRoot, 'apps', 'cli', 'src', 'integrations'),
+        join(repoRoot, 'apps', 'cli', 'src', 'terminal', 'pty'),
+        join(repoRoot, 'apps', 'cli', 'src', 'daemon', 'voiceInference'),
+        join(repoRoot, 'apps', 'cli', 'src', 'daemon', 'memory', 'deepIndex', 'embeddings'),
+    ];
+    const cliSourceFiles = (await Promise.all(packagedRuntimeAssetOwnerDirs.map(async (dir) => collectFiles(dir))))
+        .flat()
+        .filter((file) => file.endsWith('.ts') || file.endsWith('.tsx'));
+    const assetKeys = new Set<string>();
+
+    for (const file of cliSourceFiles) {
+        const source = await readFile(file, 'utf8');
+        const matches = source.matchAll(/resolveCliRuntimeAssetPath\(\s*['"]scripts['"]\s*,\s*([\s\S]*?)\)/g);
+        for (const match of matches) {
+            const argsSource = String(match[1] ?? '');
+            const segments = [...argsSource.matchAll(/['"]([^'"]+)['"]/g)].map((segmentMatch) => String(segmentMatch[1] ?? ''));
+            const leftover = argsSource
+                .replaceAll(/['"][^'"]+['"]/g, '')
+                .replaceAll(/[\s,]/g, '');
+            if (segments.length > 0 && !leftover) {
+                assetKeys.add(segments.join('/'));
+            }
+        }
+    }
+
+    return [...assetKeys]
+        .sort()
+        .map((assetKey) => assetKey.split('/'));
+}
+
+async function writeCliToolUnpackFixture(repoRoot: string, timestamp: Date): Promise<void> {
+    await writeRepoFile(join(repoRoot, 'apps', 'cli', 'tools', 'archives', 'checksums.sha256'), '', timestamp);
+    await writeRepoFile(
+        join(repoRoot, 'apps', 'cli', 'tools', 'archives', 'zellij-no-web-x86_64-unknown-linux-musl.tar.gz'),
+        'fake zellij archive\n',
+        timestamp,
+    );
+    await writeRepoFile(join(repoRoot, 'apps', 'cli', 'tools', 'archives', 'zellij-LICENSE'), 'fake zellij license\n', timestamp);
+    await writeRepoFile(join(repoRoot, 'apps', 'cli', 'scripts', 'unpack-tools.cjs'), `
+const fs = require('fs');
+const path = require('path');
+
+async function unpackTools(options = {}) {
+    const platformDir = options.platformDir || 'unknown';
+    const toolsDir = options.toolsDir || path.resolve(__dirname, '..', 'tools');
+    const unpackedPath = path.join(toolsDir, 'unpacked');
+    fs.mkdirSync(unpackedPath, { recursive: true });
+    const binaryName = platformDir === 'x64-win32' ? 'zellij.exe' : 'zellij';
+    fs.writeFileSync(path.join(unpackedPath, binaryName), 'zellij 0.44.3 for ' + platformDir + '\\n');
+    fs.writeFileSync(path.join(unpackedPath, '.happier-tools-manifest.json'), JSON.stringify({
+        platformDir,
+        tools: { zellij: { version: '0.44.3' } },
+    }, null, 2) + '\\n');
+    return { success: true, alreadyUnpacked: false };
+}
+
+module.exports = { unpackTools };
+`, timestamp);
 }
 
 describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
@@ -93,7 +174,8 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
         }, null, 2)}\n`, older);
         await writeRepoFile(join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs'), 'export default "cli-entrypoint";\n', newer);
         await writeRepoFile(join(repoRoot, 'apps', 'cli', 'src', 'index.ts'), 'export default "cli-source";\n', older);
-        for (const sidecarPath of [
+        const staticRuntimeScriptAssets = await collectStaticRuntimeScriptAssetSegments();
+        const sidecarPaths = [
             ['apps', 'cli', 'scripts', 'childProcessOptions.cjs'],
             ['apps', 'cli', 'scripts', 'claude_version_utils.cjs'],
             ['apps', 'cli', 'scripts', 'claude_local_launcher.cjs'],
@@ -101,11 +183,16 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             ['apps', 'cli', 'scripts', 'session_hook_forwarder.cjs'],
             ['apps', 'cli', 'scripts', 'permission_hook_forwarder.cjs'],
             ['apps', 'cli', 'scripts', 'ripgrep_launcher.cjs'],
+            ['apps', 'cli', 'scripts', 'statusline_forwarder.cjs'],
+            ['apps', 'cli', 'scripts', 'terminal_launch_spec_runner.cjs'],
+            ...staticRuntimeScriptAssets.map((segments) => ['apps', 'cli', 'scripts', ...segments]),
             ['apps', 'cli', 'scripts', 'runtime', 'placeholder.txt'],
             ['apps', 'cli', 'scripts', 'shims', 'placeholder.txt'],
-        ]) {
+        ];
+        for (const sidecarPath of new Map(sidecarPaths.map((path) => [path.join('/'), path])).values()) {
             await writeRepoFile(join(repoRoot, ...sidecarPath), 'placeholder\n', older);
         }
+        await writeCliToolUnpackFixture(repoRoot, older);
 
         await writeRepoFile(join(repoRoot, 'packages', 'cli-common', 'package.json'), `${JSON.stringify({
             name: '@happier-dev/cli-common',
@@ -186,6 +273,7 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             },
             compileBinary: async ({ outfile }) => {
                 compileObservedContents.push(await readFile(bundledWorkspaceInstallPath, 'utf8'));
+                await writeRepoFile(join(payloadDir, 'tools', 'js-runtime', 'bin', 'node'), 'managed runtime\n');
                 await writeRepoFile(outfile, 'compiled-binary');
             },
         });
@@ -193,6 +281,16 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
         expect(compileObservedContents).toEqual([currentSourceContent]);
         await expect(readFile(join(payloadDir, 'node_modules', '@happier-dev', 'cli-common', 'dist', 'firstPartyRuntime', 'installVersionedPayload.js'), 'utf8'))
             .resolves.toBe(currentSourceContent);
+        for (const segments of staticRuntimeScriptAssets) {
+            await expect(readFile(join(payloadDir, 'scripts', ...segments), 'utf8'))
+                .resolves.toBe('placeholder\n');
+        }
+        await expect(readFile(join(payloadDir, 'scripts', 'terminal_launch_spec_runner.cjs'), 'utf8'))
+            .resolves.toBe('placeholder\n');
+        await expect(readFile(join(payloadDir, 'tools', 'unpacked', '.happier-tools-manifest.json'), 'utf8'))
+            .resolves.toContain('"zellij"');
+        await expect(readFile(join(payloadDir, 'tools', 'js-runtime', 'bin', 'node'), 'utf8'))
+            .resolves.toBe('managed runtime\n');
     });
 
     it('rebuilds the cli dist snapshot when tracked inputs are newer than the cli dist entrypoint', async () => {
@@ -223,11 +321,15 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             ['apps', 'cli', 'scripts', 'session_hook_forwarder.cjs'],
             ['apps', 'cli', 'scripts', 'permission_hook_forwarder.cjs'],
             ['apps', 'cli', 'scripts', 'ripgrep_launcher.cjs'],
+            ['apps', 'cli', 'scripts', 'statusline_forwarder.cjs'],
+            ['apps', 'cli', 'scripts', 'terminal_launch_spec_runner.cjs'],
+            ['apps', 'cli', 'scripts', 'node_pty_relay.cjs'],
             ['apps', 'cli', 'scripts', 'runtime', 'placeholder.txt'],
             ['apps', 'cli', 'scripts', 'shims', 'placeholder.txt'],
         ]) {
             await writeRepoFile(join(repoRoot, ...sidecarPath), 'placeholder\n', older);
         }
+        await writeCliToolUnpackFixture(repoRoot, older);
 
         await writeRepoFile(join(repoRoot, 'packages', 'cli-common', 'package.json'), `${JSON.stringify({
             name: '@happier-dev/cli-common',

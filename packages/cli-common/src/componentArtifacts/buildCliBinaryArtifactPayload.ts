@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { cp, mkdir, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import * as tar from 'tar';
 
@@ -7,9 +8,8 @@ import { CLI_BINARY_TARGETS, resolveCurrentBinaryTarget, resolveExecutableName, 
 import { commandExists, compileBunBinary, ensureFileExists, execOrThrow, resolveBunCommand, resolveYarnCommand, type RunCommand } from './commands.js';
 import {
   bundleInstalledPackageWithRuntimeDependencies,
-  bundleWorkspacePackages,
+  bundleWorkspacePackageWithRuntimeDependencies,
   resolveWorkspaceBundlesFromPackageJson,
-  vendorBundledPackageRuntimeDependencies,
 } from '../workspaces/index.js';
 import { withCliDistBuildLock } from './withCliDistBuildLock.js';
 import { resolveCliDistSnapshotDir } from './resolveCliDistSnapshotDir.js';
@@ -26,6 +26,9 @@ const CLI_RUNTIME_SIDECAR_ENTRIES = [
   ['session_hook_forwarder.cjs'],
   ['permission_hook_forwarder.cjs'],
   ['ripgrep_launcher.cjs'],
+  ['statusline_forwarder.cjs'],
+  ['terminal_launch_spec_runner.cjs'],
+  ['node_pty_relay.cjs'],
   ['runtime'],
   ['shims'],
 ] as const;
@@ -44,8 +47,27 @@ const CLI_DEFERRED_VOICE_RUNTIME_PACKAGES = [
   'sherpa-onnx-node',
 ] as const;
 
+type CliToolUnpackModule = {
+  unpackTools?: (options: Readonly<{ platformDir: string; toolsDir: string }>) => Promise<unknown> | unknown;
+};
+
 function normalizeNodePlatform(platform: string): string {
   return platform === 'win32' ? 'windows' : platform;
+}
+
+function resolveCliToolsPlatformDir(target: BinaryTarget): string {
+  const targetKey = `${target.arch}-${target.os}`;
+  switch (targetKey) {
+    case 'arm64-darwin':
+    case 'x64-darwin':
+    case 'arm64-linux':
+    case 'x64-linux':
+      return targetKey;
+    case 'x64-windows':
+      return 'x64-win32';
+    default:
+      throw new Error(`[component-artifacts] unsupported CLI tools binary target: ${targetKey}`);
+  }
 }
 
 function assertCliNativeRuntimeTargetMatchesHost(target: BinaryTarget): void {
@@ -75,6 +97,28 @@ async function copyCliRuntimeSidecars(repoRoot: string, payloadDir: string): Pro
       destNodeModulesDir: join(payloadDir, 'node_modules'),
     });
   }
+}
+
+async function copyCliRuntimeTools(repoRoot: string, payloadDir: string, target: BinaryTarget): Promise<void> {
+  const sourceToolsDir = join(repoRoot, 'apps', 'cli', 'tools');
+  const targetToolsDir = join(payloadDir, 'tools');
+  const targetArchivesDir = join(targetToolsDir, 'archives');
+  await mkdir(targetToolsDir, { recursive: true });
+  await rm(targetArchivesDir, { recursive: true, force: true });
+  await cp(join(sourceToolsDir, 'archives'), targetArchivesDir, { recursive: true });
+
+  const unpackToolsScript = join(repoRoot, 'apps', 'cli', 'scripts', 'unpack-tools.cjs');
+  const requireFromUnpackTools = createRequire(unpackToolsScript);
+  const unpackToolsModule = requireFromUnpackTools(unpackToolsScript) as CliToolUnpackModule;
+  if (typeof unpackToolsModule.unpackTools !== 'function') {
+    throw new Error('[component-artifacts] apps/cli/scripts/unpack-tools.cjs must export unpackTools()');
+  }
+
+  await unpackToolsModule.unpackTools({
+    platformDir: resolveCliToolsPlatformDir(target),
+    toolsDir: targetToolsDir,
+  });
+  await rm(targetArchivesDir, { recursive: true, force: true });
 }
 
 function resolveDeferredVoiceInferenceRuntimeArchiveName(target: BinaryTarget): string {
@@ -110,18 +154,11 @@ async function stageDeferredVoiceInferenceRuntimeArchive(payloadDir: string, tar
 }
 
 function syncCliBundledWorkspacePackagesForCompile(cliDir: string, workspaceBundles: readonly BundledWorkspacePackage[]): void {
-  bundleWorkspacePackages({
-    bundles: workspaceBundles.map(({ packageName, srcDir }) => ({
+  for (const { packageName, srcDir } of workspaceBundles) {
+    bundleWorkspacePackageWithRuntimeDependencies({
       packageName,
       srcDir,
       destDir: join(cliDir, 'node_modules', ...packageName.split('/')),
-    })),
-  });
-
-  for (const { packageName, srcDir } of workspaceBundles) {
-    vendorBundledPackageRuntimeDependencies({
-      srcPackageJsonPath: join(srcDir, 'package.json'),
-      destPackageDir: join(cliDir, 'node_modules', ...packageName.split('/')),
     });
   }
 }
@@ -221,6 +258,7 @@ export async function buildCliBinaryArtifactPayload({
       runCommand,
     });
     await copyCliRuntimeSidecars(repoRoot, payloadDir);
+    await copyCliRuntimeTools(repoRoot, payloadDir, target);
     await stageDeferredVoiceInferenceRuntimeArchive(payloadDir, target);
 
     return {

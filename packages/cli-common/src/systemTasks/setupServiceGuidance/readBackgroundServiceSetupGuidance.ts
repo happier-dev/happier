@@ -4,7 +4,7 @@ import {
   discoverHappierServices,
 } from '../../happierRuntime/index.js';
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
-import { resolveHappyHomeDirFromEnvironment } from '../../providers/resolveHappyHomeDir.js';
+import { resolveHappyHomeDirFromEnvironment } from '../../agents/resolveHappyHomeDir.js';
 
 import {
   buildBackgroundServiceSetupGuidance,

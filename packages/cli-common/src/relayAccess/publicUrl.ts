@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { resolveHappyHomeDirFromEnvironment } from '../providers/resolveHappyHomeDir.js';
+import { resolveHappyHomeDirFromEnvironment } from '../agents/resolveHappyHomeDir.js';
 
 import { getRelayAccessProvider } from './registry.js';
 import type { RelayAccessConfig, RelayAccessStatus } from './types.js';

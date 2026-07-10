@@ -5,7 +5,7 @@ import { dirname } from 'node:path';
 import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import { joinPathForPathShape } from '../path/pathShape.js';
-import { resolveHappyHomeDirFromEnvironment } from '../providers/resolveHappyHomeDir.js';
+import { resolveHappyHomeDirFromEnvironment } from '../agents/resolveHappyHomeDir.js';
 import type { FirstPartyComponentId } from './componentCatalog.js';
 
 const DEFAULT_MANAGED_RELEASE_CHANNEL: PublicReleaseRingId = 'stable';
