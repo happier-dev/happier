@@ -10,9 +10,8 @@ export const HookEventEnvelopeV1Schema = z.object({
   category: HookCategoryV1Schema,
   scope: HookScopeV1Schema,
   happySessionId: z.string().trim().min(1).optional(),
-  providerSessionId: z.string().trim().min(1).optional(),
-  providerId: z.string().trim().min(1).optional(),
-  backendId: z.string().trim().min(1).optional(),
+  agentSessionId: z.string().trim().min(1).optional(),
+  agentId: z.string().trim().min(1).optional(),
   backendTarget: z.string().trim().min(1).optional(),
   machineId: z.string().trim().min(1).optional(),
   workspaceId: z.string().trim().min(1).optional(),
@@ -38,17 +37,17 @@ function normalizeHookEventEnvelopeV1Input(value: unknown): unknown {
   const record = parsedValue as Record<string, unknown>;
   const canonicalEventId = typeof parsedValue.eventId === 'string' ? parsedValue.eventId.trim() : '';
   const legacyEventId = typeof parsedValue.hookEventId === 'string' ? parsedValue.hookEventId.trim() : '';
-  const providerSessionId = typeof record.providerSessionId === 'string' ? record.providerSessionId.trim() : '';
-  const legacyVendorSessionId = typeof record.vendorSessionId === 'string' ? record.vendorSessionId.trim() : '';
-  const normalizedProviderSessionFields = record.vendorSessionId !== undefined
+  const agentSessionId = typeof record.agentSessionId === 'string' ? record.agentSessionId.trim() : '';
+  const legacyVendorSessionId = typeof record.vendorSessionId === 'string' ? record.vendorSessionId.trim() : ''; // legacy vendorSessionId read-compat
+  const normalizedAgentSessionFields = record.vendorSessionId !== undefined // legacy vendorSessionId read-compat
     ? (() => {
-        const { vendorSessionId: _legacyVendorSessionId, ...rest } = record;
-        if (providerSessionId || !legacyVendorSessionId) {
+        const { vendorSessionId: _legacyVendorSessionId, ...rest } = record; // legacy vendorSessionId read-compat
+        if (agentSessionId || !legacyVendorSessionId) {
           return rest;
         }
         return {
           ...rest,
-          providerSessionId: legacyVendorSessionId, // legacy vendorSessionId read-compat
+          agentSessionId: legacyVendorSessionId, // legacy vendorSessionId read-compat
         };
       })()
     : record;
@@ -58,18 +57,18 @@ function normalizeHookEventEnvelopeV1Input(value: unknown): unknown {
   }
 
   if (canonicalEventId.length > 0) {
-    return normalizedProviderSessionFields === record ? parsedValue : normalizedProviderSessionFields;
+    return normalizedAgentSessionFields === record ? parsedValue : normalizedAgentSessionFields;
   }
 
   if (legacyEventId.length > 0) {
-    const { hookEventId: _hookEventId, ...rest } = normalizedProviderSessionFields;
+    const { hookEventId: _hookEventId, ...rest } = normalizedAgentSessionFields;
     return {
       ...rest,
       eventId: legacyEventId,
     };
   }
 
-  return normalizedProviderSessionFields === record ? parsedValue : normalizedProviderSessionFields;
+  return normalizedAgentSessionFields === record ? parsedValue : normalizedAgentSessionFields;
 }
 
 export function readHookEventEnvelopeV1(value: unknown): HookEventEnvelopeV1 | null {

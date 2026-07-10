@@ -30,7 +30,7 @@ export const BackendSurfaceAvailabilityV1Schema = z.discriminatedUnion('availabl
       'runtime_mode_unsupported',
       'session_state_unsupported',
       'cloud_plan_unavailable',
-      'provider_unavailable',
+      'agent_unavailable',
       'missing_metadata',
       'unsupported',
       'evaluation_error',

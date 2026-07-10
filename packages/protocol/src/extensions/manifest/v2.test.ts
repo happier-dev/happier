@@ -122,13 +122,13 @@ describe('extension manifest v2 contracts', () => {
         {
           kind: 'hook',
           hookApiVersion: 1,
-          id: 'backend.terminalRuntime.resolveTranscriptBinding',
-          category: 'integration',
-          scope: 'backend',
-          executionKind: 'integrate',
+          id: 'agent.request.before',
+          category: 'augmentation',
+          scope: 'agent',
+          executionKind: 'augment',
           handler: {
             target: 'plugin',
-            exportName: 'resolveTranscriptBinding',
+            exportName: 'beforeAgentRequest',
           },
           priority: 10,
         },

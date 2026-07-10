@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { BackendDefinitionV1BaseSchema } from '../backendDefinitionV1.js';
-import { ProviderDefinitionV1Schema } from '../providerDefinitionV1.js';
+import { AgentDefinitionV1Schema } from '../../plugins/agentDefinitionV1.js';
 import { ExtensionActionContributionV2Schema, ExtensionDaemonHandlerRefV1Schema } from '../actions/v2.js';
 import {
   ActionDefinitionExamplesV1Schema,
@@ -68,11 +68,6 @@ export const ExtensionBackendTargetV2Schema = z.object({
   id: z.string().trim().min(1),
 }).strict();
 export type ExtensionBackendTargetV2 = z.infer<typeof ExtensionBackendTargetV2Schema>;
-
-export const ExtensionProviderContributionV2Schema = ProviderDefinitionV1Schema.extend({
-  kind: z.literal('provider'),
-}).strict();
-export type ExtensionProviderContributionV2 = z.infer<typeof ExtensionProviderContributionV2Schema>;
 
 export const ExtensionBackendEngineLaunchV2Schema = z.discriminatedUnion('kind', [
   z.object({
@@ -336,7 +331,6 @@ export const ExtensionContributionV2Schema = z.discriminatedUnion('kind', [
   ExtensionUiDescriptorContributionV2Schema,
   ExtensionHookContributionV2Schema,
   ExtensionLifecycleHandlerContributionV2Schema,
-  ExtensionProviderContributionV2Schema,
   ExtensionBackendContributionV2Schema,
 ]).superRefine((value, ctx) => {
   if (value.kind !== 'backend') {

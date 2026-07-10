@@ -16,8 +16,9 @@ import {
   HookHandlerTargetV1Schema,
   HookRegistrationV1Schema,
   HookScopeV1Schema,
-  ProviderCliRuntimeV1Schema,
-  ProviderDefinitionV1Schema,
+  AgentCliRuntimeV1Schema,
+  AgentDefinitionV1Schema,
+  PluginBackendDefinitionV1Schema,
   RuntimeDescriptorV1Schema,
   SerializedActionDefinitionV1Schema,
   isSupportedBackendSurfaceOperationV1,
@@ -34,8 +35,8 @@ describe('extension and hook contract exports', () => {
     expect(typeof ActionDefinitionV1Schema.safeParse).toBe('function');
     expect(typeof SerializedActionDefinitionV1Schema.safeParse).toBe('function');
     expect(typeof ExtensionManifestV2Schema.safeParse).toBe('function');
-    expect(typeof ProviderDefinitionV1Schema.safeParse).toBe('function');
-    expect(typeof ProviderCliRuntimeV1Schema.safeParse).toBe('function');
+    expect(typeof AgentDefinitionV1Schema.safeParse).toBe('function');
+    expect(typeof AgentCliRuntimeV1Schema.safeParse).toBe('function');
     expect(typeof BackendDefinitionV1Schema.safeParse).toBe('function');
     expect(typeof BackendSurfaceDeclarationV1Schema.safeParse).toBe('function');
     expect(typeof AttachSurfaceStaticMetadataV1Schema.safeParse).toBe('function');
@@ -66,12 +67,11 @@ describe('extension and hook contract exports', () => {
       surfaces: {
         ui: false,
         voice: false,
-        session_agent: true,
+        agent: true,
         mcp: true,
         cli: true,
         rpc: false,
         sdk: false,
-        futureSurfaceFlag: 'surface-extra',
       },
       prompting: {
         voiceHotPath: true,
@@ -105,16 +105,16 @@ describe('extension and hook contract exports', () => {
       },
     });
 
-    const providerDefinition = ProviderDefinitionV1Schema.parse({
+    const providerDefinition = AgentDefinitionV1Schema.parse({
       kindVersion: 1,
       id: 'ohMyPi',
-      providerAgentId: ' claude ',
+      catalogAgentId: ' claude ',
       iconAgentId: ' codex ',
       display: {
         name: 'Oh My Pi',
         tags: ['acp'],
       },
-      providerCliRuntime: {
+      agentCliRuntime: {
         kindVersion: 1,
         id: 'ohMyPi',
         title: 'oh-my-pi CLI',
@@ -139,7 +139,7 @@ describe('extension and hook contract exports', () => {
       id: 'ohMyPi.acp',
       providerId: 'ohMyPi',
       runtimeKind: 'acp',
-      providerAgentId: ' claude ',
+      catalogAgentId: ' claude ',
       iconAgentId: ' codex ',
       capabilities: {
         externalSessions: true,
@@ -161,13 +161,13 @@ describe('extension and hook contract exports', () => {
 
     const registration = HookRegistrationV1Schema.parse({
       hookApiVersion: 1,
-      id: 'backend.terminalRuntime.resolveTranscriptBinding',
-      category: 'integration',
-      scope: 'backend',
-      executionKind: 'integrate',
+      id: 'agent.request.before',
+      category: 'augmentation',
+      scope: 'agent',
+      executionKind: 'augment',
       handler: {
         target: 'plugin',
-        exportName: 'resolveTranscriptBinding',
+        exportName: 'beforeAgentRequest',
       },
     });
 
@@ -191,15 +191,11 @@ describe('extension and hook contract exports', () => {
       },
       contributions: [
         {
-          kind: 'provider',
-          ...providerDefinition,
-        },
-        {
           kind: 'backend',
           kindVersion: backendDefinition.kindVersion,
           id: backendDefinition.id,
           providerId: backendDefinition.providerId,
-          providerAgentId: backendDefinition.providerAgentId,
+          catalogAgentId: backendDefinition.catalogAgentId,
           iconAgentId: backendDefinition.iconAgentId,
           engine: {
             kind: 'acp',
@@ -245,11 +241,11 @@ describe('extension and hook contract exports', () => {
 
     expect(actionDefinition.id).toBe('acme.plugin.review.start');
     expect(providerDefinition.id).toBe('ohMyPi');
-    expect(providerDefinition.providerAgentId).toBe('claude');
+    expect(providerDefinition.catalogAgentId).toBe('claude');
     expect(providerDefinition.iconAgentId).toBe('codex');
-    expect(providerDefinition.providerCliRuntime?.binaryName).toBe('omp');
+    expect(providerDefinition.agentCliRuntime?.binaryName).toBe('omp');
     expect(backendDefinition.id).toBe('ohMyPi.acp');
-    expect(backendDefinition.providerAgentId).toBe('claude');
+    expect(backendDefinition.catalogAgentId).toBe('claude');
     expect(backendDefinition.iconAgentId).toBe('codex');
     expect(backendDefinition.surfaceHandlers).toHaveLength(1);
     expect(backendDefinition.surfaceHandlers[0]).toMatchObject({
@@ -258,22 +254,16 @@ describe('extension and hook contract exports', () => {
       operation: 'launch',
     });
     expect(manifest.schemaVersion).toBe(2);
-    expect(manifest.contributions).toHaveLength(3);
+    expect(manifest.contributions).toHaveLength(2);
     expect(manifest.contributions[0]).toMatchObject({
-      kind: 'provider',
-      id: 'ohMyPi',
-      providerAgentId: 'claude',
-      iconAgentId: 'codex',
-    });
-    expect(manifest.contributions[1]).toMatchObject({
       kind: 'backend',
       id: 'ohMyPi.acp',
     });
-    expect(manifest.contributions[2]).toMatchObject({
+    expect(manifest.contributions[1]).toMatchObject({
       kind: 'hook',
-      id: 'backend.terminalRuntime.resolveTranscriptBinding',
+      id: 'agent.request.before',
     });
-    expect(registration.id).toBe('backend.terminalRuntime.resolveTranscriptBinding');
+    expect(registration.id).toBe('agent.request.before');
     expect(manifest.targets.daemon?.entry).toBe('./daemon.js');
     expect(envelope.scope).toBe('session');
     expect(source.kind).toBe('path');
@@ -315,7 +305,7 @@ describe('extension and hook contract exports', () => {
   });
 
   it('rejects invalid backend surface descriptors', () => {
-    const parsed = BackendDefinitionV1Schema.safeParse({
+    const parsed = PluginBackendDefinitionV1Schema.safeParse({
       kindVersion: 1,
       id: 'ohMyPi.acp',
       providerId: 'ohMyPi',
@@ -466,6 +456,75 @@ describe('extension and hook contract exports', () => {
     }).success).toBe(false);
   });
 
+  it('validates external-session source declarations as manifest-owned backend surface facts', () => {
+    const parsed = PluginBackendDefinitionV1Schema.safeParse({
+      kindVersion: 1,
+      id: 'codex',
+      agentId: 'codex',
+      engine: { kind: 'custom' },
+      capabilities: { executionRun: { supported: true } },
+      surfaceHandlers: [],
+      surfaces: {
+        externalSession: {
+          sources: [
+            {
+              sourceKind: 'codexHome',
+              schema: {
+                passthrough: true,
+                fields: [
+                  { name: 'kind', kind: 'literal', value: 'codexHome' },
+                  { name: 'home', kind: 'enum', values: ['user', 'connectedService'] },
+                ],
+              },
+              key: {
+                segments: [
+                  { kind: 'literal', value: 'codexHome' },
+                  { kind: 'field', field: 'home' },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.surfaces?.externalSession?.sources[0]).toMatchObject({
+      sourceKind: 'codexHome',
+      schema: {
+        fields: expect.arrayContaining([
+          expect.objectContaining({ name: 'kind', kind: 'literal', value: 'codexHome' }),
+        ]),
+      },
+      key: {
+        segments: expect.arrayContaining([
+          expect.objectContaining({ kind: 'literal', value: 'codexHome' }),
+        ]),
+      },
+    });
+
+    expect(PluginBackendDefinitionV1Schema.safeParse({
+      kindVersion: 1,
+      id: 'codex',
+      agentId: 'codex',
+      engine: { kind: 'custom' },
+      capabilities: { executionRun: { supported: true } },
+      surfaceHandlers: [],
+      surfaces: {
+        externalSession: {
+          sources: [
+            {
+              sourceKind: 'codexHome',
+              schema: { fields: [] },
+              key: { segments: [{ kind: 'literal', value: 'codexHome' }] },
+            },
+          ],
+        },
+      },
+    }).success).toBe(false);
+  });
+
   it('rejects stale runtime adapter carriers in final backend definitions', () => {
     const parsed = BackendDefinitionV1Schema.safeParse({
       kindVersion: 1,
@@ -525,15 +584,15 @@ describe('extension and hook contract exports', () => {
     expect((protocol as Record<string, unknown>).isSupportedBackendRuntimeAdapterOperationIdV1).toBeUndefined();
   });
 
-  it('rejects invalid provider CLI runtime descriptors in provider definitions', () => {
-    const parsed = ProviderDefinitionV1Schema.safeParse({
+  it('rejects invalid agent CLI runtime descriptors through provider compatibility aliases', () => {
+    const parsed = AgentDefinitionV1Schema.safeParse({
       kindVersion: 1,
       id: 'acme.plugin',
       display: {
         name: 'Acme Plugin',
         tags: ['plugin'],
       },
-      providerCliRuntime: {
+      agentCliRuntime: {
         kindVersion: 1,
         id: 'acme.plugin',
         title: 'Acme Plugin CLI',
@@ -600,12 +659,12 @@ describe('extension and hook contract exports', () => {
       category: 'lifecycle',
       scope: 'session',
       timestampMs: 1,
-      vendorSessionId: 'legacy-provider-session',
+      vendorSessionId: 'legacy-provider-session', // legacy vendorSessionId read-compat
       payload: {},
-    }) as { providerSessionId?: string; vendorSessionId?: string } | null;
+    }) as { agentSessionId?: string; vendorSessionId?: string } | null; // legacy vendorSessionId read-compat
 
     expect(legacyProviderSession).toBeTruthy();
-    expect(legacyProviderSession?.providerSessionId).toBe('legacy-provider-session');
+    expect(legacyProviderSession?.agentSessionId).toBe('legacy-provider-session');
     expect(legacyProviderSession?.vendorSessionId).toBeUndefined();
 
     const invalid = readHookEventEnvelopeV1({
@@ -654,7 +713,7 @@ describe('extension and hook contract exports', () => {
 
     const envelope = HookEventEnvelopeV1Schema.parse({
       hookVersion: 1,
-      eventId: 'spawn.augmentEnv',
+      eventId: 'agent.spawnEnv.augment',
       category: 'augmentation',
       scope: 'daemon',
       timestampMs: 1,

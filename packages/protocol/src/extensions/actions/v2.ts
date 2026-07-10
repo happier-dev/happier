@@ -67,7 +67,7 @@ export type ExtensionDaemonHandlerRefV1 = z.infer<typeof ExtensionDaemonHandlerR
 
 export const ExtensionActionAvailabilityV2Schema = z.object({
   features: z.array(z.string().trim().min(1)).default([]),
-  providerIds: z.array(z.string().trim().min(1)).default([]),
+  agentIds: z.array(z.string().trim().min(1)).default([]),
   backendIds: z.array(z.string().trim().min(1)).default([]),
   sessionStates: z.array(z.string().trim().min(1)).default([]),
   machineCapabilities: z.array(z.string().trim().min(1)).default([]),

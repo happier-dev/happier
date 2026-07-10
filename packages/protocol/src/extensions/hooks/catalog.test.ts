@@ -13,9 +13,9 @@ describe('extension hook catalog v1', () => {
     expect(typeof getExtensionHookDefinitionV1).toBe('function');
     expect(EXTENSION_HOOK_CATALOG_V1.map((entry) => entry.id)).toEqual([...PLUGIN_HOOK_IDS_V1]);
 
-    const spawnEnv = getExtensionHookDefinitionV1('spawn.augmentEnv');
+    const spawnEnv = getExtensionHookDefinitionV1('agent.spawnEnv.augment');
     expect(spawnEnv).toMatchObject({
-      id: 'spawn.augmentEnv',
+      id: 'agent.spawnEnv.augment',
       category: 'augmentation',
       scope: 'daemon',
       executionKind: 'augment',

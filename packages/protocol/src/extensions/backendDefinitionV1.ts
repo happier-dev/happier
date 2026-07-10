@@ -45,7 +45,7 @@ export const BackendDefinitionV1BaseSchema = z.object({
   runtimeKind: z.string().trim().min(1),
   // Optional built-in/provider compatibility identity for producer/UI lookup.
   // This remains additive metadata, not backend-target truth.
-  providerAgentId: OptionalStringSchema,
+  catalogAgentId: OptionalStringSchema,
   // Optional built-in icon carrier used for display fallback only.
   iconAgentId: OptionalStringSchema,
   launch: BackendLaunchV1Schema.optional(),

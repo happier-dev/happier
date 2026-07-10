@@ -17,9 +17,8 @@ export function isHookHandlerTargetV1(value: unknown): value is HookHandlerTarge
 }
 
 export const HookRegistrationFilterV1Schema = z.object({
-  providerId: z.string().trim().min(1).optional(),
-  backendId: z.string().trim().min(1).optional(),
-  backendTargetId: z.string().trim().min(1).optional(),
+  agentId: z.string().trim().min(1).optional(),
+  runtimeTargetId: z.string().trim().min(1).optional(),
   sessionId: z.string().trim().min(1).optional(),
   workspaceId: z.string().trim().min(1).optional(),
   cwdPrefix: z.string().trim().min(1).optional(),

@@ -90,6 +90,8 @@ import {
   buildPluginContributionFamilySchemaV2,
   definePluginContributionFamilyV2,
 } from './families.js';
+import { ProviderContributionV1Schema } from '../../providers/contributions/v1.js';
+import { AgentProviderRequirementsV1Schema } from '../../providers/compatibility/v1.js';
 
 const PluginHookHandlerTargetV1Schema = z.enum(['plugin']);
 const LEGACY_ACTIVITY_PROVIDER_FAMILY = `activity${'Providers'}`;
@@ -242,6 +244,7 @@ export type PluginAgentRuntimeV2 = z.infer<typeof PluginAgentRuntimeV2Schema>;
 export const PluginAgentContributionV2Schema = PluginBackendDefinitionV1BaseSchema.extend({
   runtime: PluginAgentRuntimeV2Schema,
   target: PluginAgentRuntimeTargetV2Schema.optional(),
+  providerSupport: AgentProviderRequirementsV1Schema.optional(),
 }).passthrough().superRefine((value, ctx) => {
   if (hasOwn(value, 'agentId')) {
     rejectForbiddenKey(ctx, 'agentId', 'Plugin agent runtime manifests must use id.');
@@ -399,6 +402,7 @@ export type PluginConnectedAccountDescriptorContributionV2 =
 
 export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'agents', schema: PluginAgentContributionV2Schema }),
+  definePluginContributionFamilyV2({ family: 'providers', schema: ProviderContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'actions', schema: PluginActionContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'commands', schema: PluginCommandContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'tools', schema: PluginToolContributionV2Schema }),
@@ -441,6 +445,13 @@ const PluginContributesV2SchemaWithoutDefault = PluginContributesV2BaseSchema.ex
   if (hasOwn(value, LEGACY_ACTIVITY_PROVIDER_FAMILY)) {
     rejectForbiddenKey(ctx, LEGACY_ACTIVITY_PROVIDER_FAMILY, 'Activity providers were folded into contributes.notifications; use notification categories instead.');
   }
+  const providerIds = new Set<string>();
+  value.providers.forEach((provider, index) => {
+    if (providerIds.has(provider.id)) {
+      ctx.addIssue({ code: 'custom', path: ['providers', index, 'id'], message: 'Duplicate provider contribution id' });
+    }
+    providerIds.add(provider.id);
+  });
 });
 
 export const PluginContributesV2Schema = PluginContributesV2SchemaWithoutDefault.default(
