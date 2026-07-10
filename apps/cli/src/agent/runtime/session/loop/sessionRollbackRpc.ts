@@ -22,7 +22,7 @@ import {
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 export type SessionRollbackRuntimeFacet = Readonly<{
-  rollbackConversation: (request: SessionRollbackRpcParams) => Promise<SessionRollbackRpcResult>;
+  rollbackConversation?: (request: SessionRollbackRpcParams) => Promise<SessionRollbackRpcResult>;
   checkpointCodeRollback?: (request: CheckpointCodeRollbackRequest) => Promise<CheckpointCodeRollbackResult>;
   sessionCheckpoint?: (request: SessionCheckpointRequestV1) => Promise<SessionCheckpointResultV1>;
   sessionRestore?: (request: SessionRestoreRequestV1) => Promise<SessionRestoreResultV1>;
@@ -33,20 +33,21 @@ export function resolveSessionRollbackRuntimeFacet(runtime: unknown): SessionRol
     return null;
   }
   const candidate = runtime as Partial<SessionRollbackRuntimeFacet>;
-  return typeof candidate.rollbackConversation === 'function'
-    ? {
-        rollbackConversation: candidate.rollbackConversation.bind(runtime),
-        ...(typeof candidate.checkpointCodeRollback === 'function'
-          ? { checkpointCodeRollback: candidate.checkpointCodeRollback.bind(runtime) }
-          : {}),
-        ...(typeof candidate.sessionCheckpoint === 'function'
-          ? { sessionCheckpoint: candidate.sessionCheckpoint.bind(runtime) }
-          : {}),
-        ...(typeof candidate.sessionRestore === 'function'
-          ? { sessionRestore: candidate.sessionRestore.bind(runtime) }
-          : {}),
-      }
-    : null;
+  const resolved: SessionRollbackRuntimeFacet = {
+    ...(typeof candidate.rollbackConversation === 'function'
+      ? { rollbackConversation: candidate.rollbackConversation.bind(runtime) }
+      : {}),
+    ...(typeof candidate.checkpointCodeRollback === 'function'
+      ? { checkpointCodeRollback: candidate.checkpointCodeRollback.bind(runtime) }
+      : {}),
+    ...(typeof candidate.sessionCheckpoint === 'function'
+      ? { sessionCheckpoint: candidate.sessionCheckpoint.bind(runtime) }
+      : {}),
+    ...(typeof candidate.sessionRestore === 'function'
+      ? { sessionRestore: candidate.sessionRestore.bind(runtime) }
+      : {}),
+  };
+  return Object.keys(resolved).length > 0 ? resolved : null;
 }
 
 export function registerSessionRollbackRpcHandler(
@@ -64,7 +65,7 @@ export function registerSessionRollbackRpcHandler(
       executor: createSessionLifecycleRpcActionExecutor({
         'session.rollback': async (request: unknown) => {
           const runtimeFacet = resolveRuntimeFacet();
-          if (!runtimeFacet) {
+          if (!runtimeFacet?.rollbackConversation) {
             return {
               ok: false,
               errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,

@@ -10,6 +10,8 @@ import type {
     ExecClientHandleV1,
     JsonRpcClientV1,
     PluginContextV1,
+    ProviderAccountUsageAdoptProvisionalRecordInputV1,
+    SessionRuntimeV1,
     PluginSubagentsServiceV1,
 } from '@happier-dev/plugin-sdk';
 import {
@@ -17,7 +19,6 @@ import {
     BackendSurfaceOperationCatalogV1,
     buildProviderAccountUsageRecordId,
     type BackendSurfaceDeclarationV1,
-    type ProviderAccountUsageAdoptionV1,
     type ProviderAccountUsageRecordKeyV1,
     type ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
@@ -29,6 +30,8 @@ import { publishRuntimePluginEvent } from '@/plugins/runtime/context/events';
 import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { HostSessionRuntimeFactoryParams } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import type { Metadata } from '@/api/types';
+import type { RegisteredSessionStateFieldMutationV1 } from '../../../api/session/client/transport/mutations/sessionClientDurableMutationTypes';
+import type { Credentials } from '@/persistence';
 import {
     resolveBackendEngineAdapterResolution,
     resolveCliEngineRegistry,
@@ -40,6 +43,7 @@ const {
     resolveExecutablePluginRuntimeRegistryMock,
     resolvePluginBackendSurfaceHandlersMock,
     pluginReloadControllerStateMock,
+    pluginReloadControllerAcquireRuntimeRegistryMock,
     readCredentialsMock,
     readSettingsMock,
     readOrCreateInstallationIdentityMock,
@@ -59,6 +63,7 @@ const {
     resolveExecutablePluginRuntimeRegistryMock: vi.fn<(...args: unknown[]) => unknown>(),
     resolvePluginBackendSurfaceHandlersMock: vi.fn<(...args: unknown[]) => unknown>(),
     pluginReloadControllerStateMock: vi.fn<(...args: unknown[]) => unknown>(),
+    pluginReloadControllerAcquireRuntimeRegistryMock: vi.fn<(...args: unknown[]) => unknown>(),
     readCredentialsMock: vi.fn<(...args: unknown[]) => unknown>(),
     readSettingsMock: vi.fn<(...args: unknown[]) => unknown>(),
     readOrCreateInstallationIdentityMock: vi.fn<(...args: unknown[]) => unknown>(),
@@ -83,6 +88,7 @@ vi.mock('../../../plugins/runtime/resolveExecutablePluginRuntimeRegistry', () =>
 vi.mock('../../../plugins/runtime/reload/singleton', () => ({
     pluginReloadController: {
         getState: pluginReloadControllerStateMock,
+        acquireRuntimeRegistry: pluginReloadControllerAcquireRuntimeRegistryMock,
     },
 }));
 
@@ -121,8 +127,8 @@ vi.mock('@/agent/executionRuns/registry/executionRunBackendRegistry', () => ({
     getExecutionRunBackendDescriptor: getExecutionRunBackendDescriptorMock,
 }));
 
-vi.mock('@/backends/catalog', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/backends/catalog')>(),
+vi.mock('@/daemon/connectedServices/catalogHooks', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/daemon/connectedServices/catalogHooks')>(),
     getConnectedServiceRuntimeAuthAdapter: (...args: unknown[]) =>
         getConnectedServiceRuntimeAuthAdapterMock(...args),
 }));
@@ -132,6 +138,36 @@ vi.mock('@/session/external/hostAdapters', () => ({
         resolveExternalSessionRuntimeHostAdaptersMock(...args),
 }));
 
+function createLeaseRuntimeRegistry(contributes: unknown): Record<string, unknown> {
+    return {
+        contributes,
+        actionHandlersByActionId: new Map(),
+        hookHandlersByHookId: new Map(),
+        runtimeCoreHandlersByBackendId: new Map(),
+        agentRuntimesByAgentId: new Map(),
+        scmHostingProvidersById: new Map(),
+        pluginDiagnosticsByPluginId: {},
+        activatePluginsByEvent: vi.fn(async () => []),
+        readHookEventEnvelopeV1: vi.fn(),
+        dispose: vi.fn(async () => undefined),
+    };
+}
+
+function completeLeaseRuntimeRegistryFixture(
+    candidate: unknown,
+    fallbackContributes: unknown,
+): Record<string, unknown> {
+    const overrides = candidate && typeof candidate === 'object'
+        ? candidate as Record<string, unknown>
+        : {};
+    const contributes = overrides.contributes ?? fallbackContributes;
+    return {
+        ...createLeaseRuntimeRegistry(contributes),
+        ...overrides,
+        contributes,
+    };
+}
+
 describe('resolveCliEngineRegistry runtimeCore', () => {
     beforeEach(() => {
         vi.resetModules();
@@ -139,6 +175,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         resolveExecutablePluginRuntimeRegistryMock.mockReset();
         resolvePluginBackendSurfaceHandlersMock.mockReset();
         pluginReloadControllerStateMock.mockReset();
+        pluginReloadControllerAcquireRuntimeRegistryMock.mockReset();
         readCredentialsMock.mockReset();
         readSettingsMock.mockReset();
         readOrCreateInstallationIdentityMock.mockReset();
@@ -172,6 +209,32 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             generation: 0,
             activeRegistry: null,
             lastResult: null,
+        });
+        pluginReloadControllerAcquireRuntimeRegistryMock.mockImplementation(async (...args: unknown[]) => {
+            const leaseParams = args[0];
+            const resolveRuntimeRegistry = isRecord(leaseParams)
+                && typeof leaseParams.resolveRuntimeRegistry === 'function'
+                ? leaseParams.resolveRuntimeRegistry
+                : null;
+            const state = pluginReloadControllerStateMock();
+            const activeRegistry = isRecord(state) ? state.activeRegistry : null;
+            const registryCandidate = activeRegistry
+                ?? await resolveRuntimeRegistry?.()
+                ?? await resolveExecutablePluginRuntimeRegistryMock()
+                ?? null;
+            const fallbackContributes = isRecord(registryCandidate)
+                && registryCandidate.contributes
+                ? registryCandidate.contributes
+                : await resolveMergedContributionRegistryMock();
+            const registry = completeLeaseRuntimeRegistryFixture(
+                registryCandidate,
+                fallbackContributes,
+            );
+            return {
+                registry,
+                source: 'active',
+                release: vi.fn(async () => undefined),
+            };
         });
         readSettingsMock.mockResolvedValue({ machineId: 'machine-1' });
         setActiveAccountSettingsSnapshot({
@@ -222,6 +285,46 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         };
     }
 
+    function createTestCredentials(): Credentials {
+        return {
+            token: 'test-token',
+            encryption: {
+                type: 'legacy',
+                secret: new Uint8Array(32).fill(1),
+            },
+        };
+    }
+
+    function createPluginSessionLaunchParams(
+        overrides: Record<string, unknown> = {},
+    ): Record<string, unknown> & Readonly<{ credentials: Credentials }> {
+        return {
+            credentials: createTestCredentials(),
+            ...overrides,
+        };
+    }
+
+    function createTestSessionRuntime(providerSessionId = 'plugin-session-1'): SessionRuntimeV1 {
+        return {
+            identity: {
+                read: () => ({ providerSessionId }),
+            },
+            events: {
+                subscribe: () => () => undefined,
+            },
+            send: async () => ({ status: 'accepted' }),
+            dispose: async () => undefined,
+        };
+    }
+
+    function createPluginSessionRuntimeFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+        return {
+            ...createTestSessionRuntime(),
+            operations: {},
+            ...overrides,
+        };
+    }
+
     function createProviderAccountUsageSnapshotForTest(accountSubjectId = 'acct_123'): ProviderAccountUsageSnapshotV1 {
         const recordKey: ProviderAccountUsageRecordKeyV1 = {
             providerId: 'openai-codex',
@@ -235,12 +338,6 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             recordKey,
             providerId: 'openai-codex',
             accountSubject: { kind: 'providerSubject', id: accountSubjectId },
-            aliases: [{
-                kind: 'appServerNative',
-                providerId: 'openai-codex',
-                sessionId: 'session-1',
-                accountSubjectId,
-            }],
             observedAtMs: 1,
             fetchedAtMs: 1,
             staleAfterMs: 60_000,
@@ -253,7 +350,9 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         };
     }
 
-    function createProviderAccountUsageAdoptionForTest(): ProviderAccountUsageAdoptionV1 {
+    type ProviderAccountUsageAdoptionForTest = ProviderAccountUsageAdoptProvisionalRecordInputV1['adoption'];
+
+    function createProviderAccountUsageAdoptionForTest(): ProviderAccountUsageAdoptionForTest {
         const fromKey: ProviderAccountUsageRecordKeyV1 = {
             providerId: 'openai-codex',
             accountSubjectId: 'provisional:native',
@@ -273,12 +372,6 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             stableRecordKey,
             proof: { kind: 'id_token_account_id', issuer: 'chatgpt' },
             observedAtMs: 1,
-            aliases: [{
-                kind: 'appServerNative',
-                providerId: 'openai-codex',
-                sessionId: 'session-1',
-                accountSubjectId: 'acct_123',
-            }],
         };
     }
 
@@ -312,8 +405,8 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         features?: Readonly<{
             isEnabled?: unknown;
         }>;
-        capabilities?: Readonly<{
-            has?: (capability: string) => boolean;
+        permissions?: Readonly<{
+            isGranted?: (permission: string) => boolean;
             list?: () => readonly string[];
         }>;
         acp?: Readonly<{
@@ -382,10 +475,16 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             list?: unknown;
             resolveForSession?: unknown;
         }>;
-        terminalHost?: Readonly<{
-            resolve?: unknown;
-            createOrAttachHost?: unknown;
-            injectUserPrompt?: unknown;
+        agentRuntime?: Readonly<{
+            acp?: Readonly<{
+                defineAcpBackend?: unknown;
+                createRuntime?: unknown;
+            }>;
+            terminalHost?: Readonly<{
+                resolve?: unknown;
+                createOrAttachHost?: unknown;
+                injectUserPrompt?: unknown;
+            }>;
         }>;
         actions?: Readonly<{
             approvals?: Readonly<{
@@ -407,87 +506,97 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
     }>;
 
     type AcpDefinitionContextForTest = Readonly<{
-        acp: Readonly<{
-            defineAcpBackend: (input: unknown) => unknown;
+        agentRuntime: Readonly<{
+            acp: Readonly<{
+                defineAcpBackend: (input: unknown) => unknown;
+            }>;
         }>;
     }>;
 
     type AcpRuntimeContextForTest = ObservedPluginRuntimeContext & Readonly<{
-        acp: Readonly<{
-            createRuntime: (
-                spec: AcpBackendSpecV1,
-                params: CreateAcpRuntimeParamsV1,
-            ) => Promise<AcpRuntimeHandleV1>;
+        agentRuntime: Readonly<{
+            acp: Readonly<{
+                createRuntime: (
+                    spec: AcpBackendSpecV1,
+                    params: CreateAcpRuntimeParamsV1,
+                ) => Promise<AcpRuntimeHandleV1>;
+            }>;
         }>;
     }>;
 
     type PermissionContextForTest = Readonly<{
-        session: Readonly<{
-            permissions: Readonly<{
-                requestDecision: (
-                    input: unknown,
-                    options?: Readonly<{ signal?: AbortSignal }>,
-                ) => Promise<unknown>;
-            }>;
-        }>;
-    }>;
-
-    type SessionScopedContextForTest = Readonly<{
-        sessionHooks: Readonly<{
-            startServer: (input: unknown) => Promise<Readonly<{
-                port: number;
-                stop(): void;
-                dispose(): Promise<void>;
-            }>>;
-        }>;
-        accountUsage: Readonly<{
-            resolveAliasContext: PluginContextV1['accountUsage']['resolveAliasContext'];
-            recordSnapshot: (input: unknown) => Promise<unknown>;
-            adoptProvisionalRecord: (input: unknown) => Promise<unknown>;
-        }>;
         sessions: Readonly<{
-            send: (input: unknown) => Promise<unknown>;
-            writeMetadata: (input: unknown) => Promise<void>;
-            writeAgentState: (input: unknown) => Promise<void>;
-            writeStateField: (input: unknown) => Promise<void>;
-        }>;
-        telemetry: Readonly<{
-            emit: (input: unknown) => void;
-        }>;
-        artifacts: Readonly<{
-            write: (input: unknown) => Promise<void>;
-        }>;
-        session: Readonly<{
-            subscribe: (input: unknown, onEvent: (event: unknown) => void) => Readonly<{ unsubscribe: () => void }>;
-            mcp: Readonly<{
-                elicit: (input: unknown, options?: Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
-            }>;
-            auth: Readonly<{
-                services: Readonly<{
-                    refreshRuntimeAuth: (
+            current: Readonly<{
+                permissions: Readonly<{
+                    requestDecision: (
                         input: unknown,
                         options?: Readonly<{ signal?: AbortSignal }>,
                     ) => Promise<unknown>;
                 }>;
             }>;
-            permissions: Readonly<{
-                requestDecision: (
-                    input: unknown,
-                    options?: Readonly<{ signal?: AbortSignal }>,
-                ) => Promise<unknown>;
+        }>;
+    }>;
+
+    type SessionScopedContextForTest = Readonly<{
+        agentRuntime: Readonly<{
+            sessionHooks: Readonly<{
+                startServer: (input: unknown) => Promise<Readonly<{
+                    port: number;
+                    stop(): void;
+                    dispose(): Promise<void>;
+                }>>;
+            }>;
+            accountUsage: Readonly<{
+                resolveSourceContext: PluginContextV1['agentRuntime']['accountUsage']['resolveSourceContext'];
+                recordSnapshot: (input: unknown) => Promise<unknown>;
+                adoptProvisionalRecord: (input: unknown) => Promise<unknown>;
+            }>;
+            transcripts: Readonly<{
+                append: (input: unknown) => Promise<void> | void;
+                fileFollow: Readonly<{
+                    follow: (input: Readonly<{
+                        path: string;
+                        startAt: 'beginning' | 'end';
+                        onLine: (line: Readonly<{ line: string }>) => void | Promise<void>;
+                    }>) => Promise<Readonly<{
+                        drainNow(): Promise<void>;
+                        close(): Promise<void>;
+                    }>>;
+                }>;
             }>;
         }>;
-        transcripts: Readonly<{
-            append: (input: unknown) => Promise<void> | void;
-            fileFollow: Readonly<{
-                follow: (input: Readonly<{
-                    path: string;
-                    startAt: 'beginning' | 'end';
-                    onLine: (line: Readonly<{ line: string }>) => void | Promise<void>;
-                }>) => Promise<Readonly<{
-                    drainNow(): Promise<void>;
-                    close(): Promise<void>;
-                }>>;
+        sessions: Readonly<{
+            current: Readonly<{
+                subscribe: (input: unknown, onEvent: (event: unknown) => void) => Readonly<{ unsubscribe: () => void }>;
+                mcp: Readonly<{
+                    elicit: (input: unknown, options?: Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
+                }>;
+                auth: Readonly<{
+                    services: Readonly<{
+                        refreshRuntimeAuth: (
+                            input: unknown,
+                            options?: Readonly<{ signal?: AbortSignal }>,
+                        ) => Promise<unknown>;
+                    }>;
+                }>;
+                permissions: Readonly<{
+                    requestDecision: (
+                        input: unknown,
+                        options?: Readonly<{ signal?: AbortSignal }>,
+                    ) => Promise<unknown>;
+                }>;
+            }>;
+            send: (input: unknown) => Promise<unknown>;
+            writeMetadata: (input: unknown) => Promise<void>;
+            writeAgentState: (input: unknown) => Promise<void>;
+            writeStateField: (input: unknown) => Promise<void>;
+        }>;
+        experimental: Readonly<{
+            telemetry: Readonly<{
+                emit: (input: unknown) => void;
+            }>;
+            artifacts: Readonly<{
+                write: (input: unknown) => Promise<void>;
             }>;
         }>;
     }>;
@@ -537,14 +646,14 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         };
 
         resolveMergedContributionRegistryMock.mockResolvedValue({
-            providers: [],
-            backends: [],
+            agents: [],
+            agentRuntimes: [],
             hookRegistrations: [],
             surfaceHandlersByBackendId: new Map(),
             catalogEntriesById: {
                 codex: catalogEntry,
             },
-            providerDefinitionsById: new Map([
+            agentDefinitionsById: new Map([
                 ['codex', {
                     id: 'codex',
                     provenance: 'first_party',
@@ -564,22 +673,22 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                     catalogEntry,
                 }],
             ]),
-            backendDefinitionsById: new Map([
+            agentRuntimeDefinitionsById: new Map([
                 ['codex', {
                     id: 'codex',
-                    providerId: 'codex',
+                    agentId: 'codex',
                     provenance: 'first_party',
                     source: { kind: 'bundled' },
                     definition: {
                         kindVersion: 1,
                         id: 'codex',
-                        providerId: 'codex',
+                        agentId: 'codex',
                     },
                     richDefinition: {
                         source: 'built_in',
                         definition: {
                             id: 'codex',
-                            providerId: 'codex',
+                            agentId: 'codex',
                         },
                     },
                     getRuntimeCore: async () => params.runtimeCoreFactory,
@@ -600,7 +709,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: params.createEngine
+            agentRuntimesByAgentId: params.createEngine
                 ? new Map([
                     [params.backendId, {
                         pluginId: params.pluginId,
@@ -612,6 +721,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 ])
                 : new Map(),
             pluginDiagnosticsByPluginId: {},
+            activatePluginsByEvent: vi.fn(async () => []),
             readHookEventEnvelopeV1: vi.fn(),
             dispose: vi.fn(async () => undefined),
         };
@@ -619,22 +729,22 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
 
     function seedFirstPartyOwnerRegistry(params: Readonly<{
         backendId?: string;
-        providerId?: string;
+        agentId?: string;
         pluginId?: string;
         runtimeOwner?: Record<string, unknown>;
         runtimeCoreFactory?: (params: unknown) => unknown;
     }>): Record<string, unknown> {
         const backendId = params.backendId ?? 'acme.firstparty.backend';
-        const providerId = params.providerId ?? 'acme.firstparty';
+        const agentId = params.agentId ?? 'claude';
         const pluginId = params.pluginId ?? 'happier.agent.acme';
         const runtimeCoreFactory = params.runtimeCoreFactory;
-        const provider = {
-            id: providerId,
+        const agent = {
+            id: agentId,
             provenance: 'first_party',
             source: { kind: 'bundled' },
             definition: {
                 kindVersion: 1,
-                id: providerId,
+                id: agentId,
                 ownedBackendIds: [backendId],
             },
             richDefinition: undefined,
@@ -646,13 +756,13 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         };
         const backend = {
             id: backendId,
-            providerId,
+            agentId,
             provenance: 'first_party',
             source: { kind: 'bundled' },
             definition: {
                 kindVersion: 1,
                 id: backendId,
-                providerId,
+                agentId,
             },
             richDefinition: undefined,
             runtimeKind: 'custom',
@@ -665,14 +775,14 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             ...(params.runtimeOwner ? { runtimeOwner: params.runtimeOwner } : {}),
         };
         const registry = {
-            providers: [provider],
-            backends: [backend],
+            agents: [agent],
+            agentRuntimes: [backend],
             actions: [],
             hookRegistrations: [],
             surfaceHandlersByBackendId: new Map(),
             catalogEntriesById: {},
-            backendDefinitionsById: new Map([[backendId, backend]]),
-            providerDefinitionsById: new Map([[providerId, provider]]),
+            agentRuntimeDefinitionsById: new Map([[backendId, backend]]),
+            agentDefinitionsById: new Map([[agentId, agent]]),
             pluginDiagnosticsByPluginId: {},
         };
         resolveMergedContributionRegistryMock.mockResolvedValue(registry);
@@ -683,7 +793,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         runtimeCoreFactory: (params: unknown) => unknown;
     }>) {
 	        const registry = {
-	            providers: [{
+	            agents: [{
 	                id: 'acme.sample.provider',
 	                provenance: 'external',
 	                source: { kind: 'path' },
@@ -722,22 +832,22 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 pluginId: 'acme.sample',
                 daemonEntryPath: '/tmp/acme.sample/daemon.mjs',
             }],
-	            backends: [{
+	            agentRuntimes: [{
 	                id: 'acme.sample.backend',
-	                providerId: 'acme.sample.provider',
+	                agentId: 'acme.sample.provider',
 	                provenance: 'external',
 	                source: { kind: 'path' },
 	                definition: {
 	                    kindVersion: 1,
 	                    id: 'acme.sample.backend',
-	                    providerId: 'acme.sample.provider',
+	                    agentId: 'acme.sample.provider',
                 },
                 richDefinition: {
                     source: 'plugin',
                     definition: {
                         kindVersion: 1,
                         id: 'acme.sample.backend',
-                        providerId: 'acme.sample.provider',
+                        agentId: 'acme.sample.provider',
                         runtimeKind: 'native',
                         capabilities: {},
                         surfaceHandlers: [],
@@ -752,23 +862,23 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             hookRegistrations: [],
             surfaceHandlersByBackendId: new Map(),
             catalogEntriesById: {},
-	            backendDefinitionsById: new Map([
+	            agentRuntimeDefinitionsById: new Map([
 	                ['acme.sample.backend', {
 	                    id: 'acme.sample.backend',
-	                    providerId: 'acme.sample.provider',
+	                    agentId: 'acme.sample.provider',
 	                    provenance: 'external',
 	                    source: { kind: 'path' },
 	                    definition: {
 	                        kindVersion: 1,
 	                        id: 'acme.sample.backend',
-	                        providerId: 'acme.sample.provider',
+	                        agentId: 'acme.sample.provider',
                     },
                     richDefinition: {
                         source: 'plugin',
                         definition: {
                             kindVersion: 1,
                             id: 'acme.sample.backend',
-                            providerId: 'acme.sample.provider',
+                            agentId: 'acme.sample.provider',
                             runtimeKind: 'native',
                             capabilities: {},
                             surfaceHandlers: [],
@@ -781,7 +891,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                     getRuntimeCore: async () => params.runtimeCoreFactory,
                 }],
             ]),
-	            providerDefinitionsById: new Map([
+	            agentDefinitionsById: new Map([
 	                ['acme.sample.provider', {
 	                    id: 'acme.sample.provider',
 	                    provenance: 'external',
@@ -830,14 +940,14 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
 
     it('does not resolve unknown execution-run backends through legacy descriptor fallback', async () => {
         resolveMergedContributionRegistryMock.mockResolvedValue({
-            providers: [],
-            backends: [],
+            agents: [],
+            agentRuntimes: [],
             actions: [],
             hookRegistrations: [],
             surfaceHandlersByBackendId: new Map(),
             catalogEntriesById: {},
-            providerDefinitionsById: new Map(),
-            backendDefinitionsById: new Map(),
+            agentDefinitionsById: new Map(),
+            agentRuntimeDefinitionsById: new Map(),
             pluginDiagnosticsByPluginId: {},
         });
 
@@ -852,7 +962,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
     }>): void {
         const surfaceHandlers = params?.surfaceHandlers ?? [];
         const registry = {
-            providers: [{
+            agents: [{
                 id: 'acme.sample.provider',
                 provenance: 'external',
                 source: { kind: 'path' },
@@ -860,13 +970,16 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                     kindVersion: 1,
                     id: 'acme.sample.provider',
                     ownedBackendIds: ['acme.sample.backend'],
+                    catalogAgentId: 'claude',
                 },
                 richDefinition: {
+                    provenance: 'external',
                     source: 'plugin',
                     definition: {
                         kindVersion: 1,
                         id: 'acme.sample.provider',
                         ownedBackendIds: ['acme.sample.backend'],
+                        catalogAgentId: 'claude',
                         display: {
                             name: 'Acme Sample Provider',
                             tags: ['plugin'],
@@ -877,22 +990,25 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 pluginId: 'acme.sample',
                 daemonEntryPath: '/tmp/acme.sample/daemon.mjs',
             }],
-            backends: [{
+            agentRuntimes: [{
                 id: 'acme.sample.backend',
-                providerId: 'acme.sample.provider',
+                agentId: 'acme.sample.provider',
                 provenance: 'external',
                 source: { kind: 'path' },
                 definition: {
                     kindVersion: 1,
                     id: 'acme.sample.backend',
-                    providerId: 'acme.sample.provider',
+                    agentId: 'acme.sample.provider',
+                    catalogAgentId: 'claude',
                 },
                 richDefinition: {
+                    provenance: 'external',
                     source: 'plugin',
                     definition: {
                         kindVersion: 1,
                         id: 'acme.sample.backend',
-                        providerId: 'acme.sample.provider',
+                        agentId: 'acme.sample.provider',
+                        catalogAgentId: 'claude',
                         runtimeKind: 'native',
                         capabilities: {},
                         surfaceHandlers,
@@ -907,23 +1023,26 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             hookRegistrations: [],
             surfaceHandlersByBackendId: new Map(),
             catalogEntriesById: {},
-            backendDefinitionsById: new Map([
+            agentRuntimeDefinitionsById: new Map([
                 ['acme.sample.backend', {
                     id: 'acme.sample.backend',
-                    providerId: 'acme.sample.provider',
+                    agentId: 'acme.sample.provider',
                     provenance: 'external',
                     source: { kind: 'path' },
                     definition: {
                         kindVersion: 1,
                         id: 'acme.sample.backend',
-                        providerId: 'acme.sample.provider',
+                        agentId: 'acme.sample.provider',
+                        catalogAgentId: 'claude',
                     },
                     richDefinition: {
+                        provenance: 'external',
                         source: 'plugin',
                         definition: {
                             kindVersion: 1,
                             id: 'acme.sample.backend',
-                            providerId: 'acme.sample.provider',
+                            agentId: 'acme.sample.provider',
+                            catalogAgentId: 'claude',
                             runtimeKind: 'native',
                             capabilities: {},
                             surfaceHandlers,
@@ -935,7 +1054,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                     daemonEntryPath: '/tmp/acme.sample/daemon.mjs',
                 }],
             ]),
-            providerDefinitionsById: new Map([
+            agentDefinitionsById: new Map([
                 ['acme.sample.provider', {
                     id: 'acme.sample.provider',
                     provenance: 'external',
@@ -944,13 +1063,16 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                         kindVersion: 1,
                         id: 'acme.sample.provider',
                         ownedBackendIds: ['acme.sample.backend'],
+                        catalogAgentId: 'claude',
                     },
                     richDefinition: {
+                        provenance: 'external',
                         source: 'plugin',
                         definition: {
                             kindVersion: 1,
                             id: 'acme.sample.provider',
                             ownedBackendIds: ['acme.sample.backend'],
+                            catalogAgentId: 'claude',
                             display: {
                                 name: 'Acme Sample Provider',
                                 tags: ['plugin'],
@@ -973,8 +1095,8 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         const backendDefinition = params?.backendDefinition ?? {
             kindVersion: 1,
             id: 'acme.manifest.acp',
-            providerId: 'acme.manifest.provider',
-            engine: {
+            agentId: 'acme.manifest.provider',
+            runtime: {
                 kind: 'acp',
                 transport: {
                     kind: 'stdio',
@@ -995,7 +1117,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             surfaceHandlers: [],
         };
         const registry = {
-            providers: [{
+            agents: [{
                 id: 'acme.manifest.provider',
                 provenance: 'external',
                 source: { kind: 'path' },
@@ -1016,15 +1138,15 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 pluginId: 'acme.manifest',
                 daemonEntryPath: null,
             }],
-            backends: [{
+            agentRuntimes: [{
                 id: 'acme.manifest.acp',
-                providerId: 'acme.manifest.provider',
+                agentId: 'acme.manifest.provider',
                 provenance: 'external',
                 source: { kind: 'path' },
                 definition: {
                     kindVersion: 1,
                     id: 'acme.manifest.acp',
-                    providerId: 'acme.manifest.provider',
+                    agentId: 'acme.manifest.provider',
                 },
                 richDefinition: {
                     provenance: 'external',
@@ -1039,16 +1161,16 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             hookRegistrations: [],
             surfaceHandlersByBackendId: new Map(),
             catalogEntriesById: {},
-            backendDefinitionsById: new Map([
+            agentRuntimeDefinitionsById: new Map([
                 ['acme.manifest.acp', {
                     id: 'acme.manifest.acp',
-                    providerId: 'acme.manifest.provider',
+                    agentId: 'acme.manifest.provider',
                     provenance: 'external',
                     source: { kind: 'path' },
                     definition: {
                         kindVersion: 1,
                         id: 'acme.manifest.acp',
-                        providerId: 'acme.manifest.provider',
+                        agentId: 'acme.manifest.provider',
                     },
                     richDefinition: {
                         provenance: 'external',
@@ -1060,7 +1182,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                     daemonEntryPath: null,
                 }],
             ]),
-            providerDefinitionsById: new Map([
+            agentDefinitionsById: new Map([
                 ['acme.manifest.provider', {
                     id: 'acme.manifest.provider',
                     provenance: 'external',
@@ -1094,7 +1216,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         const providerId = 'opencode';
 
         const registry = {
-            providers: [{
+            agents: [{
                 id: providerId,
                 provenance: 'first_party',
                 source: { kind: 'bundled' },
@@ -1111,7 +1233,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                     vendorResumeSupport: 'unsupported',
                 },
             }],
-            backends: [{
+            agentRuntimes: [{
                 id: backendId,
                 providerId,
                 provenance: 'first_party',
@@ -1135,7 +1257,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                     vendorResumeSupport: 'unsupported',
                 },
             },
-            backendDefinitionsById: new Map([
+            agentRuntimeDefinitionsById: new Map([
                 [backendId, {
                     id: backendId,
                     providerId,
@@ -1151,7 +1273,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                     surfaceHandlers: [],
                 }],
             ]),
-            providerDefinitionsById: new Map([
+            agentDefinitionsById: new Map([
                 [providerId, {
                     id: providerId,
                     provenance: 'first_party',
@@ -1196,7 +1318,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             expect(params).toEqual(expect.objectContaining({
                 backend: expect.objectContaining({
                     id: 'codex',
-                    providerId: 'codex',
+                    agentId: 'codex',
                     provenance: 'first_party',
                     source: { kind: 'bundled' },
                 }),
@@ -1361,16 +1483,23 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             }],
         });
         expect(resolution?.selectedSource).toBe('plugin');
-        await expect(resolution?.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/repo' }))
+        await expect(resolution?.engineAdapter.runtimeCore.createSessionRuntime(createPluginSessionLaunchParams({ cwd: '/repo' })))
             .resolves
-            .toEqual({ owner: 'plugin-session' });
+            .toMatchObject({
+                kind: 'hostSessionRuntimePlan',
+                agentId: backendId,
+                config: {
+                    createSessionRuntime: expect.any(Function),
+                    policyAgentId: 'claude',
+                },
+            });
         expect(resolution?.engineAdapter.runtimeCore.createExecutionRunBackend({
             cwd: '/repo',
             backendId,
             permissionMode: 'read_only',
         })).toEqual(expect.objectContaining({ owner: 'plugin-execution' }));
         expect(createPluginEngine).toHaveBeenCalledTimes(1);
-        expect(pluginRuntimeCore.createSessionRuntime).toHaveBeenCalledTimes(1);
+        expect(pluginRuntimeCore.createSessionRuntime).not.toHaveBeenCalled();
         expect(pluginRuntimeCore.createExecutionRunBackend).toHaveBeenCalledTimes(1);
     });
 
@@ -1513,9 +1642,16 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             },
         });
         expect(resolution?.selectedSource).toBe('plugin');
-        await expect(resolution?.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/repo' }))
+        await expect(resolution?.engineAdapter.runtimeCore.createSessionRuntime(createPluginSessionLaunchParams({ cwd: '/repo' })))
             .resolves
-            .toEqual({ owner: 'plugin-session' });
+            .toMatchObject({
+                kind: 'hostSessionRuntimePlan',
+                agentId: backendId,
+                config: {
+                    createSessionRuntime: expect.any(Function),
+                    policyAgentId: 'claude',
+                },
+            });
         expect(resolution?.engineAdapter.runtimeCore.createExecutionRunBackend({
             cwd: '/repo',
             backendId,
@@ -1525,7 +1661,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         expect(runtimeCoreFactory).not.toHaveBeenCalled();
         expect(hostRuntimeCore.createSessionRuntime).not.toHaveBeenCalled();
         expect(hostRuntimeCore.createExecutionRunBackend).not.toHaveBeenCalled();
-        expect(pluginRuntimeCore.createSessionRuntime).toHaveBeenCalledTimes(1);
+        expect(pluginRuntimeCore.createSessionRuntime).not.toHaveBeenCalled();
         expect(pluginRuntimeCore.createExecutionRunBackend).toHaveBeenCalledTimes(1);
     });
 
@@ -1621,7 +1757,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -1639,6 +1775,8 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 }],
             ]),
             pluginDiagnosticsByPluginId: {},
+            activatedPluginIds: new Set(['acme.sample']),
+            activatePluginsByEvent: vi.fn(async () => []),
             readHookEventEnvelopeV1: vi.fn(),
             dispose: vi.fn(async () => undefined),
         });
@@ -1657,8 +1795,8 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         expect(context.config?.values?.currentCliVersion).toBe(configuration.currentCliVersion);
         expect(context.logger?.debug).toEqual(expect.any(Function));
         expect(context.features?.isEnabled).toEqual(expect.any(Function));
-        expect(context.acp?.defineAcpBackend).toEqual(expect.any(Function));
-        expect(context.acp?.createRuntime).toEqual(expect.any(Function));
+        expect(context.agentRuntime?.acp?.defineAcpBackend).toEqual(expect.any(Function));
+        expect(context.agentRuntime?.acp?.createRuntime).toEqual(expect.any(Function));
         const acpRuntimeContext = context as AcpRuntimeContextForTest;
         const acpClientDispose = vi.fn(async () => undefined);
         const acpClient: JsonRpcClientV1 = {
@@ -1684,7 +1822,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             onExit: () => () => undefined,
             dispose: acpClientDispose,
         };
-        const acpRuntimeHandle = await acpRuntimeContext.acp.createRuntime({
+        const acpRuntimeHandle = await acpRuntimeContext.agentRuntime.acp.createRuntime({
             backendId: 'acme.sample.backend',
             transport: {
                 kind: 'stdio',
@@ -1703,7 +1841,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 },
             },
         });
-        expect(acpRuntimeHandle.runtime.backendId).toBe('acme.sample.backend');
+        expect(acpRuntimeHandle.runtime.agentId).toBe('acme.sample.backend');
         await acpRuntimeHandle.dispose('test');
         await acpRuntimeHandle.dispose('test-again');
         expect(acpClientDispose).toHaveBeenCalledTimes(1);
@@ -1721,9 +1859,9 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         await expect(subagents.upsert({
             id: 'plugin-subagent-1',
             parentSessionId: 'session-1',
-            origin: 'provider',
+            origin: 'agent',
             kind: 'native',
-            providerRef: { providerId: 'acme.sample' },
+            agentRef: { agentId: 'acme.sample' },
         })).rejects.toThrow(/unavailable/);
         await expect(subagents.list({ parentSessionId: 'session-1' }))
             .resolves
@@ -1780,6 +1918,60 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         expect(getExecutionRunBackendDescriptorMock).not.toHaveBeenCalled();
     });
 
+    it('rejects plugin execution-run backends that do not implement the host runtime contract', async () => {
+        seedPluginRegistryWithoutRuntimeCore();
+        resolvePluginBackendSurfaceHandlersMock.mockResolvedValue({
+            surfaces: {
+                terminalRuntime: null,
+                externalSession: null,
+                attach: null,
+                handoff: null,
+                fork: null,
+                checkpoint: null,
+            },
+            diagnostics: [],
+        });
+
+        const createExecutionRunBackend = vi.fn(() => ({
+            run: vi.fn(async () => undefined),
+        }));
+
+        resolveExecutablePluginRuntimeRegistryMock.mockResolvedValue({
+            contributes: await resolveMergedContributionRegistryMock(),
+            actionHandlersByActionId: new Map(),
+            hookHandlersByHookId: new Map(),
+            runtimeCoreHandlersByBackendId: new Map(),
+            agentRuntimesByAgentId: new Map([
+                ['acme.sample.backend', {
+                    pluginId: 'acme.sample',
+                    registration: {
+                        backendId: 'acme.sample.backend',
+                        create: async () => ({
+                            runtimeCore: {
+                                createSessionRuntime: async () => null,
+                                createExecutionRunBackend,
+                            },
+                        }),
+                    },
+                }],
+            ]),
+            pluginDiagnosticsByPluginId: {},
+            readHookEventEnvelopeV1: vi.fn(),
+            activatePluginsByEvent: vi.fn(async () => []),
+            dispose: vi.fn(async () => undefined),
+        });
+
+        const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
+
+        expect(() => resolution!.engineAdapter.runtimeCore.createExecutionRunBackend({
+            cwd: process.cwd(),
+            backendId: 'acme.sample.backend',
+            permissionMode: 'read_only',
+        })).toThrow(/Execution-run plugin backend 'acme\.sample\.backend'.*plugin 'acme\.sample'.*ExecutionRunHostRuntime/i);
+        expect(createExecutionRunBackend).toHaveBeenCalledTimes(1);
+        expect(getExecutionRunBackendDescriptorMock).not.toHaveBeenCalled();
+    });
+
     it('resolves providerless review plugin backends through their registered backend engine', async () => {
         const backendId = 'review.providerless';
         const pluginId = 'happier.review.providerless';
@@ -1794,21 +1986,24 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         const createExecutionRunBackend = vi.fn(() => executionBackend);
         const backend = {
             id: backendId,
-            providerId: backendId,
+            agentId: backendId,
             provenance: 'external',
             source: { kind: 'bundled' },
             definition: {
                 kindVersion: 1,
                 id: backendId,
-                providerId: backendId,
+                agentId: backendId,
+                catalogAgentId: 'claude',
                 engine: { kind: 'custom' },
             },
             richDefinition: {
+                provenance: 'external',
                 source: 'plugin',
                 definition: {
                     kindVersion: 1,
                     id: backendId,
-                    providerId: backendId,
+                    agentId: backendId,
+                    catalogAgentId: 'claude',
                     engine: { kind: 'custom' },
                     capabilities: {},
                     surfaceHandlers: [],
@@ -1820,14 +2015,14 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             daemonEntryPath: '@happier-dev/plugins-review-providerless',
         };
         const contributes = {
-            providers: [],
-            backends: [backend],
+            agents: [],
+            agentRuntimes: [backend],
             actions: [],
             hookRegistrations: [],
             surfaceHandlersByBackendId: new Map(),
             catalogEntriesById: {},
-            backendDefinitionsById: new Map([[backendId, backend]]),
-            providerDefinitionsById: new Map(),
+            agentRuntimeDefinitionsById: new Map([[backendId, backend]]),
+            agentDefinitionsById: new Map(),
             pluginDiagnosticsByPluginId: {},
         };
         resolveMergedContributionRegistryMock.mockResolvedValue(contributes);
@@ -1836,7 +2031,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 [backendId, {
                     pluginId,
                     registration: {
@@ -1854,6 +2049,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             ]),
             pluginDiagnosticsByPluginId: {},
             readHookEventEnvelopeV1: vi.fn(),
+            activatePluginsByEvent: vi.fn(async () => []),
             dispose: vi.fn(async () => undefined),
         });
 
@@ -1861,7 +2057,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         expect(resolution?.diagnostics).toContainEqual(expect.objectContaining({
             code: 'engine_provider_missing',
             backendId,
-            providerId: backendId,
+            agentId: backendId,
             pluginId,
         }));
 
@@ -1878,7 +2074,20 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         await expect(runtime.provisionSession({ initialPrompt: 'review this' }))
             .resolves
             .toEqual({ sessionId: 'review-run-session-1' });
-        await expect(resolution!.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/repo' }))
+        const sessionPlan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime(createPluginSessionLaunchParams({ cwd: '/repo' })) as HostSessionRuntimePlanForTest;
+        await expect(sessionPlan.config.createSessionRuntime({
+            directory: '/repo',
+            metadata: {},
+            machineId: 'm1',
+            session: { sessionId: 'review-session-1' },
+            transcriptSession: {},
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: {},
+            getPermissionMode: () => 'read_only',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        }))
             .rejects
             .toThrow(/execution-run only/i);
     });
@@ -1897,14 +2106,26 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             diagnostics: [],
         });
 
-        const enqueueRegisteredSessionStateFieldMutation = vi.fn(async () => undefined);
+        const parentDurableMutationOutbox = {
+            enqueueRegisteredSessionStateFieldMutation: vi.fn(async (_mutation: RegisteredSessionStateFieldMutationV1) => undefined),
+        };
+        const parentSessionStateTarget = {
+            sessionId: 'parent-session-1',
+            durableMutationOutbox: parentDurableMutationOutbox,
+            enqueueRegisteredSessionStateFieldMutation: async function (
+                this: { durableMutationOutbox: typeof parentDurableMutationOutbox },
+                mutation: RegisteredSessionStateFieldMutationV1,
+            ) {
+                await this.durableMutationOutbox.enqueueRegisteredSessionStateFieldMutation(mutation);
+            },
+        };
         let capturedContext: SessionScopedContextForTest | null = null;
         resolveExecutablePluginRuntimeRegistryMock.mockResolvedValue({
             contributes: await resolveMergedContributionRegistryMock(),
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -1930,6 +2151,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             ]),
             pluginDiagnosticsByPluginId: {},
             readHookEventEnvelopeV1: vi.fn(),
+            activatePluginsByEvent: vi.fn(async () => []),
             dispose: vi.fn(async () => undefined),
         });
 
@@ -1939,10 +2161,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             runId: 'run-1',
             backendId: 'acme.sample.backend',
             permissionMode: 'read_only',
-            parentSessionStateTarget: {
-                sessionId: 'parent-session-1',
-                enqueueRegisteredSessionStateFieldMutation,
-            },
+            parentSessionStateTarget,
         });
 
         await capturedContext!.sessions.writeStateField({
@@ -1950,8 +2169,19 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             value: 'provider-session-1',
             reason: 'execution-run-provider-session',
         });
+        await capturedContext!.sessions.writeStateField({
+            fieldId: 'runtime.activity',
+            value: {
+                v: 1,
+                activeCount: 1,
+                observedAtMs: 1_000,
+                expiresAtMs: 2_000,
+                sourceClass: 'provider_detached_task',
+            },
+            reason: 'execution-run-runtime-activity',
+        });
 
-        expect(enqueueRegisteredSessionStateFieldMutation).toHaveBeenCalledWith(expect.objectContaining({
+        expect(parentDurableMutationOutbox.enqueueRegisteredSessionStateFieldMutation).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'parent-session-1',
             fieldId: 'identity.providerSessionId',
             deliveryClass: 'durable_best_effort',
@@ -1959,6 +2189,22 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             op: {
                 kind: 'set',
                 value: 'provider-session-1',
+            },
+        }));
+        expect(parentDurableMutationOutbox.enqueueRegisteredSessionStateFieldMutation).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'parent-session-1',
+            fieldId: 'runtime.activity',
+            deliveryClass: 'durable_best_effort',
+            source: 'runtime',
+            op: {
+                kind: 'set',
+                value: {
+                    v: 1,
+                    activeCount: 1,
+                    observedAtMs: 1_000,
+                    expiresAtMs: 2_000,
+                    sourceClass: 'provider_detached_task',
+                },
             },
         }));
     });
@@ -1983,7 +2229,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -2009,6 +2255,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             ]),
             pluginDiagnosticsByPluginId: {},
             readHookEventEnvelopeV1: vi.fn(),
+            activatePluginsByEvent: vi.fn(async () => []),
             dispose: vi.fn(async () => undefined),
         });
 
@@ -2023,7 +2270,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             },
         });
 
-        const result = await capturedContext!.accountUsage.recordSnapshot({
+        const result = await capturedContext!.agentRuntime.accountUsage.recordSnapshot({
             snapshot: createProviderAccountUsageSnapshotForTest(),
         });
 
@@ -2039,12 +2286,12 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             }),
         });
 
-        const invalidResult = await capturedContext!.accountUsage.recordSnapshot(null);
+        const invalidResult = await capturedContext!.agentRuntime.accountUsage.recordSnapshot(null);
 
         expect(invalidResult).toEqual({ status: 'rejected', reason: 'invalid_snapshot' });
         expect(notifyDaemonProviderAccountUsageSnapshotMock).toHaveBeenCalledTimes(1);
 
-        const mismatchResult = await capturedContext!.accountUsage.recordSnapshot({
+        const mismatchResult = await capturedContext!.agentRuntime.accountUsage.recordSnapshot({
             sessionId: 'other-session',
             snapshot: createProviderAccountUsageSnapshotForTest('acct_456'),
         });
@@ -2052,8 +2299,8 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         expect(mismatchResult).toEqual({ status: 'rejected', reason: 'session_mismatch' });
         expect(notifyDaemonProviderAccountUsageSnapshotMock).toHaveBeenCalledTimes(1);
 
-        const { resolveAliasContext } = capturedContext!.accountUsage;
-        await expect(resolveAliasContext({
+        const { resolveSourceContext } = capturedContext!.agentRuntime.accountUsage;
+        await expect(resolveSourceContext({
             serviceId: 'openai-codex',
             env: {
                 [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
@@ -2068,7 +2315,9 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         })).resolves.toEqual({
             serviceId: 'openai-codex',
             profileId: 'backup',
+            bindingKind: 'group_member',
             groupId: 'main',
+            groupGeneration: 2,
         });
 
         const adoption = createProviderAccountUsageAdoptionForTest();
@@ -2082,7 +2331,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             },
         });
 
-        const adoptionResult = await capturedContext!.accountUsage.adoptProvisionalRecord({
+        const adoptionResult = await capturedContext!.agentRuntime.accountUsage.adoptProvisionalRecord({
             adoption,
         });
 
@@ -2097,18 +2346,231 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             adoption,
         });
 
-        const invalidAdoptionResult = await capturedContext!.accountUsage.adoptProvisionalRecord(null);
+        const invalidAdoptionResult = await capturedContext!.agentRuntime.accountUsage.adoptProvisionalRecord(null);
 
         expect(invalidAdoptionResult).toEqual({ status: 'rejected', reason: 'invalid_adoption' });
         expect(notifyDaemonProviderAccountUsageAdoptionMock).toHaveBeenCalledTimes(1);
 
-        const adoptionMismatchResult = await capturedContext!.accountUsage.adoptProvisionalRecord({
+        const adoptionMismatchResult = await capturedContext!.agentRuntime.accountUsage.adoptProvisionalRecord({
             sessionId: 'other-session',
             adoption,
         });
 
         expect(adoptionMismatchResult).toEqual({ status: 'rejected', reason: 'session_mismatch' });
         expect(notifyDaemonProviderAccountUsageAdoptionMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('replays daemon-unavailable provider account usage snapshots on the next successful notification', async () => {
+        seedPluginRegistryWithoutRuntimeCore();
+        resolvePluginBackendSurfaceHandlersMock.mockResolvedValue({
+            surfaces: {
+                terminalRuntime: null,
+                externalSession: null,
+                attach: null,
+                handoff: null,
+                fork: null,
+                checkpoint: null,
+            },
+            diagnostics: [],
+        });
+
+        let capturedContext: SessionScopedContextForTest | null = null;
+        resolveExecutablePluginRuntimeRegistryMock.mockResolvedValue({
+            contributes: await resolveMergedContributionRegistryMock(),
+            actionHandlersByActionId: new Map(),
+            hookHandlersByHookId: new Map(),
+            runtimeCoreHandlersByBackendId: new Map(),
+            agentRuntimesByAgentId: new Map([
+                ['acme.sample.backend', {
+                    pluginId: 'acme.sample',
+                    registration: {
+                        backendId: 'acme.sample.backend',
+                        create: async (ctx: SessionScopedContextForTest) => {
+                            capturedContext = ctx;
+                            return {
+                                runtimeCore: {
+                                    createSessionRuntime: async () => null,
+                                    createExecutionRunBackend: vi.fn(() => ({
+                                        provisionSession: vi.fn(async () => ({ sessionId: 'run-session-1' })),
+                                        readResumeSupport: vi.fn(async () => false),
+                                        sendPrompt: vi.fn(async () => undefined),
+                                        cancel: vi.fn(async () => undefined),
+                                        subscribeMessages: vi.fn(() => () => undefined),
+                                        dispose: vi.fn(async () => undefined),
+                                    })),
+                                },
+                            };
+                        },
+                    },
+                }],
+            ]),
+            pluginDiagnosticsByPluginId: {},
+            readHookEventEnvelopeV1: vi.fn(),
+            activatePluginsByEvent: vi.fn(async () => []),
+            dispose: vi.fn(async () => undefined),
+        });
+
+        const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
+        resolution!.engineAdapter.runtimeCore.createExecutionRunBackend({
+            cwd: process.cwd(),
+            runId: 'run-1',
+            backendId: 'acme.sample.backend',
+            permissionMode: 'read_only',
+            parentSessionStateTarget: {
+                sessionId: 'parent-session-1',
+            },
+        });
+
+        const olderQueuedSnapshot = {
+            ...createProviderAccountUsageSnapshotForTest('acct_replay'),
+            observedAtMs: 1,
+            fetchedAtMs: 1,
+            staleAfterMs: 60_000,
+        };
+        const latestQueuedSnapshot = {
+            ...olderQueuedSnapshot,
+            observedAtMs: 2,
+            fetchedAtMs: 2,
+            staleAfterMs: 120_000,
+        };
+        const liveSnapshot = createProviderAccountUsageSnapshotForTest('acct_live');
+        notifyDaemonProviderAccountUsageSnapshotMock
+            .mockResolvedValueOnce({ error: { code: 'ECONNREFUSED' } })
+            .mockRejectedValueOnce(new Error('daemon unavailable'))
+            .mockResolvedValue({
+                ok: true,
+                result: { status: 'recorded', recordId: 'paug_v1_placeholder', persisted: true },
+            });
+
+        await expect(capturedContext!.agentRuntime.accountUsage.recordSnapshot({
+            snapshot: olderQueuedSnapshot,
+        })).resolves.toEqual({ status: 'unavailable', reason: 'daemon_unavailable' });
+        await expect(capturedContext!.agentRuntime.accountUsage.recordSnapshot({
+            snapshot: latestQueuedSnapshot,
+        })).resolves.toEqual({ status: 'unavailable', reason: 'daemon_unavailable' });
+        await expect(capturedContext!.agentRuntime.accountUsage.recordSnapshot({
+            snapshot: liveSnapshot,
+        })).resolves.toMatchObject({
+            status: 'recorded',
+            recordId: expect.any(String),
+            persisted: true,
+        });
+
+        const daemonCalls = notifyDaemonProviderAccountUsageSnapshotMock.mock.calls.map(([input]) =>
+            input as Readonly<{ sessionId: string; snapshot: ProviderAccountUsageSnapshotV1 }>,
+        );
+        expect(daemonCalls).toHaveLength(4);
+        expect(daemonCalls.every((call) => call.sessionId === 'parent-session-1')).toBe(true);
+        expect(daemonCalls.filter((call) => call.snapshot.recordId === olderQueuedSnapshot.recordId)
+            .map((call) => call.snapshot.observedAtMs))
+            .toEqual([1, 2, 2]);
+        expect(daemonCalls.slice(2)).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                snapshot: expect.objectContaining({
+                    recordId: latestQueuedSnapshot.recordId,
+                    observedAtMs: 2,
+                    staleAfterMs: 120_000,
+                }),
+            }),
+            expect.objectContaining({
+                snapshot: expect.objectContaining({
+                    recordId: liveSnapshot.recordId,
+                }),
+            }),
+        ]));
+    });
+
+    it('retries provider account usage snapshots when the daemon has not reattached the session yet', async () => {
+        seedPluginRegistryWithoutRuntimeCore();
+        resolvePluginBackendSurfaceHandlersMock.mockResolvedValue({
+            surfaces: {
+                terminalRuntime: null,
+                externalSession: null,
+                attach: null,
+                handoff: null,
+                fork: null,
+                checkpoint: null,
+            },
+            diagnostics: [],
+        });
+
+        let capturedContext: SessionScopedContextForTest | null = null;
+        resolveExecutablePluginRuntimeRegistryMock.mockResolvedValue({
+            contributes: await resolveMergedContributionRegistryMock(),
+            actionHandlersByActionId: new Map(),
+            hookHandlersByHookId: new Map(),
+            runtimeCoreHandlersByBackendId: new Map(),
+            agentRuntimesByAgentId: new Map([
+                ['acme.sample.backend', {
+                    pluginId: 'acme.sample',
+                    registration: {
+                        backendId: 'acme.sample.backend',
+                        create: async (ctx: SessionScopedContextForTest) => {
+                            capturedContext = ctx;
+                            return {
+                                runtimeCore: {
+                                    createSessionRuntime: async () => null,
+                                    createExecutionRunBackend: vi.fn(() => ({
+                                        provisionSession: vi.fn(async () => ({ sessionId: 'run-session-1' })),
+                                        readResumeSupport: vi.fn(async () => false),
+                                        sendPrompt: vi.fn(async () => undefined),
+                                        cancel: vi.fn(async () => undefined),
+                                        subscribeMessages: vi.fn(() => () => undefined),
+                                        dispose: vi.fn(async () => undefined),
+                                    })),
+                                },
+                            };
+                        },
+                    },
+                }],
+            ]),
+            pluginDiagnosticsByPluginId: {},
+            readHookEventEnvelopeV1: vi.fn(),
+            activatePluginsByEvent: vi.fn(async () => []),
+            dispose: vi.fn(async () => undefined),
+        });
+
+        const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
+        resolution!.engineAdapter.runtimeCore.createExecutionRunBackend({
+            cwd: process.cwd(),
+            runId: 'run-1',
+            backendId: 'acme.sample.backend',
+            permissionMode: 'read_only',
+            parentSessionStateTarget: {
+                sessionId: 'parent-session-1',
+            },
+        });
+
+        const queuedSnapshot = createProviderAccountUsageSnapshotForTest('acct_pending_session');
+        const liveSnapshot = createProviderAccountUsageSnapshotForTest('acct_live_after_session');
+        notifyDaemonProviderAccountUsageSnapshotMock
+            .mockResolvedValueOnce({ ok: true, result: { status: 'session_not_found' } })
+            .mockResolvedValue({
+                ok: true,
+                result: { status: 'recorded', recordId: 'paug_v1_placeholder', persisted: true },
+            });
+
+        await expect(capturedContext!.agentRuntime.accountUsage.recordSnapshot({
+            snapshot: queuedSnapshot,
+        })).resolves.toEqual({ status: 'unavailable', reason: 'daemon_unavailable' });
+
+        await expect(capturedContext!.agentRuntime.accountUsage.recordSnapshot({
+            snapshot: liveSnapshot,
+        })).resolves.toMatchObject({
+            status: 'recorded',
+            recordId: expect.any(String),
+            persisted: true,
+        });
+
+        const daemonCalls = notifyDaemonProviderAccountUsageSnapshotMock.mock.calls.map(([input]) =>
+            input as Readonly<{ sessionId: string; snapshot: ProviderAccountUsageSnapshotV1 }>,
+        );
+        expect(daemonCalls).toHaveLength(3);
+        expect(daemonCalls.map((call) => call.snapshot.recordId)).toEqual([
+            queuedSnapshot.recordId,
+            queuedSnapshot.recordId,
+            liveSnapshot.recordId,
+        ]);
     });
 
     it('delivers execution-run metadata registered fields to the parent session target', async () => {
@@ -2132,7 +2594,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -2221,7 +2683,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -2322,7 +2784,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -2415,7 +2877,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -2491,7 +2953,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -2566,7 +3028,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -2606,8 +3068,8 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         await resolveBackendEngineAdapterResolution('acme.sample.backend');
 
         const context = observedContext as ObservedPluginRuntimeContext;
-        expect(context.capabilities?.has?.('reviews.comments.write.direct')).toBe(false);
-        expect(context.capabilities?.list?.()).not.toContain('reviews.comments.write.direct');
+        expect(context.permissions?.isGranted?.('reviews.comments.write.direct')).toBe(false);
+        expect(context.permissions?.list?.()).not.toContain('reviews.comments.write.direct');
         await expect((context.reviews?.comments?.create as (request: unknown) => Promise<unknown>)({
             projectId: 'project-1',
             anchor: { kind: 'file', filePath: 'src/a.ts' },
@@ -2651,7 +3113,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -2759,7 +3221,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -2830,7 +3292,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -2902,7 +3364,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -2949,8 +3411,8 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         });
 
         const context = observedContext as ObservedPluginRuntimeContext;
-        expect(context.capabilities?.has?.('reviews.comments.write.direct')).toBe(true);
-        expect(context.capabilities?.list?.()).toContain('reviews.comments.write.direct');
+        expect(context.permissions?.isGranted?.('reviews.comments.write.direct')).toBe(true);
+        expect(context.permissions?.list?.()).toContain('reviews.comments.write.direct');
         await expect((context.reviews?.comments?.create as (request: unknown) => Promise<unknown>)({
             projectId: 'project-1',
             anchor: { kind: 'file', filePath: 'src/a.ts' },
@@ -2994,7 +3456,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -3101,7 +3563,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -3191,7 +3653,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -3200,12 +3662,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                             observedContext = ctx;
                             return {
                                 runtimeCore: {
-                                    createSessionRuntime: async () => ({
-                                        kind: 'hostSessionRuntimePlan',
-                                        config: {
-                                            createSessionRuntime: async () => ({ ok: true }),
-                                        },
-                                    }),
+                                    createSessionRuntime: async () => createPluginSessionRuntimeFixture({ ok: true }),
                                     createExecutionRunBackend: vi.fn(),
                                 },
                             };
@@ -3219,7 +3676,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         });
 
         const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
-        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/tmp/plugin' }) as Readonly<{
+        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime(createPluginSessionLaunchParams({ cwd: '/tmp/plugin' })) as Readonly<{
             config: Readonly<{
                 createSessionRuntime: (params: unknown) => Promise<unknown>;
             }>;
@@ -3243,18 +3700,18 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         await expect(subagents.upsert({
             id: 'plugin-subagent-1',
             parentSessionId: 'session-1',
-            origin: 'provider',
+            origin: 'agent',
             kind: 'native',
-            providerRef: { providerId: 'acme.sample' },
+            agentRef: { agentId: 'acme.sample' },
         })).rejects.toThrow(/unavailable/);
 
         await expect(subagents.list({ parentSessionId: 'session-2' })).resolves.toEqual([]);
         await expect(subagents.upsert({
             id: 'plugin-subagent-2',
             parentSessionId: 'session-2',
-            origin: 'provider',
+            origin: 'agent',
             kind: 'native',
-            providerRef: { providerId: 'acme.sample' },
+            agentRef: { agentId: 'acme.sample' },
         })).rejects.toThrow(/unavailable/);
         expect(() => subagents.watch({ parentSessionId: 'session-2' }, vi.fn()).unsubscribe()).not.toThrow();
         await expect(subagents.complete({
@@ -3346,7 +3803,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -3451,7 +3908,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -3509,7 +3966,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -3561,12 +4018,12 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
                         backendId: 'acme.sample.backend',
-                        create: async (ctx: AcpDefinitionContextForTest) => ctx.acp.defineAcpBackend({
+                        create: async (ctx: AcpDefinitionContextForTest) => ctx.agentRuntime.acp.defineAcpBackend({
                             backendId: 'acme.sample.backend',
                             transport: {
                                 kind: 'stdio',
@@ -3588,6 +4045,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             ]),
             pluginDiagnosticsByPluginId: {},
             readHookEventEnvelopeV1: vi.fn(),
+            activatePluginsByEvent: vi.fn(async () => []),
             dispose: vi.fn(async () => undefined),
         });
 
@@ -3624,17 +4082,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             },
             diagnostics: [],
         });
-        resolveExecutablePluginRuntimeRegistryMock.mockResolvedValue({
-            contributes: registry,
-            actionHandlersByActionId: new Map(),
-            hookHandlersByHookId: new Map(),
-            runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map(),
-            scmHostingProvidersById: new Map(),
-            pluginDiagnosticsByPluginId: {},
-            readHookEventEnvelopeV1: vi.fn(),
-            dispose: vi.fn(async () => undefined),
-        });
+        resolveExecutablePluginRuntimeRegistryMock.mockResolvedValue(createLeaseRuntimeRegistry(registry));
 
         const resolution = await resolveBackendEngineAdapterResolution('acme.manifest.acp');
         expect(resolution?.backendId).toBe('acme.manifest.acp');
@@ -3651,7 +4099,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         const invalidBackendDefinition = {
             kindVersion: 1,
             id: 'acme.manifest.acp',
-            providerId: 'acme.manifest.provider',
+            agentId: 'acme.manifest.provider',
             runtimeKind: 'acp',
             acp: {
                 command: 'legacy-acp-agent',
@@ -3674,17 +4122,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             },
             diagnostics: [],
         });
-        resolveExecutablePluginRuntimeRegistryMock.mockResolvedValue({
-            contributes: registry,
-            actionHandlersByActionId: new Map(),
-            hookHandlersByHookId: new Map(),
-            runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map(),
-            scmHostingProvidersById: new Map(),
-            pluginDiagnosticsByPluginId: {},
-            readHookEventEnvelopeV1: vi.fn(),
-            dispose: vi.fn(async () => undefined),
-        });
+        resolveExecutablePluginRuntimeRegistryMock.mockResolvedValue(createLeaseRuntimeRegistry(registry));
 
         await expect(resolveBackendEngineAdapterResolution('acme.manifest.acp'))
             .rejects
@@ -3713,7 +4151,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -3722,7 +4160,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                             runtimeCore: {
                                 createSessionRuntime: async () => null,
                                 createExecutionRunBackend: () => {
-                                    permissionDecisionPromise = ctx.session.permissions.requestDecision({
+                                    permissionDecisionPromise = ctx.sessions.current.permissions.requestDecision({
                                         toolCallId: 'tool-1',
                                         toolName: 'write_file',
                                         input: { path: '/tmp/a', content: 'hello' },
@@ -3743,21 +4181,22 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             ]),
             pluginDiagnosticsByPluginId: {},
             readHookEventEnvelopeV1: vi.fn(),
+            activatePluginsByEvent: vi.fn(async () => []),
             dispose: vi.fn(async () => undefined),
         });
 
         const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
         expect(resolution?.backendId).toBe('acme.sample.backend');
 
-	            resolution!.engineAdapter.runtimeCore.createExecutionRunBackend({
-	                cwd: process.cwd(),
-	                backendId: 'acme.sample.backend',
-	                permissionMode: 'safe-yolo',
-	            });
+        resolution!.engineAdapter.runtimeCore.createExecutionRunBackend({
+            cwd: process.cwd(),
+            backendId: 'acme.sample.backend',
+            permissionMode: 'safe-yolo',
+        });
 
         expect(permissionDecisionPromise).not.toBeNull();
-	        await expect(permissionDecisionPromise).resolves.toMatchObject({ decision: 'denied' });
-	    });
+        await expect(permissionDecisionPromise).resolves.toMatchObject({ decision: 'denied' });
+    });
 
     it('resolves OpenCode backend runtimeCore and execution-run backend through the extracted plugin engine', async () => {
         seedFirstPartyOpenCodeRegistryWithoutRuntimeCore();
@@ -3774,24 +4213,25 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         });
 
         const activate = await loadOpenCodeExtensionActivate();
-        const host = createPluginApiHost({ runtimeCapabilities: ['backends'] });
+        const host = createPluginApiHost({ runtimeCapabilities: ['agents'] });
         await activate(host.api);
         const registrations = host.registrations();
-        expect(registrations.backendEngines.map((engine) => engine.backendId)).toEqual(['opencode']);
+        expect(registrations.agentRuntimes.map((engine) => engine.agentId)).toEqual(['opencode']);
 
         resolveExecutablePluginRuntimeRegistryMock.mockResolvedValue({
             contributes: await resolveMergedContributionRegistryMock(),
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['opencode', {
                     pluginId: '@happier-dev/plugins-opencode',
-                    registration: registrations.backendEngines[0],
+                    registration: registrations.agentRuntimes[0],
                 }],
             ]),
             pluginDiagnosticsByPluginId: {},
             readHookEventEnvelopeV1: vi.fn(),
+            activatePluginsByEvent: vi.fn(async () => []),
             dispose: vi.fn(async () => undefined),
         });
 
@@ -3840,11 +4280,24 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         process.env.HAPPIER_EXTENSION_TELEMETRY_ENABLED = '1';
 
         const metadataUpdates: unknown[] = [];
+        const enqueuedRegisteredSessionStateFieldMutations: unknown[] = [];
+        const fakeDurableMutationOutbox = {
+            enqueueRegisteredSessionStateFieldMutation: vi.fn(async (mutation: unknown) => {
+                enqueuedRegisteredSessionStateFieldMutations.push(mutation);
+            }),
+        };
         const fakeSession = {
             sessionId: 'session-1',
             sendUserTextMessage: vi.fn(),
             sendProviderMessage: vi.fn(),
-            enqueueRegisteredSessionStateFieldMutation: vi.fn(async () => undefined),
+            updateRuntimeActivityProjection: vi.fn(async () => undefined),
+            enqueueRegisteredSessionStateFieldMutation: async function (
+                this: { durableMutationOutbox: typeof fakeDurableMutationOutbox },
+                mutation: unknown,
+            ) {
+                await this.durableMutationOutbox.enqueueRegisteredSessionStateFieldMutation(mutation);
+            },
+            durableMutationOutbox: fakeDurableMutationOutbox,
             updateMetadata: vi.fn(async (handler: (metadata: Record<string, unknown>) => unknown) => {
                 metadataUpdates.push(handler({
                     existing: true,
@@ -3883,81 +4336,93 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
                         backendId: 'acme.sample.backend',
                         create: async (ctx: SessionScopedContextForTest) => ({
                             runtimeCore: {
-                                createSessionRuntime: async (sessionParams: unknown) => ({
-                                    kind: 'hostSessionRuntimePlan',
-                                    providerId: 'acme.sample.backend',
-                                    opts: sessionParams,
-                                    config: {
-                                        createSessionRuntime: async (_params: unknown) => {
-                                            await ctx.sessions.writeMetadata({
-                                                kind: 'set',
-                                                metadata: { hello: 'world' },
-                                            });
-                                            await ctx.sessions.writeMetadata({
-                                                kind: 'update',
-                                                handler: (metadata: unknown) => ({
-                                                    ...(metadata && typeof metadata === 'object' && !Array.isArray(metadata)
-                                                        ? metadata as Record<string, unknown>
-                                                        : {}),
-                                                    sessionWorkStateV1: {
-                                                        v: 1,
-                                                        backendId: 'acme.sample.backend',
-                                                        updatedAt: 123,
-                                                        items: [],
-                                                    },
-                                                }),
-                                            });
-                                            await ctx.sessions.writeStateField({
-                                                fieldId: 'runtime.workState',
-                                                value: {
-                                                    v: 1,
-                                                    backendId: 'acme.sample.backend',
-                                                    updatedAt: 456,
-                                                    items: [],
-                                                },
-                                                reason: 'test-runtime-work-state',
-                                            });
-                                            await ctx.sessions.writeAgentState({
-                                                kind: 'set',
-                                                agentState: { hello: 'world' },
-                                            });
-                                            ctx.telemetry.emit({ kind: 'test_usage', n: 1 });
-                                            await ctx.artifacts.write({ kind: 'test_artifact', text: 'hello' });
-                                            await ctx.session.permissions.requestDecision({
-                                                toolCallId: 'tool-1',
-                                                toolName: 'read_file',
-                                                input: { path: '/tmp/a' },
-                                            });
-                                            await ctx.transcripts.append({
-                                                kind: 'agentMessageCommitted',
-                                                provider: 'acme',
-                                                body: { type: 'assistant', text: 'hi' },
-                                                localId: 'local-1',
-                                            });
-                                            await ctx.sessions.send({
-                                                kind: 'providerDispatch',
-                                                body: {
-                                                    type: 'tool-call',
-                                                    callId: 'tool-1',
-                                                    name: 'read_file',
-                                                    input: { path: 'README.md' },
-                                                },
-                                                meta: { source: 'test' },
-                                            });
-                                            await ctx.accountUsage.recordSnapshot({
-                                                snapshot: createProviderAccountUsageSnapshotForTest(),
-                                            });
-                                            return { operations: { readSessionIdentity: () => ({ sessionId: 's1' }) } };
+                                createSessionRuntime: async () => {
+                                    await ctx.sessions.writeMetadata({
+                                        kind: 'set',
+                                        metadata: { hello: 'world' },
+                                    });
+                                    await ctx.sessions.writeMetadata({
+                                        kind: 'update',
+                                        handler: (metadata: unknown) => ({
+                                            ...(metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+                                                ? metadata as Record<string, unknown>
+                                                : {}),
+                                            sessionWorkStateV1: {
+                                                v: 1,
+                                                backendId: 'acme.sample.backend',
+                                                updatedAt: 123,
+                                                items: [],
+                                            },
+                                        }),
+                                    });
+                                    await ctx.sessions.writeStateField({
+                                        fieldId: 'runtime.workState',
+                                        value: {
+                                            v: 1,
+                                            backendId: 'acme.sample.backend',
+                                            updatedAt: 456,
+                                            items: [],
                                         },
-                                    },
-                                }),
+                                        reason: 'test-runtime-work-state',
+                                    });
+                                    await ctx.sessions.writeStateField({
+                                        fieldId: 'identity.providerSessionId',
+                                        value: {
+                                            metadataKey: 'opencodeSessionId',
+                                            value: 'provider-session-1',
+                                        },
+                                        reason: 'test-provider-session-id',
+                                    });
+                                    await ctx.sessions.writeStateField({
+                                        fieldId: 'runtime.activity',
+                                        value: {
+                                            v: 1,
+                                            activeCount: 1,
+                                            observedAtMs: 100,
+                                            expiresAtMs: 200,
+                                            sourceClass: 'provider_detached_task',
+                                        },
+                                        reason: 'test-runtime-activity',
+                                    });
+                                    await ctx.sessions.writeAgentState({
+                                        kind: 'set',
+                                        agentState: { hello: 'world' },
+                                    });
+                                    ctx.experimental.telemetry.emit({ kind: 'test_usage', n: 1 });
+                                    await ctx.experimental.artifacts.write({ kind: 'test_artifact', text: 'hello' });
+                                    await ctx.sessions.current.permissions.requestDecision({
+                                        toolCallId: 'tool-1',
+                                        toolName: 'read_file',
+                                        input: { path: '/tmp/a' },
+                                    });
+                                    await ctx.agentRuntime.transcripts.append({
+                                        kind: 'agentMessageCommitted',
+                                        provider: 'acme',
+                                        body: { type: 'assistant', text: 'hi' },
+                                        localId: 'local-1',
+                                    });
+                                    await ctx.sessions.send({
+                                        kind: 'providerDispatch',
+                                        body: {
+                                            type: 'tool-call',
+                                            callId: 'tool-1',
+                                            name: 'read_file',
+                                            input: { path: 'README.md' },
+                                        },
+                                        meta: { source: 'test' },
+                                    });
+                                    await ctx.agentRuntime.accountUsage.recordSnapshot({
+                                        snapshot: createProviderAccountUsageSnapshotForTest(),
+                                    });
+                                    return createTestSessionRuntime('s1');
+                                },
                                 createExecutionRunBackend,
                             },
                         }),
@@ -3972,7 +4437,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
         expect(resolution?.backendId).toBe('acme.sample.backend');
 
-        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/tmp/plugin' }) as HostSessionRuntimePlanForTest;
+        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime(createPluginSessionLaunchParams({ cwd: '/tmp/plugin' })) as HostSessionRuntimePlanForTest;
         try {
             await expect(plan.config.createSessionRuntime({
                 directory: '/tmp/plugin',
@@ -4001,7 +4466,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 permissionMode: 'ask',
                 permissionModeUpdatedAt: 2,
             });
-            expect(fakeSession.enqueueRegisteredSessionStateFieldMutation).toHaveBeenCalledWith(expect.objectContaining({
+            expect(fakeDurableMutationOutbox.enqueueRegisteredSessionStateFieldMutation).toHaveBeenCalledWith(expect.objectContaining({
                 fieldId: 'runtime.workState',
                 deliveryClass: 'durable_required',
                 source: 'runtime',
@@ -4012,7 +4477,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                     }),
                 }),
             }));
-            expect(fakeSession.enqueueRegisteredSessionStateFieldMutation).toHaveBeenCalledWith(expect.objectContaining({
+            expect(fakeDurableMutationOutbox.enqueueRegisteredSessionStateFieldMutation).toHaveBeenCalledWith(expect.objectContaining({
                 fieldId: 'runtime.workState',
                 deliveryClass: 'durable_required',
                 source: 'runtime',
@@ -4024,6 +4489,35 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                     }),
                 }),
             }));
+            expect(fakeDurableMutationOutbox.enqueueRegisteredSessionStateFieldMutation).toHaveBeenCalledWith(expect.objectContaining({
+                fieldId: 'identity.providerSessionId',
+                deliveryClass: 'durable_best_effort',
+                source: 'runtime',
+                op: {
+                    kind: 'set',
+                    value: {
+                        metadataKey: 'opencodeSessionId',
+                        value: 'provider-session-1',
+                    },
+                },
+            }));
+            expect(fakeDurableMutationOutbox.enqueueRegisteredSessionStateFieldMutation).toHaveBeenCalledWith(expect.objectContaining({
+                fieldId: 'runtime.activity',
+                deliveryClass: 'durable_best_effort',
+                source: 'runtime',
+                op: {
+                    kind: 'set',
+                    value: {
+                        v: 1,
+                        activeCount: 1,
+                        observedAtMs: 100,
+                        expiresAtMs: 200,
+                        sourceClass: 'provider_detached_task',
+                    },
+                },
+            }));
+            expect(enqueuedRegisteredSessionStateFieldMutations).toHaveLength(4);
+            expect(fakeSession.updateRuntimeActivityProjection).not.toHaveBeenCalled();
             expect(fakeSession.updateAgentState).toHaveBeenCalledTimes(1);
             expect(fakePermissionHandler.handleToolCall).toHaveBeenCalledTimes(1);
             expect(fakeTranscriptSession.sendAgentMessageCommitted).not.toHaveBeenCalled();
@@ -4069,6 +4563,322 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         }
     });
 
+    it('requires plugin-authored userText session sends to provide stable localIds', async () => {
+        seedPluginRegistryWithoutRuntimeCore();
+        resolvePluginBackendSurfaceHandlersMock.mockResolvedValue({
+            surfaces: {
+                terminalRuntime: null,
+                externalSession: null,
+                attach: null,
+                handoff: null,
+                fork: null,
+                checkpoint: null,
+            },
+            diagnostics: [],
+        });
+
+        const sessionSendResults: unknown[] = [];
+        resolveExecutablePluginRuntimeRegistryMock.mockResolvedValue({
+            contributes: await resolveMergedContributionRegistryMock(),
+            actionHandlersByActionId: new Map(),
+            hookHandlersByHookId: new Map(),
+            runtimeCoreHandlersByBackendId: new Map(),
+            agentRuntimesByAgentId: new Map([
+                ['acme.sample.backend', {
+                    pluginId: 'acme.sample',
+                    registration: {
+                        backendId: 'acme.sample.backend',
+                        create: async (ctx: SessionScopedContextForTest) => ({
+                            runtimeCore: {
+                                createSessionRuntime: async () => {
+                                    sessionSendResults.push(await ctx.sessions.send({
+                                        kind: 'userText',
+                                        text: 'missing local id',
+                                    }));
+                                    sessionSendResults.push(await ctx.sessions.send({
+                                        kind: 'userText',
+                                        text: 'blank local id',
+                                        opts: { localId: '   ' },
+                                    }));
+                                    await ctx.agentRuntime.transcripts.append({
+                                        kind: 'userText',
+                                        text: 'append missing local id',
+                                    });
+                                    await ctx.agentRuntime.transcripts.append({
+                                        kind: 'userText',
+                                        text: 'append blank local id',
+                                        opts: { localId: '   ' },
+                                    });
+                                    sessionSendResults.push(await ctx.sessions.send({
+                                        kind: 'userText',
+                                        text: 'stable send',
+                                        opts: {
+                                            localId: 'plugin-user-1',
+                                            meta: { source: 'provider-transcript' },
+                                        },
+                                    }));
+                                    await ctx.agentRuntime.transcripts.append({
+                                        kind: 'userText',
+                                        text: 'stable append',
+                                        opts: {
+                                            localId: 'plugin-user-2',
+                                        },
+                                    });
+                                    return createTestSessionRuntime('s1');
+                                },
+                                createExecutionRunBackend: vi.fn(),
+                            },
+                        }),
+                    },
+                }],
+            ]),
+            pluginDiagnosticsByPluginId: {},
+            readHookEventEnvelopeV1: vi.fn(),
+            dispose: vi.fn(async () => undefined),
+        });
+
+        const fakeSession = {
+            sessionId: 'session-1',
+            sendUserTextMessage: vi.fn(),
+            updateMetadata: vi.fn(async () => undefined),
+            updateAgentState: vi.fn(async () => undefined),
+        };
+
+        const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
+        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime(
+            createPluginSessionLaunchParams({ cwd: '/tmp/plugin' }),
+        ) as HostSessionRuntimePlanForTest;
+
+        await expect(plan.config.createSessionRuntime({
+            directory: '/tmp/plugin',
+            metadata: {},
+            machineId: 'm1',
+            session: fakeSession,
+            transcriptSession: {},
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: {},
+            getPermissionMode: () => 'read_only',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        })).resolves.toEqual(expect.any(Object));
+
+        expect(sessionSendResults).toEqual([
+            { ok: false, error: 'invalid_request' },
+            { ok: false, error: 'invalid_request' },
+            { ok: true },
+        ]);
+        expect(fakeSession.sendUserTextMessage).toHaveBeenCalledTimes(2);
+        expect(fakeSession.sendUserTextMessage).toHaveBeenNthCalledWith(1, 'stable send', {
+            localId: 'plugin-user-1',
+            meta: { source: 'provider-transcript' },
+        });
+        expect(fakeSession.sendUserTextMessage).toHaveBeenNthCalledWith(2, 'stable append', {
+            localId: 'plugin-user-2',
+        });
+    });
+
+    it('falls back to metadata for durable best-effort plugin session fields when the host session has no registered-field outbox', async () => {
+        seedPluginRegistryWithoutRuntimeCore();
+        resolvePluginBackendSurfaceHandlersMock.mockResolvedValue({
+            surfaces: {
+                terminalRuntime: null,
+                externalSession: null,
+                attach: null,
+                handoff: null,
+                fork: null,
+                checkpoint: null,
+            },
+            diagnostics: [],
+        });
+
+        let capturedMetadata: unknown = null;
+        resolveExecutablePluginRuntimeRegistryMock.mockResolvedValue({
+            contributes: await resolveMergedContributionRegistryMock(),
+            actionHandlersByActionId: new Map(),
+            hookHandlersByHookId: new Map(),
+            runtimeCoreHandlersByBackendId: new Map(),
+            agentRuntimesByAgentId: new Map([
+                ['acme.sample.backend', {
+                    pluginId: 'acme.sample',
+                    registration: {
+                        backendId: 'acme.sample.backend',
+                        create: async (ctx: SessionScopedContextForTest) => ({
+                            runtimeCore: {
+                                createSessionRuntime: async () => {
+                                    await ctx.sessions.writeStateField({
+                                        fieldId: 'identity.providerSessionId',
+                                        value: {
+                                            metadataKey: 'opencodeSessionId',
+                                            value: 'provider-session-1',
+                                        },
+                                        reason: 'test-provider-session-id',
+                                    });
+                                    return createTestSessionRuntime('s1');
+                                },
+                                createExecutionRunBackend: vi.fn(),
+                            },
+                        }),
+                    },
+                }],
+            ]),
+            pluginDiagnosticsByPluginId: {},
+            readHookEventEnvelopeV1: vi.fn(),
+            dispose: vi.fn(async () => undefined),
+        });
+
+        const fakeSession = {
+            sessionId: 'session-1',
+            updateMetadata: vi.fn(async (handler: (metadata: Record<string, unknown>) => unknown) => {
+                capturedMetadata = handler({});
+            }),
+        };
+
+        const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
+        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime(createPluginSessionLaunchParams({ cwd: '/tmp/plugin' })) as HostSessionRuntimePlanForTest;
+
+        await expect(plan.config.createSessionRuntime({
+            directory: '/tmp/plugin',
+            metadata: {},
+            machineId: 'm1',
+            session: fakeSession,
+            transcriptSession: {},
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: {},
+            getPermissionMode: () => 'read_only',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        })).resolves.toEqual(expect.any(Object));
+
+        expect(fakeSession.updateMetadata).toHaveBeenCalledTimes(1);
+        expect(capturedMetadata).toEqual({
+            opencodeSessionId: 'provider-session-1',
+        });
+    });
+
+    it('passes a daemon local-services bridge into plugin session runtime contexts when available', async () => {
+        seedPluginRegistryWithoutRuntimeCore();
+        resolvePluginBackendSurfaceHandlersMock.mockResolvedValue({
+            surfaces: {
+                terminalRuntime: null,
+                externalSession: null,
+                attach: null,
+                handoff: null,
+                fork: null,
+                checkpoint: null,
+            },
+            diagnostics: [],
+        });
+
+        const declaration = {
+            id: 'web',
+            launch: { kind: 'binary', executablePath: '/bin/sh', args: ['-lc', 'npm run dev'] },
+            launchMode: { kind: 'detectAfterLaunch', minimumConfidence: 'medium' },
+            hostPolicy: { kind: 'loopback' },
+            name: { strategy: 'derived', base: 'web' },
+            healthCheck: { kind: 'none' },
+            restart: { kind: 'never' },
+            cleanup: { staleAfterMs: 30_000 },
+        } as const;
+        const createPluginLocalServicesBridge = vi.fn((_context: Readonly<{
+            pluginId: string;
+            contributionId: string;
+            sessionId: string;
+            title: string;
+        }>) => ({
+            declare: vi.fn(async (serviceDeclaration: typeof declaration) => ({
+                id: serviceDeclaration.id,
+                phase: 'stopped' as const,
+                diagnostics: [],
+            })),
+            start: vi.fn(async (serviceDeclaration: typeof declaration) => ({
+                id: serviceDeclaration.id,
+                phase: 'running' as const,
+                inventoryId: 'machine-a:tcp:loopback:127.0.0.1:5173:pid-400',
+                port: 5173,
+                url: 'https://preview.happier.test/v1/local-services/preview/plugin-managed%3Aacme.sample%3Aacme.sample.backend%3Aweb/',
+                diagnostics: [],
+            })),
+        }));
+        const localServicesRuntime = {
+            createPluginLocalServicesBridge,
+        };
+        let observedSnapshot: unknown = null;
+
+        resolveExecutablePluginRuntimeRegistryMock.mockResolvedValue({
+            contributes: await resolveMergedContributionRegistryMock(),
+            actionHandlersByActionId: new Map(),
+            hookHandlersByHookId: new Map(),
+            runtimeCoreHandlersByBackendId: new Map(),
+            agentRuntimesByAgentId: new Map([
+                ['acme.sample.backend', {
+                    pluginId: 'acme.sample',
+                    registration: {
+                        backendId: 'acme.sample.backend',
+                        create: async (ctx: PluginContextV1) => ({
+                            runtimeCore: {
+                                createSessionRuntime: async () => {
+                                    await ctx.localServices.declare(declaration);
+                                    const handle = await ctx.localServices.start('web');
+                                    observedSnapshot = handle.snapshot();
+                                    return createTestSessionRuntime('s-local-services');
+                                },
+                                createExecutionRunBackend: vi.fn(),
+                            },
+                        }),
+                    },
+                }],
+            ]),
+            pluginDiagnosticsByPluginId: {},
+            readHookEventEnvelopeV1: vi.fn(),
+            dispose: vi.fn(async () => undefined),
+        });
+
+        const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend', {
+            localServicesRuntime,
+        });
+        expect(resolution?.backendId).toBe('acme.sample.backend');
+
+        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime(
+            createPluginSessionLaunchParams({ cwd: '/tmp/plugin' }),
+        ) as HostSessionRuntimePlanForTest;
+        await plan.config.createSessionRuntime({
+            directory: '/tmp/plugin',
+            metadata: {},
+            machineId: 'machine-a',
+            session: {
+                sessionId: 'session-local-services',
+                getMetadataSnapshot: () => ({
+                    title: 'Preview Session',
+                }),
+                getAgentStateSnapshot: () => ({}),
+            },
+            transcriptSession: {},
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: {},
+            getPermissionMode: () => 'default',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        });
+
+        expect(createPluginLocalServicesBridge).toHaveBeenCalledWith({
+            pluginId: 'acme.sample',
+            contributionId: 'acme.sample.backend',
+            sessionId: 'session-local-services',
+            title: 'Preview Session',
+        });
+        expect(observedSnapshot).toEqual({
+            id: 'web',
+            phase: 'running',
+            inventoryId: 'machine-a:tcp:loopback:127.0.0.1:5173:pid-400',
+            port: 5173,
+            url: 'https://preview.happier.test/v1/local-services/preview/plugin-managed%3Aacme.sample%3Aacme.sample.backend%3Aweb/',
+            diagnostics: [],
+        });
+    });
+
     it('grants trusted session hook transcript paths to plugin file-follow at session runtime scope', async () => {
         seedPluginRegistryWithoutRuntimeCore();
         resolvePluginBackendSurfaceHandlersMock.mockResolvedValue({
@@ -4087,7 +4897,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         const transcriptPath = join(transcriptDir, 'provider-session.jsonl');
         await writeFile(transcriptPath, '{"kind":"ready"}\n', 'utf8');
 
-        let hookServer: Awaited<ReturnType<SessionScopedContextForTest['sessionHooks']['startServer']>> | null = null;
+        let hookServer: Awaited<ReturnType<SessionScopedContextForTest['agentRuntime']['sessionHooks']['startServer']>> | null = null;
         const cleanupFns: Array<() => void> = [];
         let followError: unknown = null;
         const followedLines: string[] = [];
@@ -4107,7 +4917,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             permissionsByPluginId: new Map([
                 ['acme.sample', new Set(['session.hooks.control'])],
             ]),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -4116,47 +4926,38 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                             capturedContext = ctx;
                             return {
                                 runtimeCore: {
-                                    createSessionRuntime: async () => ({
-                                        kind: 'hostSessionRuntimePlan',
-                                        providerId: 'acme.sample.backend',
-                                        opts: {},
-                                        config: {
-                                            createSessionRuntime: async () => {
-                                                hookServer = await ctx.sessionHooks.startServer({
-                                                    providerId: 'claude',
-                                                    sessionId: 'happy-session-grant',
-                                                    sessionHookSecret: 'trusted-session-hook-secret',
-                                                    onSessionHook: async (_providerSessionId: string, data: Record<string, unknown>) => {
-                                                        try {
-                                                            const handle = await ctx.transcripts.fileFollow.follow({
-                                                                path: String(data.transcript_path),
-                                                                startAt: 'beginning',
-                                                                onLine: (line) => {
-                                                                    followedLines.push(line.line);
-                                                                },
-                                                            });
-                                                            await handle.drainNow();
-                                                            await handle.close();
-                                                        } catch (error) {
-                                                            followError = error;
-                                                        }
-                                                    },
-                                                });
-                                                const serverToStop = hookServer;
-                                                cleanupFns.push(() => serverToStop.stop());
-                                                return {
-                                                    operations: {
-                                                        readSessionIdentity: () => ({ sessionId: 'provider-session-1' }),
-                                                        resetOrDisposeRuntime: async () => {
-                                                            for (const cleanup of cleanupFns.splice(0)) {
-                                                                cleanup();
-                                                            }
+                                    createSessionRuntime: async () => {
+                                        hookServer = await ctx.agentRuntime.sessionHooks.startServer({
+                                            providerId: 'claude',
+                                            sessionId: 'happy-session-grant',
+                                            sessionHookSecret: 'trusted-session-hook-secret',
+                                            onSessionHook: async (_providerSessionId: string, data: Record<string, unknown>) => {
+                                                try {
+                                                    const handle = await ctx.agentRuntime.transcripts.fileFollow.follow({
+                                                        path: String(data.transcript_path),
+                                                        startAt: 'beginning',
+                                                        onLine: (line) => {
+                                                            followedLines.push(line.line);
                                                         },
-                                                    },
-                                                };
+                                                    });
+                                                    await handle.drainNow();
+                                                    await handle.close();
+                                                } catch (error) {
+                                                    followError = error;
+                                                }
                                             },
-                                        },
-                                    }),
+                                        });
+                                        const serverToStop = hookServer;
+                                        cleanupFns.push(() => serverToStop.stop());
+                                        return {
+                                            ...createTestSessionRuntime('provider-session-1'),
+                                            resetOrDisposeRuntime: async () => {
+                                                for (const cleanup of cleanupFns.splice(0)) {
+                                                    cleanup();
+                                                }
+                                            },
+                                        };
+                                    },
                                     createExecutionRunBackend: vi.fn(),
                                 },
                             };
@@ -4170,7 +4971,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         });
 
         const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
-        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/tmp/plugin' }) as HostSessionRuntimePlanForTest;
+        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime(createPluginSessionLaunchParams({ cwd: '/tmp/plugin' })) as HostSessionRuntimePlanForTest;
         try {
             const runtime = await plan.config.createSessionRuntime({
                 directory: '/tmp/plugin',
@@ -4202,7 +5003,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             await (runtime as Readonly<{
                 operations: Readonly<{ resetOrDisposeRuntime(): Promise<void> }>;
             }>).operations.resetOrDisposeRuntime();
-            await expect(capturedContext!.transcripts.fileFollow.follow({
+            await expect(capturedContext!.agentRuntime.transcripts.fileFollow.follow({
                 path: transcriptPath,
                 startAt: 'beginning',
                 onLine: () => undefined,
@@ -4230,11 +5031,11 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         }));
         resolveExternalSessionRuntimeHostAdaptersMock.mockResolvedValue({
             candidateHosts: [{
-                providerId: 'claude',
+                agentId: 'claude',
                 listViaChildHost,
             }],
             transcriptStores: [{
-                providerId: 'claude',
+                agentId: 'claude',
                 withStore: async (_input: unknown, handler: (store: unknown) => Promise<unknown>) => await handler({
                     pageOlder,
                 }),
@@ -4267,7 +5068,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -4282,7 +5083,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                                             external?: Readonly<{
                                                 candidates?: Readonly<{
                                                     listViaChildHost(input: Readonly<{
-                                                        providerId: 'claude';
+                                                        agentId: 'claude';
                                                         source: Readonly<{ kind: 'claudeConfig'; configDir: string }>;
                                                         limit: number;
                                                     }>): Promise<Readonly<{
@@ -4292,7 +5093,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                                                 }>;
                                                 transcripts?: Readonly<{
                                                     page(input: Readonly<{
-                                                        providerId: 'claude';
+                                                        agentId: 'claude';
                                                         source: Readonly<{ kind: 'claudeConfig'; configDir: string }>;
                                                         providerSessionId: string;
                                                         direction: 'older';
@@ -4310,12 +5111,12 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                                         }>;
                                         const source = { kind: 'claudeConfig' as const, configDir: '/tmp/.claude' };
                                         const candidatePage = await runtime.external?.candidates?.listViaChildHost({
-                                            providerId: 'claude',
+                                            agentId: 'claude',
                                             source,
                                             limit: 5,
                                         });
                                         const transcriptPage = await runtime.external?.transcripts?.page({
-                                            providerId: 'claude',
+                                            agentId: 'claude',
                                             source,
                                             providerSessionId: 'remote-1',
                                             direction: 'older',
@@ -4356,7 +5157,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             env: process.env,
         });
         expect(listViaChildHost).toHaveBeenCalledWith({
-            providerId: 'claude',
+            agentId: 'claude',
             source: { kind: 'claudeConfig', configDir: '/tmp/.claude' },
             limit: 5,
         });
@@ -4366,12 +5167,12 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             maxItems: 10,
             allowProviderFallback: true,
         });
-        expect(captured.context?.transcripts.fileFollow).toEqual(expect.objectContaining({
+        expect(captured.context?.agentRuntime.transcripts.fileFollow).toEqual(expect.objectContaining({
             follow: expect.any(Function),
         }));
         expect(captured.runtime).toEqual(expect.objectContaining({
             transcripts: {
-                fileFollow: captured.context!.transcripts.fileFollow,
+                fileFollow: captured.context!.agentRuntime.transcripts.fileFollow,
             },
             external: expect.objectContaining({
                 candidates: expect.any(Object),
@@ -4411,7 +5212,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -4420,14 +5221,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                             capturedContext = ctx;
                             return {
                                 runtimeCore: {
-                                    createSessionRuntime: async () => ({
-                                        kind: 'hostSessionRuntimePlan',
-                                        providerId: 'acme.sample.backend',
-                                        opts: {},
-                                        config: {
-                                            createSessionRuntime: async () => ({ operations: {} }),
-                                        },
-                                    }),
+                                    createSessionRuntime: async () => createPluginSessionRuntimeFixture(),
                                     createExecutionRunBackend: vi.fn(),
                                 },
                             };
@@ -4459,7 +5253,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         };
 
         const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
-        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/tmp/plugin' }) as HostSessionRuntimePlanForTest;
+        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime(createPluginSessionLaunchParams({ cwd: '/tmp/plugin' })) as HostSessionRuntimePlanForTest;
         await plan.config.createSessionRuntime({
             directory: '/tmp/plugin',
             metadata: {},
@@ -4474,7 +5268,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             memoryRecallGuidanceEnabled: false,
         });
 
-        await expect(capturedContext!.session.mcp.elicit({
+        await expect(capturedContext!.sessions.current.mcp.elicit({
             requestId: 'mcp-request-1',
             toolCallId: 'tool-call-1',
             serverName: 'happier',
@@ -4489,9 +5283,16 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             'tool-call-1',
             'mcp__happier__change_title',
             { title: 'New Title' },
+            {
+                owner: {
+                    kind: 'plugin',
+                    pluginId: 'acme.sample',
+                    runtimeId: expect.stringMatching(/^plugin-runtime:acme\.sample:/),
+                },
+            },
         );
 
-        await expect(capturedContext!.session.auth.services.refreshRuntimeAuth({
+        await expect(capturedContext!.sessions.current.auth.services.refreshRuntimeAuth({
             agentId: 'codex',
             serviceId: 'openai-codex',
             selection: { kind: 'profile', serviceId: 'openai-codex', profileId: 'work' },
@@ -4534,7 +5335,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -4543,14 +5344,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                             capturedContext = ctx;
                             return {
                                 runtimeCore: {
-                                    createSessionRuntime: async () => ({
-                                        kind: 'hostSessionRuntimePlan',
-                                        providerId: 'acme.sample.backend',
-                                        opts: {},
-                                        config: {
-                                            createSessionRuntime: async () => ({ operations: {} }),
-                                        },
-                                    }),
+                                    createSessionRuntime: async () => createPluginSessionRuntimeFixture(),
                                     createExecutionRunBackend: vi.fn(),
                                 },
                             };
@@ -4564,7 +5358,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         });
 
         const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
-        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/tmp/plugin' }) as HostSessionRuntimePlanForTest;
+        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime(createPluginSessionLaunchParams({ cwd: '/tmp/plugin' })) as HostSessionRuntimePlanForTest;
         await plan.config.createSessionRuntime({
             directory: '/tmp/plugin',
             metadata: {},
@@ -4588,7 +5382,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             memoryRecallGuidanceEnabled: false,
         });
 
-        await expect(capturedContext!.session.auth.services.refreshRuntimeAuth({
+        await expect(capturedContext!.sessions.current.auth.services.refreshRuntimeAuth({
             agentId: 'codex',
             serviceId: 'openai-codex',
         })).resolves.toEqual({
@@ -4694,7 +5488,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -4703,12 +5497,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                             observedContext = ctx;
                             return {
                                 runtimeCore: {
-                                    createSessionRuntime: async () => ({
-                                        kind: 'hostSessionRuntimePlan',
-                                        config: {
-                                            createSessionRuntime: async () => ({}),
-                                        },
-                                    }),
+                                    createSessionRuntime: async () => createPluginSessionRuntimeFixture(),
                                     createExecutionRunBackend: vi.fn(),
                                 },
                             };
@@ -4768,7 +5557,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         if (!resolution) {
             throw new Error('Expected plugin backend resolution');
         }
-        const plan = await resolution.engineAdapter.runtimeCore.createSessionRuntime({});
+        const plan = await resolution.engineAdapter.runtimeCore.createSessionRuntime(createPluginSessionLaunchParams());
         const createSessionRuntime = plan.config.createSessionRuntime;
         if (!createSessionRuntime) {
             throw new Error('Expected plugin session runtime factory');
@@ -4846,10 +5635,12 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                     },
                 },
             },
-            terminalHost: {
-                resolve: expect.any(Function),
-                createOrAttachHost: expect.any(Function),
-                injectUserPrompt: expect.any(Function),
+            agentRuntime: {
+                terminalHost: {
+                    resolve: expect.any(Function),
+                    createOrAttachHost: expect.any(Function),
+                    injectUserPrompt: expect.any(Function),
+                },
             },
         });
         const context = observedContext as unknown as ObservedPluginRuntimeContext;
@@ -4992,7 +5783,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -5001,10 +5792,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                             observedContext = ctx;
                             return {
                                 runtimeCore: {
-                                    createSessionRuntime: async () => ({
-                                        kind: 'hostSessionRuntimePlan',
-                                        config: {},
-                                    }),
+                                    createSessionRuntime: async () => createPluginSessionRuntimeFixture(),
                                     createExecutionRunBackend: vi.fn(),
                                 },
                             };
@@ -5073,7 +5861,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -5082,14 +5870,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                             capturedContext = ctx;
                             return {
                                 runtimeCore: {
-                                    createSessionRuntime: async () => ({
-                                        kind: 'hostSessionRuntimePlan',
-                                        providerId: 'acme.sample.backend',
-                                        opts: {},
-                                        config: {
-                                            createSessionRuntime: async () => ({ operations: {} }),
-                                        },
-                                    }),
+                                    createSessionRuntime: async () => createPluginSessionRuntimeFixture(),
                                     createExecutionRunBackend: vi.fn(),
                                 },
                             };
@@ -5127,7 +5908,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         };
 
         const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
-        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/tmp/plugin' }) as HostSessionRuntimePlanForTest;
+        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime(createPluginSessionLaunchParams({ cwd: '/tmp/plugin' })) as HostSessionRuntimePlanForTest;
         await plan.config.createSessionRuntime({
             directory: '/tmp/plugin',
             metadata: {},
@@ -5143,7 +5924,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         });
 
         const listener = vi.fn();
-        const subscription = capturedContext!.session.subscribe({ eventName: 'metadata-updated' }, listener);
+        const subscription = capturedContext!.sessions.current.subscribe({ eventName: 'metadata-updated' }, listener);
         await vi.waitFor(() => {
             expect(metadataListenerRef.current).toEqual(expect.any(Function));
         });
@@ -5177,12 +5958,13 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         });
 
         let capturedContext: SessionScopedContextForTest | null = null;
+        const runtimeDisposables: unknown[] = [];
         resolveExecutablePluginRuntimeRegistryMock.mockResolvedValue({
             contributes: await resolveMergedContributionRegistryMock(),
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -5191,14 +5973,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                             capturedContext = ctx;
                             return {
                                 runtimeCore: {
-                                    createSessionRuntime: async () => ({
-                                        kind: 'hostSessionRuntimePlan',
-                                        providerId: 'acme.sample.backend',
-                                        opts: {},
-                                        config: {
-                                            createSessionRuntime: async () => ({ operations: {} }),
-                                        },
-                                    }),
+                                    createSessionRuntime: async () => createPluginSessionRuntimeFixture(),
                                     createExecutionRunBackend: vi.fn(),
                                 },
                             };
@@ -5208,6 +5983,10 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             ]),
             pluginDiagnosticsByPluginId: {},
             readHookEventEnvelopeV1: vi.fn(),
+            addRuntimeDisposable: vi.fn((_pluginId: string, disposable: unknown) => {
+                runtimeDisposables.push(disposable);
+                return disposable;
+            }),
             dispose: vi.fn(async () => undefined),
         });
 
@@ -5223,14 +6002,15 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         };
         const handledRequests: unknown[] = [];
         const fakePermissionHandler = {
-            handleToolCall: vi.fn((toolCallId: string, toolName: string, input: unknown) => {
-                handledRequests.push({ toolCallId, toolName, input });
+            handleToolCall: vi.fn((toolCallId: string, toolName: string, input: unknown, options?: unknown) => {
+                handledRequests.push({ toolCallId, toolName, input, options });
                 return new Promise(() => undefined);
             }),
+            cancelByPlugin: vi.fn(),
         };
 
         const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
-        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/tmp/plugin' }) as HostSessionRuntimePlanForTest;
+        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime(createPluginSessionLaunchParams({ cwd: '/tmp/plugin' })) as HostSessionRuntimePlanForTest;
         await plan.config.createSessionRuntime({
             directory: '/tmp/plugin',
             metadata: {},
@@ -5251,15 +6031,123 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             toolName: 'write_file',
             input: { path: '/tmp/a' },
         };
-        const pendingDecision = capturedContext!.session.permissions.requestDecision(permissionRequest, {
+        const pendingDecision = capturedContext!.sessions.current.permissions.requestDecision(permissionRequest, {
             signal: controller.signal,
         });
 
         controller.abort(new Error('plugin permission request canceled'));
 
         await expect(pendingDecision).rejects.toThrow('plugin permission request canceled');
-        expect(handledRequests).toEqual([permissionRequest]);
+        expect(handledRequests).toEqual([{
+            ...permissionRequest,
+            options: {
+                owner: {
+                    kind: 'plugin',
+                    pluginId: 'acme.sample',
+                    runtimeId: expect.stringMatching(/^plugin-runtime:acme\.sample:/),
+                },
+            },
+        }]);
         expect(Object.keys(permissionRequest)).toEqual(['toolCallId', 'toolName', 'input']);
+
+        for (const disposable of [...runtimeDisposables].reverse()) {
+            if (typeof disposable === 'function') {
+                await disposable();
+                continue;
+            }
+            if (disposable && typeof disposable === 'object' && typeof (disposable as { dispose?: unknown }).dispose === 'function') {
+                await (disposable as { dispose: () => void | Promise<void> }).dispose();
+            }
+        }
+        expect(fakePermissionHandler.cancelByPlugin).toHaveBeenCalledWith('acme.sample', 'plugin_deactivated');
+    });
+
+    it('routes a requestId+toolName permission ask through the host permission handler', async () => {
+        seedPluginRegistryWithoutRuntimeCore();
+        resolvePluginBackendSurfaceHandlersMock.mockResolvedValue({
+            surfaces: {
+                terminalRuntime: null,
+                externalSession: null,
+                attach: null,
+                handoff: null,
+                fork: null,
+                checkpoint: null,
+            },
+            diagnostics: [],
+        });
+
+        let capturedContext: SessionScopedContextForTest | null = null;
+        resolveExecutablePluginRuntimeRegistryMock.mockResolvedValue({
+            contributes: await resolveMergedContributionRegistryMock(),
+            actionHandlersByActionId: new Map(),
+            hookHandlersByHookId: new Map(),
+            runtimeCoreHandlersByBackendId: new Map(),
+            agentRuntimesByAgentId: new Map([
+                ['acme.sample.backend', {
+                    pluginId: 'acme.sample',
+                    registration: {
+                        backendId: 'acme.sample.backend',
+                        create: async (ctx: SessionScopedContextForTest) => {
+                            capturedContext = ctx;
+                            return {
+                                runtimeCore: {
+                                    createSessionRuntime: async () => createPluginSessionRuntimeFixture(),
+                                    createExecutionRunBackend: vi.fn(),
+                                },
+                            };
+                        },
+                    },
+                }],
+            ]),
+            pluginDiagnosticsByPluginId: {},
+            readHookEventEnvelopeV1: vi.fn(),
+            dispose: vi.fn(async () => undefined),
+        });
+
+        const handleToolCall = vi.fn(async () => ({ decision: 'denied' as const, rationale: 'blocked' }));
+        const fakePermissionHandler = {
+            handleToolCall,
+            respondToPendingPermission: vi.fn(),
+        };
+
+        const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
+        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime(createPluginSessionLaunchParams({ cwd: '/tmp/plugin' })) as HostSessionRuntimePlanForTest;
+        await plan.config.createSessionRuntime({
+            directory: '/tmp/plugin',
+            metadata: {},
+            machineId: 'm1',
+            session: { sendUserTextMessage: vi.fn(), updateMetadata: vi.fn(), updateAgentState: vi.fn() },
+            transcriptSession: { sendAgentMessageCommitted: vi.fn(), sendAgentMessageEphemeral: vi.fn(), sendAgentMessage: vi.fn() },
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: fakePermissionHandler,
+            getPermissionMode: () => 'default',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        });
+
+        await expect(capturedContext!.sessions.current.permissions.requestDecision({
+            requestId: 'provider-permission-1',
+            toolName: 'bash',
+            input: { command: 'touch file.txt' },
+        })).resolves.toMatchObject({
+            decision: 'denied',
+            rationale: 'blocked',
+        });
+
+        expect(handleToolCall).toHaveBeenCalledWith(
+            'provider-permission-1',
+            'bash',
+            { command: 'touch file.txt' },
+            {
+                owner: {
+                    kind: 'plugin',
+                    pluginId: 'acme.sample',
+                    runtimeId: expect.stringMatching(/^plugin-runtime:acme\.sample:/),
+                },
+            },
+        );
+        expect(fakePermissionHandler.respondToPendingPermission).not.toHaveBeenCalled();
     });
 
     it('routes a requestId+approved response to the pending coordinator instead of fabricating an approval', async () => {
@@ -5282,7 +6170,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -5291,14 +6179,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                             capturedContext = ctx;
                             return {
                                 runtimeCore: {
-                                    createSessionRuntime: async () => ({
-                                        kind: 'hostSessionRuntimePlan',
-                                        providerId: 'acme.sample.backend',
-                                        opts: {},
-                                        config: {
-                                            createSessionRuntime: async () => ({ operations: {} }),
-                                        },
-                                    }),
+                                    createSessionRuntime: async () => createPluginSessionRuntimeFixture(),
                                     createExecutionRunBackend: vi.fn(),
                                 },
                             };
@@ -5318,7 +6199,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         };
 
         const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
-        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/tmp/plugin' }) as HostSessionRuntimePlanForTest;
+        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime(createPluginSessionLaunchParams({ cwd: '/tmp/plugin' })) as HostSessionRuntimePlanForTest;
         await plan.config.createSessionRuntime({
             directory: '/tmp/plugin',
             metadata: {},
@@ -5333,7 +6214,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             memoryRecallGuidanceEnabled: false,
         });
 
-        await expect(capturedContext!.session.permissions.requestDecision({ requestId: 'req-1', approved: true }))
+        await expect(capturedContext!.sessions.current.permissions.requestDecision({ requestId: 'req-1', approved: true }))
             .resolves.toMatchObject({ decision: 'approved' });
         expect(respondToPendingPermission).toHaveBeenCalledWith({ id: 'req-1', approved: true });
         expect(fakePermissionHandler.handleToolCall).not.toHaveBeenCalled();
@@ -5359,7 +6240,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -5368,14 +6249,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                             capturedContext = ctx;
                             return {
                                 runtimeCore: {
-                                    createSessionRuntime: async () => ({
-                                        kind: 'hostSessionRuntimePlan',
-                                        providerId: 'acme.sample.backend',
-                                        opts: {},
-                                        config: {
-                                            createSessionRuntime: async () => ({ operations: {} }),
-                                        },
-                                    }),
+                                    createSessionRuntime: async () => createPluginSessionRuntimeFixture(),
                                     createExecutionRunBackend: vi.fn(),
                                 },
                             };
@@ -5394,7 +6268,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         };
 
         const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
-        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/tmp/plugin' }) as HostSessionRuntimePlanForTest;
+        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime(createPluginSessionLaunchParams({ cwd: '/tmp/plugin' })) as HostSessionRuntimePlanForTest;
         await plan.config.createSessionRuntime({
             directory: '/tmp/plugin',
             metadata: {},
@@ -5409,7 +6283,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             memoryRecallGuidanceEnabled: false,
         });
 
-        await expect(capturedContext!.session.permissions.requestDecision({ requestId: 'ghost-request', approved: true }))
+        await expect(capturedContext!.sessions.current.permissions.requestDecision({ requestId: 'ghost-request', approved: true }))
             .rejects.toMatchObject({ errorCode: 'permission_request_not_found', requestId: 'ghost-request' });
     });
 
@@ -5433,7 +6307,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -5442,14 +6316,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                             capturedContext = ctx;
                             return {
                                 runtimeCore: {
-                                    createSessionRuntime: async () => ({
-                                        kind: 'hostSessionRuntimePlan',
-                                        providerId: 'acme.sample.backend',
-                                        opts: {},
-                                        config: {
-                                            createSessionRuntime: async () => ({ operations: {} }),
-                                        },
-                                    }),
+                                    createSessionRuntime: async () => createPluginSessionRuntimeFixture(),
                                     createExecutionRunBackend: vi.fn(),
                                 },
                             };
@@ -5480,7 +6347,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         };
 
         const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
-        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/tmp/plugin' }) as HostSessionRuntimePlanForTest;
+        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime(createPluginSessionLaunchParams({ cwd: '/tmp/plugin' })) as HostSessionRuntimePlanForTest;
         await plan.config.createSessionRuntime({
             directory: '/tmp/plugin',
             metadata: {},
@@ -5495,7 +6362,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             memoryRecallGuidanceEnabled: false,
         });
 
-        await expect(capturedContext!.session.permissions.requestDecision({
+        await expect(capturedContext!.sessions.current.permissions.requestDecision({
             toolCallId: 'tool-ask-1',
             toolName: 'AskUserQuestion',
             input: { questions: [{ question: 'Continue?' }] },
@@ -5525,7 +6392,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -5534,14 +6401,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                             capturedContext = ctx;
                             return {
                                 runtimeCore: {
-                                    createSessionRuntime: async () => ({
-                                        kind: 'hostSessionRuntimePlan',
-                                        providerId: 'acme.sample.backend',
-                                        opts: {},
-                                        config: {
-                                            createSessionRuntime: async () => ({ operations: {} }),
-                                        },
-                                    }),
+                                    createSessionRuntime: async () => createPluginSessionRuntimeFixture(),
                                     createExecutionRunBackend: vi.fn(),
                                 },
                             };
@@ -5572,7 +6432,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         };
 
         const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
-        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime({ cwd: '/tmp/plugin' }) as HostSessionRuntimePlanForTest;
+        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime(createPluginSessionLaunchParams({ cwd: '/tmp/plugin' })) as HostSessionRuntimePlanForTest;
         await plan.config.createSessionRuntime({
             directory: '/tmp/plugin',
             metadata: {},
@@ -5587,7 +6447,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             memoryRecallGuidanceEnabled: false,
         });
 
-        await expect(capturedContext!.session.permissions.requestDecision({
+        await expect(capturedContext!.sessions.current.permissions.requestDecision({
             toolCallId: 'tool-bash-1',
             toolName: 'Bash',
             input: { command: 'echo unsafe' },
@@ -5597,10 +6457,99 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         });
     });
 
+    it('preserves typed permission follow-up and persistence fields on ctx.session.permissions.requestDecision results', async () => {
+        seedPluginRegistryWithoutRuntimeCore();
+        resolvePluginBackendSurfaceHandlersMock.mockResolvedValue({
+            surfaces: {
+                terminalRuntime: null,
+                externalSession: null,
+                attach: null,
+                handoff: null,
+                fork: null,
+                checkpoint: null,
+            },
+            diagnostics: [],
+        });
+
+        let capturedContext: SessionScopedContextForTest | null = null;
+        resolveExecutablePluginRuntimeRegistryMock.mockResolvedValue({
+            contributes: await resolveMergedContributionRegistryMock(),
+            actionHandlersByActionId: new Map(),
+            hookHandlersByHookId: new Map(),
+            runtimeCoreHandlersByBackendId: new Map(),
+            agentRuntimesByAgentId: new Map([
+                ['acme.sample.backend', {
+                    pluginId: 'acme.sample',
+                    registration: {
+                        backendId: 'acme.sample.backend',
+                        create: async (ctx: SessionScopedContextForTest) => {
+                            capturedContext = ctx;
+                            return {
+                                runtimeCore: {
+                                    createSessionRuntime: async () => createPluginSessionRuntimeFixture(),
+                                    createExecutionRunBackend: vi.fn(),
+                                },
+                            };
+                        },
+                    },
+                }],
+            ]),
+            pluginDiagnosticsByPluginId: {},
+            readHookEventEnvelopeV1: vi.fn(),
+            dispose: vi.fn(async () => undefined),
+        });
+
+        const fakePermissionHandler = {
+            handleToolCall: vi.fn(async () => ({
+                decision: 'approved',
+                followUpPrompt: {
+                    prompt: 'Continue with the approved edit.',
+                    delivery: 'followUp',
+                },
+                persistAllowRule: {
+                    scope: 'session',
+                    toolName: 'Bash',
+                },
+            })),
+        };
+
+        const resolution = await resolveBackendEngineAdapterResolution('acme.sample.backend');
+        const plan = await resolution!.engineAdapter.runtimeCore.createSessionRuntime(createPluginSessionLaunchParams({ cwd: '/tmp/plugin' })) as HostSessionRuntimePlanForTest;
+        await plan.config.createSessionRuntime({
+            directory: '/tmp/plugin',
+            metadata: {},
+            machineId: 'm1',
+            session: { sendUserTextMessage: vi.fn(), updateMetadata: vi.fn(), updateAgentState: vi.fn() },
+            transcriptSession: { sendAgentMessageCommitted: vi.fn(), sendAgentMessageEphemeral: vi.fn(), sendAgentMessage: vi.fn() },
+            messageBuffer: {},
+            mcpServers: {},
+            permissionHandler: fakePermissionHandler,
+            getPermissionMode: () => 'read_only',
+            setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false,
+        });
+
+        await expect(capturedContext!.sessions.current.permissions.requestDecision({
+            toolCallId: 'tool-bash-2',
+            toolName: 'Bash',
+            input: { command: 'echo ok' },
+        })).resolves.toEqual({
+            decision: 'approved',
+            followUpPrompt: {
+                prompt: 'Continue with the approved edit.',
+                delivery: 'followUp',
+            },
+            persistAllowRule: {
+                scope: 'session',
+                toolName: 'Bash',
+            },
+        });
+    });
+
     it('proves built-in parity: SessionHostBridge and createExecutionRunBackend both route through EngineRegistry runtimeCore for codex', async () => {
         const createdPlan = {
             kind: 'hostSessionRuntimePlan',
-            providerId: 'codex',
+            agentId: 'codex',
             opts: { cwd: '/tmp/codex', resume: 'resume-1' },
             config: {},
         };
@@ -5655,7 +6604,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
     it('preserves a first-class plugin backend runtimeCore factory instead of rebuilding a plugin-only fallback core', async () => {
         const createdPlan = {
             kind: 'hostSessionRuntimePlan',
-            providerId: 'acme.sample.backend',
+            agentId: 'acme.sample.backend',
             opts: { cwd: '/tmp/plugin', resume: 'resume-1' },
             config: {},
         };
@@ -5748,7 +6697,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
     it('resolves plugin backends from the authoritative active runtime registry when merged contributions are stale', async () => {
         const createdPlan = {
             kind: 'hostSessionRuntimePlan',
-            providerId: 'acme.sample.backend',
+            agentId: 'acme.sample.backend',
             opts: { cwd: '/tmp/plugin', resume: 'resume-1' },
             config: {},
         };
@@ -5766,19 +6715,19 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
         const runtimeCoreFactory = vi.fn(async () => ({ runtimeCore }));
 
         resolveMergedContributionRegistryMock.mockResolvedValue({
-            providers: [],
-            backends: [],
+            agents: [],
+            agentRuntimes: [],
             actions: [],
             hookRegistrations: [],
             surfaceHandlersByBackendId: new Map(),
             catalogEntriesById: {},
-            providerDefinitionsById: new Map(),
-            backendDefinitionsById: new Map(),
+            agentDefinitionsById: new Map(),
+            agentRuntimeDefinitionsById: new Map(),
             pluginDiagnosticsByPluginId: {},
         });
 
         const authoritativeContributions = {
-            providers: [{
+            agents: [{
                 id: 'acme.sample.provider',
                 provenance: 'external',
                 source: { kind: 'path' },
@@ -5803,22 +6752,22 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                 pluginId: 'acme.sample',
                 daemonEntryPath: '/tmp/acme.sample/daemon.mjs',
             }],
-            backends: [{
+            agentRuntimes: [{
                 id: 'acme.sample.backend',
-                providerId: 'acme.sample.provider',
+                agentId: 'acme.sample.provider',
                 provenance: 'external',
                 source: { kind: 'path' },
                 definition: {
                     kindVersion: 1,
                     id: 'acme.sample.backend',
-                    providerId: 'acme.sample.provider',
+                    agentId: 'acme.sample.provider',
                 },
                 richDefinition: {
                     source: 'plugin',
                     definition: {
                         kindVersion: 1,
                         id: 'acme.sample.backend',
-                        providerId: 'acme.sample.provider',
+                        agentId: 'acme.sample.provider',
                         runtimeKind: 'native',
                         capabilities: {},
                         surfaceHandlers: [],
@@ -5834,23 +6783,23 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
             hookRegistrations: [],
             surfaceHandlersByBackendId: new Map(),
             catalogEntriesById: {},
-            backendDefinitionsById: new Map([
+            agentRuntimeDefinitionsById: new Map([
                 ['acme.sample.backend', {
                     id: 'acme.sample.backend',
-                    providerId: 'acme.sample.provider',
+                    agentId: 'acme.sample.provider',
                     provenance: 'external',
                     source: { kind: 'path' },
                     definition: {
                         kindVersion: 1,
                         id: 'acme.sample.backend',
-                        providerId: 'acme.sample.provider',
+                        agentId: 'acme.sample.provider',
                     },
                     richDefinition: {
                         source: 'plugin',
                         definition: {
                             kindVersion: 1,
                             id: 'acme.sample.backend',
-                            providerId: 'acme.sample.provider',
+                            agentId: 'acme.sample.provider',
                             runtimeKind: 'native',
                             capabilities: {},
                             surfaceHandlers: [],
@@ -5863,7 +6812,7 @@ describe('resolveCliEngineRegistry runtimeCore', () => {
                     getRuntimeCore: async () => runtimeCoreFactory,
                 }],
             ]),
-            providerDefinitionsById: new Map([
+            agentDefinitionsById: new Map([
                 ['acme.sample.provider', {
                     id: 'acme.sample.provider',
                     provenance: 'external',

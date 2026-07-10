@@ -3,7 +3,7 @@ import type { Metadata, PermissionMode, UserMessage } from '@/api/types';
 import { pushMessageToQueueWithSpecialCommands, type SpecialCommandQueue } from '@/agent/runtime/queueSpecialCommands';
 import { resolveAppendSystemPromptModeOverride } from '@/agent/runtime/permissions/appendSystemPrompt';
 import { resolveProviderPromptWithReplaySeed } from '@/agent/runtime/replaySeed/replaySeedV1';
-import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
+import { isNonSteerablePromptPayload } from '@/cli/parsers/specialCommands';
 
 import { resolvePermissionModeUpdatedAtFromMessage } from './modeCanonical';
 import { resolvePermissionModeForQueueingUserMessage } from './modeFromUserMessage';
@@ -17,6 +17,12 @@ import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permissions/que
  */
 export type SteerConfigDelta = Readonly<{
   permissionMode: PermissionMode;
+}>;
+
+type PermissionModePromptQueueMode = Readonly<{
+  permissionMode: PermissionMode;
+  appendSystemPrompt?: string | null;
+  model?: string;
 }>;
 
 /**
@@ -55,7 +61,16 @@ export type InFlightSteerController = Readonly<{
    *
    * This should NOT abort the current turn.
    */
-  steerText: (text: string, options?: Readonly<{ localId?: string | null }>) => Promise<void>;
+  steerText: (
+    text: string,
+    options?: Readonly<{
+      localId?: string | null;
+      localIds?: readonly string[];
+      providerClaimedPendingLocalIds?: readonly string[];
+      userMessageSeq?: number | null;
+      userMessageSeqs?: readonly number[];
+    }>,
+  ) => Promise<void>;
   /**
    * OPTIONAL capability (lane Q): apply a config delta to the RUNNING turn so a config-carrying
    * message can still steer. Backends that cannot own mid-turn config changes (e.g. turn-boundary
@@ -72,7 +87,7 @@ export type InFlightSteerController = Readonly<{
 
 export function registerPermissionModeMessageQueueBinding(opts: {
   session: PermissionModeQueueSessionBinding;
-  queue: SpecialCommandQueue<{ permissionMode: PermissionMode; appendSystemPrompt?: string | null }, PermissionModeQueuedPrompt>;
+  queue: SpecialCommandQueue<PermissionModePromptQueueMode, PermissionModeQueuedPrompt>;
   getCurrentPermissionMode: () => PermissionMode | undefined;
   setCurrentPermissionMode: (mode: PermissionMode | undefined) => void;
   inFlightSteer?: InFlightSteerController | null;
@@ -80,11 +95,40 @@ export function registerPermissionModeMessageQueueBinding(opts: {
   let steerSequence: Promise<void> = Promise.resolve();
   let didReplaySeedBootstrapForSteer = false;
   let currentSession = opts.session;
+  let currentBindingGeneration = 0;
+  const handledUserPromptLocalIds = new Set<string>();
+  const handledUserPromptSeqs = new Set<number>();
 
-  const handleMessage = (session: PermissionModeQueueSessionBinding, message: UserMessage) => {
+  const isCurrentBinding = (
+    session: PermissionModeQueueSessionBinding,
+    generation: number,
+  ): boolean => currentSession === session && currentBindingGeneration === generation;
+
+  const handleMessage = (session: PermissionModeQueueSessionBinding, message: UserMessage): boolean => {
     if (currentSession !== session) {
-      return;
+      return false;
     }
+    const messageBindingGeneration = currentBindingGeneration;
+    // HF-1 watermark custody: the committed row seq travels with the prompt (queue or steer) so
+    // provider acceptance can confirm the owed-delivery watermark for exactly the delivered rows.
+    // The committed-seq tracker records the seq BEFORE this handler runs (update-runtime order).
+    const localId = typeof message.localId === 'string' && message.localId.trim().length > 0
+      ? message.localId
+      : null;
+    const localIds = localId === null ? [] : [localId];
+    const userMessageSeq = (() => {
+      if (!localId || typeof session.getCommittedUserMessageSeq !== 'function') return null;
+      const seq = session.getCommittedUserMessageSeq(localId);
+      return typeof seq === 'number' && Number.isFinite(seq) ? seq : null;
+    })();
+    const providerClaimedPendingLocalIds = localIds.filter((candidate) =>
+      session.hasCanonicalPendingDeliveryLocalId?.(candidate) === true,
+    );
+
+    if (hasHandledUserPromptIdentity(localId, userMessageSeq)) {
+      return true;
+    }
+    markHandledUserPromptIdentity(localId, userMessageSeq);
 
     const resolvedMode = resolvePermissionModeForQueueingUserMessage({
       currentPermissionMode: opts.getCurrentPermissionMode(),
@@ -97,15 +141,27 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     opts.setCurrentPermissionMode(resolvedMode.currentPermissionMode);
 
     const text = message.content.text;
-    const special = parseSpecialCommand(text);
+    const queuedPromptIdentityFields = {
+      ...(localIds.length === 0 ? {} : { localIds }),
+      ...(userMessageSeq === null ? {} : { userMessageSeq, userMessageSeqs: [userMessageSeq] }),
+    };
+    const queuedPromptPendingDeliveryFields = providerClaimedPendingLocalIds.length === 0
+      ? {}
+      : { providerClaimedPendingLocalIds };
     // Alias-normalized change signal (ported S-6): a raw compare against the previous mode reads
     // an alias respelling ('acceptEdits' vs 'safe-yolo') as a change and wrongly blocks steering.
     const didChangePermissionMode = resolvedMode.didChange;
+    const modelOverride = resolveModelOverrideFromUserMessage(message);
+    const queueMode: PermissionModePromptQueueMode = {
+      permissionMode: resolvedMode.queuePermissionMode,
+      ...resolveAppendSystemPromptModeOverride(message.meta),
+      ...(modelOverride ? { model: modelOverride } : {}),
+    };
 
     // In-flight steer is only valid when:
     // - the runtime is currently processing a turn,
     // - steering is supported,
-    // - the message is not a control command like /clear or /compact,
+    // - the message is not a non-steerable control command like /clear or /compact,
     // - and the message either does NOT alter permission mode, or the backend exposes the
     //   `applyConfigDeltaInFlight` capability (lane Q) so it can own the mode change mid-turn.
     //   Without the capability, mode changes keep the queue path (handled by the main loop).
@@ -114,30 +170,31 @@ export function registerPermissionModeMessageQueueBinding(opts: {
       steer &&
       steer.supportsInFlightSteer() &&
       (steer.canSteerPrompt?.() ?? steer.isTurnInFlight()) &&
-      special.type === null &&
+      !isNonSteerablePromptPayload(text) &&
+      !modelOverride &&
       (!didChangePermissionMode || typeof steer.applyConfigDeltaInFlight === 'function')
     ) {
       const applyConfigDelta = didChangePermissionMode ? steer.applyConfigDeltaInFlight : undefined;
       steerSequence = steerSequence.then(async () => {
+        if (!isCurrentBinding(session, messageBindingGeneration)) return;
         if (applyConfigDelta) {
           let configOutcome: InFlightConfigApplyOutcome;
           try {
+            if (!isCurrentBinding(session, messageBindingGeneration)) return;
             configOutcome = await applyConfigDelta({ permissionMode: resolvedMode.queuePermissionMode });
           } catch {
             configOutcome = { status: 'failed', reason: 'config_apply_threw' };
           }
+          if (!isCurrentBinding(session, messageBindingGeneration)) return;
           if (configOutcome.status !== 'applied' && configOutcome.status !== 'scheduled_in_turn') {
             // The backend cannot own the config mid-turn: legacy queue path (the mode applies
             // when the queue drains). The steer was never accepted, so this is not a bounce.
             try {
               pushMessageToQueueWithSpecialCommands({
                 queue: opts.queue,
-                message: { text, localId: message.localId ?? null },
+                message: { text, localId, ...queuedPromptIdentityFields, ...queuedPromptPendingDeliveryFields },
                 text,
-                mode: {
-                  permissionMode: resolvedMode.queuePermissionMode,
-                  ...resolveAppendSystemPromptModeOverride(message.meta),
-                },
+                mode: queueMode,
               });
               notifyPromptQueuedDuringTurnBestEffort();
             } catch {
@@ -147,14 +204,31 @@ export function registerPermissionModeMessageQueueBinding(opts: {
           }
         }
         try {
+          if (!isCurrentBinding(session, messageBindingGeneration)) return;
           let providerText = text;
           if (typeof session.getMetadataSnapshot === 'function') {
             try {
+              if (!isCurrentBinding(session, messageBindingGeneration)) return;
               const seedResolution = await resolveProviderPromptWithReplaySeed({
                 session: {
-                  getMetadataSnapshot: session.getMetadataSnapshot,
-                  updateMetadata: session.updateMetadata,
-                  refreshSessionSnapshotFromServerBestEffort: session.refreshSessionSnapshotFromServerBestEffort,
+                  getMetadataSnapshot: () =>
+                    isCurrentBinding(session, messageBindingGeneration) ? session.getMetadataSnapshot?.() : {},
+                  updateMetadata: (updater) => {
+                    if (!isCurrentBinding(session, messageBindingGeneration)) return;
+                    return session.updateMetadata((current) =>
+                      isCurrentBinding(session, messageBindingGeneration) ? updater(current) : current,
+                    );
+                  },
+                  ...(typeof session.refreshSessionSnapshotFromServerBestEffort === 'function'
+                    ? {
+                        refreshSessionSnapshotFromServerBestEffort: (refreshOpts?: {
+                          reason: 'connect' | 'waitForMetadataUpdate';
+                        }) => {
+                          if (!isCurrentBinding(session, messageBindingGeneration)) return Promise.resolve();
+                          return session.refreshSessionSnapshotFromServerBestEffort?.(refreshOpts) ?? Promise.resolve();
+                        },
+                      }
+                    : {}),
                 },
                 userText: text,
                 allowSeed: true,
@@ -162,25 +236,27 @@ export function registerPermissionModeMessageQueueBinding(opts: {
                 nowMs: Date.now(),
                 refreshMetadataBeforeRead: !didReplaySeedBootstrapForSteer,
               });
+              if (!isCurrentBinding(session, messageBindingGeneration)) return;
               didReplaySeedBootstrapForSteer = true;
               providerText = seedResolution.providerPrompt;
             } catch {
+              if (!isCurrentBinding(session, messageBindingGeneration)) return;
               // Best-effort only; fall back to steering the raw user text.
             }
           }
 
-          await steer.steerText(providerText, { localId: message.localId ?? null });
+          if (!isCurrentBinding(session, messageBindingGeneration)) return;
+          await steer.steerText(providerText, { localId, ...queuedPromptIdentityFields, ...queuedPromptPendingDeliveryFields });
+          if (!isCurrentBinding(session, messageBindingGeneration)) return;
           return;
         } catch {
+          if (!isCurrentBinding(session, messageBindingGeneration)) return;
           try {
             pushMessageToQueueWithSpecialCommands({
               queue: opts.queue,
-              message: { text, localId: message.localId ?? null },
+              message: { text, localId, ...queuedPromptIdentityFields, ...queuedPromptPendingDeliveryFields },
               text,
-              mode: {
-                permissionMode: resolvedMode.queuePermissionMode,
-                ...resolveAppendSystemPromptModeOverride(message.meta),
-              },
+              mode: queueMode,
             });
             notifyPromptQueuedDuringTurnBestEffort();
           } catch {
@@ -188,21 +264,19 @@ export function registerPermissionModeMessageQueueBinding(opts: {
           }
         }
       });
-      return;
+      return true;
     }
 
     pushMessageToQueueWithSpecialCommands({
       queue: opts.queue,
-      message: { text, localId: message.localId ?? null },
+      message: { text, localId, ...queuedPromptIdentityFields, ...queuedPromptPendingDeliveryFields },
       text,
-      mode: {
-        permissionMode: resolvedMode.queuePermissionMode,
-        ...resolveAppendSystemPromptModeOverride(message.meta),
-      },
+      mode: queueMode,
     });
     if (steer?.isTurnInFlight()) {
       notifyPromptQueuedDuringTurnBestEffort();
     }
+    return true;
   };
 
   // The message was queued behind a running turn: let the runtime arm its bounded
@@ -215,11 +289,31 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     }
   };
 
+  const hasHandledUserPromptIdentity = (localId: string | null, userMessageSeq: number | null): boolean => {
+    if (userMessageSeq !== null && handledUserPromptSeqs.has(userMessageSeq)) {
+      return true;
+    }
+    if (userMessageSeq === null && localId !== null && handledUserPromptLocalIds.has(localId)) {
+      return true;
+    }
+    return false;
+  };
+
+  const markHandledUserPromptIdentity = (localId: string | null, userMessageSeq: number | null): void => {
+    if (localId !== null) {
+      handledUserPromptLocalIds.add(localId);
+    }
+    if (userMessageSeq !== null) {
+      handledUserPromptSeqs.add(userMessageSeq);
+    }
+  };
+
   const bindSession = (session: PermissionModeQueueSessionBinding) => {
     currentSession = session;
-    session.onUserMessage((message) => {
-      handleMessage(session, message);
-    });
+    currentBindingGeneration += 1;
+    handledUserPromptLocalIds.clear();
+    handledUserPromptSeqs.clear();
+    session.onUserMessage((message) => handleMessage(session, message));
   };
 
   bindSession(opts.session);
@@ -227,9 +321,23 @@ export function registerPermissionModeMessageQueueBinding(opts: {
   return { bindSession };
 }
 
+function resolveModelOverrideFromUserMessage(message: UserMessage): string | null {
+  const raw = message.meta && typeof message.meta === 'object'
+    ? (message.meta as Record<string, unknown>).model
+    : null;
+  const model = typeof raw === 'string' ? raw.trim() : '';
+  return model.length > 0 ? model : null;
+}
+
 type PermissionModeQueueSessionBinding = {
-  onUserMessage: (handler: (message: UserMessage) => void) => void;
+  onUserMessage: (handler: (message: UserMessage) => boolean | void) => void;
   updateMetadata: (updater: (current: Metadata) => Metadata) => Promise<void> | void;
   getMetadataSnapshot?: () => unknown;
   refreshSessionSnapshotFromServerBestEffort?: (opts?: { reason: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
+  /**
+   * Committed transcript seq for a user row by localId (HF-1 watermark custody). The tracker
+   * records the seq before the user-message callback fires, so this is readable here.
+   */
+  getCommittedUserMessageSeq?: (localId: string) => number | null;
+  hasCanonicalPendingDeliveryLocalId?: (localId: string) => boolean;
 };

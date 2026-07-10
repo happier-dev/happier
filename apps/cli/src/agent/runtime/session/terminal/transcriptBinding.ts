@@ -21,7 +21,7 @@ function toLocalHostedDirectTranscriptBinding(
     binding: TerminalRuntimeDirectTranscriptBindingV1,
 ): LocalHostedDirectTranscriptBinding {
     return {
-        providerId: binding.providerId,
+        agentId: binding.agentId,
         source: binding.source,
         remoteSessionId: binding.remoteSessionId,
     };

@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AgentBackend, SessionId } from '@/agent/core/AgentBackend';
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import type { FinishExecutionRun } from '@/agent/runtime/bridges/executionRun/executionRunFinishRun';
-import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/runtime/bridges/executionRun/testkit';
+import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
+import {
+  createTestExecutionRunHostRuntime,
+  type TestExecutionRunHostRuntime,
+  type TestExecutionRunHostRuntimeOptions,
+} from '@/agent/runtime/bridges/executionRun/testkit';
 
 import { executeBoundedBackendRun } from '@/agent/runtime/bridges/executionRun/bounded/loop';
 
@@ -23,23 +27,35 @@ vi.mock('@/ui/logger', async (importOriginal) => {
 const TEST_PRIMARY_BACKEND_ID = `${'primary'}.${'backend'}` as never;
 const TEST_RECOVERY_BACKEND_ID = `${'recovery'}.${'backend'}` as never;
 
-function asExecutionRunHostRuntime(backend: AgentBackend) {
-  return createExecutionRunHostRuntimeFromAgentBackend(backend);
+type PromptRuntimeHandler = (
+  runtime: TestExecutionRunHostRuntime,
+  sessionId: string,
+  prompt: string,
+) => void | Promise<void>;
+
+function createPromptRuntime(
+  onSendPrompt: PromptRuntimeHandler,
+  opts: Omit<TestExecutionRunHostRuntimeOptions, 'onSendPrompt'> = {},
+): TestExecutionRunHostRuntime {
+  let runtime: TestExecutionRunHostRuntime;
+  runtime = createTestExecutionRunHostRuntime({
+    ...opts,
+    onSendPrompt: async (sessionId, prompt) => {
+      await onSendPrompt(runtime, sessionId, prompt);
+    },
+  });
+  return runtime;
 }
 
 function createRuntimeWithStuckFirstCompletion(): Readonly<{
-  backend: AgentBackend;
+  runtime: ExecutionRunHostRuntime;
   getSendPromptCount: () => number;
 }> {
-  const childSessionId: SessionId = 'child_session_1' as SessionId;
   let sendPromptCount = 0;
   let donePromise: Promise<void> = Promise.resolve();
 
-  const backend: AgentBackend = {
-    async startSession(): Promise<{ sessionId: SessionId }> {
-      return { sessionId: childSessionId };
-    },
-    async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
+  const runtime = createPromptRuntime(
+    async () => {
       sendPromptCount += 1;
       if (sendPromptCount === 1) {
         donePromise = new Promise<void>(() => {});
@@ -49,30 +65,26 @@ function createRuntimeWithStuckFirstCompletion(): Readonly<{
         setTimeout(resolve, 10);
       });
     },
-    async cancel(_sessionId: SessionId): Promise<void> {},
-    onMessage(): void {},
-    async dispose(): Promise<void> {},
-    async waitForResponseComplete(): Promise<void> {
-      await donePromise;
+    {
+      onCancel: async () => {},
+      onWaitForTurnCompletion: async () => {
+        await donePromise;
+      },
     },
-  };
+  );
 
-  return { backend, getSendPromptCount: () => sendPromptCount };
+  return { runtime, getSendPromptCount: () => sendPromptCount };
 }
 
 function createRuntimeWithSlowCancel(args: Readonly<{ cancelDelayMs: number }>): Readonly<{
-  backend: AgentBackend;
+  runtime: ExecutionRunHostRuntime;
   getSendPromptCount: () => number;
 }> {
-  const childSessionId: SessionId = 'child_session_1' as SessionId;
   let sendPromptCount = 0;
   let donePromise: Promise<void> = Promise.resolve();
 
-  const backend: AgentBackend = {
-    async startSession(): Promise<{ sessionId: SessionId }> {
-      return { sessionId: childSessionId };
-    },
-    async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
+  const runtime = createPromptRuntime(
+    async () => {
       sendPromptCount += 1;
       if (sendPromptCount === 1) {
         donePromise = new Promise<void>(() => {});
@@ -82,34 +94,30 @@ function createRuntimeWithSlowCancel(args: Readonly<{ cancelDelayMs: number }>):
         setTimeout(resolve, 10);
       });
     },
-    async cancel(_sessionId: SessionId): Promise<void> {
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, args.cancelDelayMs);
-      });
+    {
+      onCancel: async () => {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, args.cancelDelayMs);
+        });
+      },
+      onWaitForTurnCompletion: async () => {
+        await donePromise;
+      },
     },
-    onMessage(): void {},
-    async dispose(): Promise<void> {},
-    async waitForResponseComplete(): Promise<void> {
-      await donePromise;
-    },
-  };
+  );
 
-  return { backend, getSendPromptCount: () => sendPromptCount };
+  return { runtime, getSendPromptCount: () => sendPromptCount };
 }
 
 function createRuntimeWithBlockingSendPromptNoWaiter(): Readonly<{
-  backend: AgentBackend;
+  runtime: ExecutionRunHostRuntime;
   getSendPromptCount: () => number;
 }> {
-  const childSessionId: SessionId = 'child_session_1' as SessionId;
   let sendPromptCount = 0;
   let unblockFirstPrompt: (() => void) | null = null;
 
-  const backend: AgentBackend = {
-    async startSession(): Promise<{ sessionId: SessionId }> {
-      return { sessionId: childSessionId };
-    },
-    async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
+  const runtime = createPromptRuntime(
+    async () => {
       sendPromptCount += 1;
       if (sendPromptCount === 1) {
         await new Promise<void>((resolve) => {
@@ -121,15 +129,15 @@ function createRuntimeWithBlockingSendPromptNoWaiter(): Readonly<{
         setTimeout(resolve, 10);
       });
     },
-    async cancel(_sessionId: SessionId): Promise<void> {
-      unblockFirstPrompt?.();
-      unblockFirstPrompt = null;
+    {
+      onCancel: async () => {
+        unblockFirstPrompt?.();
+        unblockFirstPrompt = null;
+      },
     },
-    onMessage(): void {},
-    async dispose(): Promise<void> {},
-  };
+  );
 
-  return { backend, getSendPromptCount: () => sendPromptCount };
+  return { runtime, getSendPromptCount: () => sendPromptCount };
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
@@ -148,7 +156,7 @@ describe('executeBoundedBackendRun', () => {
     const callId = 'subagent_run_test_1';
     const sidechainId = 'subagent_run_test_1';
 
-    const { backend, getSendPromptCount } = createRuntimeWithStuckFirstCompletion();
+    const { runtime, getSendPromptCount } = createRuntimeWithStuckFirstCompletion();
 
     let resolveTerminal!: () => void;
     const terminalPromise = new Promise<void>((resolve) => {
@@ -157,9 +165,9 @@ describe('executeBoundedBackendRun', () => {
 
     const ctrl: ExecutionRunBackendController = {
       kind: 'backend',
-      backend: asExecutionRunHostRuntime(backend),
+      backend: runtime,
       backendSupportsResume: false,
-      childSessionId: 'child_session_1' as SessionId,
+      childSessionId: 'child_session_1',
       buffer: '',
       sidechainStreamBuffer: '',
       sidechainStreamKey: '',
@@ -227,7 +235,7 @@ describe('executeBoundedBackendRun', () => {
     const callId = 'subagent_run_test_slow_cancel_1';
     const sidechainId = callId;
 
-    const { backend, getSendPromptCount } = createRuntimeWithSlowCancel({ cancelDelayMs: 200 });
+    const { runtime, getSendPromptCount } = createRuntimeWithSlowCancel({ cancelDelayMs: 200 });
 
     let resolveTerminal!: () => void;
     const terminalPromise = new Promise<void>((resolve) => {
@@ -236,9 +244,9 @@ describe('executeBoundedBackendRun', () => {
 
     const ctrl: ExecutionRunBackendController = {
       kind: 'backend',
-      backend: asExecutionRunHostRuntime(backend),
+      backend: runtime,
       backendSupportsResume: false,
-      childSessionId: 'child_session_1' as SessionId,
+      childSessionId: 'child_session_1',
       buffer: '',
       sidechainStreamBuffer: '',
       sidechainStreamKey: '',
@@ -306,7 +314,7 @@ describe('executeBoundedBackendRun', () => {
     const callId = 'subagent_run_test_blocking_send_1';
     const sidechainId = callId;
 
-    const { backend, getSendPromptCount } = createRuntimeWithBlockingSendPromptNoWaiter();
+    const { runtime, getSendPromptCount } = createRuntimeWithBlockingSendPromptNoWaiter();
 
     let resolveTerminal!: () => void;
     const terminalPromise = new Promise<void>((resolve) => {
@@ -315,9 +323,9 @@ describe('executeBoundedBackendRun', () => {
 
     const ctrl: ExecutionRunBackendController = {
       kind: 'backend',
-      backend: asExecutionRunHostRuntime(backend),
+      backend: runtime,
       backendSupportsResume: false,
-      childSessionId: 'child_session_1' as SessionId,
+      childSessionId: 'child_session_1',
       buffer: '',
       sidechainStreamBuffer: '',
       sidechainStreamKey: '',
@@ -384,17 +392,14 @@ describe('executeBoundedBackendRun', () => {
     const runId = 'run_test_slow_replacement_send_1';
     const callId = 'subagent_run_test_slow_replacement_send_1';
     const sidechainId = callId;
-    const childSessionId: SessionId = 'child_session_slow_replacement_send_1' as SessionId;
+    const childSessionId = 'child_session_slow_replacement_send_1';
 
     let sendPromptCount = 0;
     let unblockFirstPrompt: (() => void) | null = null;
     let donePromise: Promise<void> = Promise.resolve();
 
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId: childSessionId };
-      },
-      async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
+    const runtime = createPromptRuntime(
+      async () => {
         sendPromptCount += 1;
         if (sendPromptCount === 1) {
           await new Promise<void>((resolve) => {
@@ -407,16 +412,17 @@ describe('executeBoundedBackendRun', () => {
         });
         await donePromise;
       },
-      async cancel(_sessionId: SessionId): Promise<void> {
-        unblockFirstPrompt?.();
-        unblockFirstPrompt = null;
+      {
+        sessionId: childSessionId,
+        onCancel: async () => {
+          unblockFirstPrompt?.();
+          unblockFirstPrompt = null;
+        },
+        onWaitForTurnCompletion: async () => {
+          await donePromise;
+        },
       },
-      onMessage(): void {},
-      async dispose(): Promise<void> {},
-      async waitForResponseComplete(): Promise<void> {
-        await donePromise;
-      },
-    };
+    );
 
     let resolveTerminal!: () => void;
     const terminalPromise = new Promise<void>((resolve) => {
@@ -425,7 +431,7 @@ describe('executeBoundedBackendRun', () => {
 
     const ctrl: ExecutionRunBackendController = {
       kind: 'backend',
-      backend: asExecutionRunHostRuntime(backend),
+      backend: runtime,
       backendSupportsResume: false,
       childSessionId,
       buffer: '',
@@ -492,33 +498,34 @@ describe('executeBoundedBackendRun', () => {
   it('logs unexpected canceled turn completion errors (without surfacing them as unhandled rejections)', async () => {
     mockedLogger.debug.mockClear();
 
-    const childSessionId: SessionId = 'child_session_1' as SessionId;
+    const childSessionId = 'child_session_1';
     let sendPromptCount = 0;
-    let donePromise: Promise<void> = Promise.resolve();
+    const turnCompletions: Array<Promise<Error | null>> = [];
 
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId: childSessionId };
-      },
-      async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
+    const runtime = createPromptRuntime(
+      () => {
         sendPromptCount += 1;
         if (sendPromptCount === 1) {
-          donePromise = new Promise<void>((_resolve, reject) => {
-            setTimeout(() => reject(new Error('unexpected failure')), 25);
-          });
+          turnCompletions.push(new Promise((resolve) => {
+            setTimeout(() => {
+              resolve(new Error('unexpected failure'));
+            }, 25);
+          }));
           return;
         }
-        donePromise = new Promise<void>((resolve) => {
-          setTimeout(resolve, 10);
-        });
+        turnCompletions.push(new Promise((resolve) => {
+          setTimeout(() => resolve(null), 10);
+        }));
       },
-      async cancel(_sessionId: SessionId): Promise<void> {},
-      onMessage(): void {},
-      async dispose(): Promise<void> {},
-      async waitForResponseComplete(): Promise<void> {
-        await donePromise;
+      {
+        onCancel: async () => {},
+        onWaitForTurnCompletion: async () => {
+          const completion = turnCompletions.shift() ?? Promise.resolve(null);
+          const error = await completion;
+          if (error) throw error;
+        },
       },
-    };
+    );
 
     let resolveTerminal!: () => void;
     const terminalPromise = new Promise<void>((resolve) => {
@@ -527,7 +534,7 @@ describe('executeBoundedBackendRun', () => {
 
     const ctrl: ExecutionRunBackendController = {
       kind: 'backend',
-      backend: asExecutionRunHostRuntime(backend),
+      backend: runtime,
       backendSupportsResume: false,
       childSessionId,
       buffer: '',
@@ -600,7 +607,7 @@ describe('executeBoundedBackendRun', () => {
     const runId = 'run_delegate_repair_1';
     const callId = 'subagent_run_delegate_repair_1';
     const sidechainId = callId;
-    const childSessionId: SessionId = 'child_session_delegate_repair' as SessionId;
+    const childSessionId = 'child_session_delegate_repair';
 
     const prompts: string[] = [];
     let sendPromptCount = 0;
@@ -611,11 +618,8 @@ describe('executeBoundedBackendRun', () => {
     });
 
     let ctrl!: ExecutionRunBackendController;
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId: childSessionId };
-      },
-      async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
+    const runtime = createPromptRuntime(
+      (_runtime, _sessionId, prompt) => {
         prompts.push(prompt);
         sendPromptCount += 1;
         if (sendPromptCount === 1) {
@@ -629,15 +633,12 @@ describe('executeBoundedBackendRun', () => {
           '}',
         ].join('\n');
       },
-      async cancel(_sessionId: SessionId): Promise<void> {},
-      onMessage(): void {},
-      async dispose(): Promise<void> {},
-      async waitForResponseComplete(): Promise<void> {},
-    };
+      { sessionId: childSessionId, onWaitForTurnCompletion: async () => {} },
+    );
 
     ctrl = {
       kind: 'backend',
-      backend: asExecutionRunHostRuntime(backend),
+      backend: runtime,
       backendSupportsResume: false,
       childSessionId,
       buffer: '',
@@ -699,7 +700,7 @@ describe('executeBoundedBackendRun', () => {
     const runId = 'run_delegate_repair_copycat_1';
     const callId = 'subagent_run_delegate_repair_copycat_1';
     const sidechainId = callId;
-    const childSessionId: SessionId = 'child_session_delegate_repair_copycat' as SessionId;
+    const childSessionId = 'child_session_delegate_repair_copycat';
 
     const prompts: string[] = [];
     let sendPromptCount = 0;
@@ -750,11 +751,8 @@ describe('executeBoundedBackendRun', () => {
     };
 
     let ctrl!: ExecutionRunBackendController;
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId: childSessionId };
-      },
-      async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
+    const runtime = createPromptRuntime(
+      (_runtime, _sessionId, prompt) => {
         prompts.push(prompt);
         sendPromptCount += 1;
         if (sendPromptCount === 1) {
@@ -763,15 +761,12 @@ describe('executeBoundedBackendRun', () => {
         }
         ctrl.buffer = extractFirstJsonObject(prompt);
       },
-      async cancel(_sessionId: SessionId): Promise<void> {},
-      onMessage(): void {},
-      async dispose(): Promise<void> {},
-      async waitForResponseComplete(): Promise<void> {},
-    };
+      { sessionId: childSessionId, onWaitForTurnCompletion: async () => {} },
+    );
 
     ctrl = {
       kind: 'backend',
-      backend: asExecutionRunHostRuntime(backend),
+      backend: runtime,
       backendSupportsResume: false,
       childSessionId,
       buffer: '',
@@ -833,7 +828,7 @@ describe('executeBoundedBackendRun', () => {
     const runId = 'run_review_repair_schema_1';
     const callId = 'subagent_run_review_repair_schema_1';
     const sidechainId = callId;
-    const childSessionId: SessionId = 'child_session_review_repair_schema' as SessionId;
+    const childSessionId = 'child_session_review_repair_schema';
 
     const prompts: string[] = [];
     let sendPromptCount = 0;
@@ -844,11 +839,8 @@ describe('executeBoundedBackendRun', () => {
     });
 
     let ctrl!: ExecutionRunBackendController;
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId: childSessionId };
-      },
-      async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
+    const runtime = createPromptRuntime(
+      (_runtime, _sessionId, prompt) => {
         prompts.push(prompt);
         sendPromptCount += 1;
         if (sendPromptCount === 1) {
@@ -893,15 +885,12 @@ describe('executeBoundedBackendRun', () => {
               '}',
             ].join('\n');
       },
-      async cancel(_sessionId: SessionId): Promise<void> {},
-      onMessage(): void {},
-      async dispose(): Promise<void> {},
-      async waitForResponseComplete(): Promise<void> {},
-    };
+      { sessionId: childSessionId, onWaitForTurnCompletion: async () => {} },
+    );
 
     ctrl = {
       kind: 'backend',
-      backend: asExecutionRunHostRuntime(backend),
+      backend: runtime,
       backendSupportsResume: false,
       childSessionId,
       buffer: '',
@@ -965,7 +954,7 @@ describe('executeBoundedBackendRun', () => {
     const runId = 'run_wait_timeout_1';
     const callId = 'subagent_run_wait_timeout_1';
     const sidechainId = callId;
-    const childSessionId: SessionId = 'child_session_wait_timeout' as SessionId;
+    const childSessionId = 'child_session_wait_timeout';
     const waitTimeouts: Array<number | null | undefined> = [];
 
     let resolveTerminal!: () => void;
@@ -974,24 +963,21 @@ describe('executeBoundedBackendRun', () => {
     });
 
     let ctrl!: ExecutionRunBackendController;
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId: childSessionId };
-      },
-      async sendPrompt(): Promise<void> {
+    const runtime = createPromptRuntime(
+      () => {
         ctrl.buffer = JSON.stringify({ findings: [], summary: 'ok' });
       },
-      async cancel(): Promise<void> {},
-      onMessage(): void {},
-      async dispose(): Promise<void> {},
-      async waitForResponseComplete(timeoutMs?: number): Promise<void> {
-        waitTimeouts.push(timeoutMs);
+      {
+        sessionId: childSessionId,
+        onWaitForTurnCompletion: async (timeoutMs) => {
+          waitTimeouts.push(timeoutMs);
+        },
       },
-    };
+    );
 
     ctrl = {
       kind: 'backend',
-      backend: asExecutionRunHostRuntime(backend),
+      backend: runtime,
       backendSupportsResume: false,
       childSessionId,
       buffer: '',
@@ -1051,7 +1037,7 @@ describe('executeBoundedBackendRun', () => {
     const runId = 'run_liveness_probe_failed_continues_1';
     const callId = 'subagent_run_liveness_probe_failed_continues_1';
     const sidechainId = callId;
-    const childSessionId: SessionId = 'child_session_liveness_probe_failed' as SessionId;
+    const childSessionId = 'child_session_liveness_probe_failed';
 
     let resolveTurn!: () => void;
     const turnDone = new Promise<void>((resolve) => {
@@ -1065,8 +1051,11 @@ describe('executeBoundedBackendRun', () => {
 
     let ctrl!: ExecutionRunBackendController;
     const cancel = vi.fn(async () => {});
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
+    const runtime: ExecutionRunHostRuntime = Object.freeze({
+      async readResumeSupport() {
+        return false;
+      },
+      async provisionSession() {
         return { sessionId: childSessionId };
       },
       async sendPrompt(): Promise<void> {
@@ -1074,21 +1063,18 @@ describe('executeBoundedBackendRun', () => {
         setTimeout(resolveTurn, 25);
       },
       cancel,
-      onMessage(): void {},
       async dispose(): Promise<void> {},
-      async waitForResponseComplete(): Promise<void> {
+      async waitForTurnCompletion(): Promise<void> {
         await turnDone;
       },
-    };
-    Object.assign(backend, {
-      async probeTurnLiveness(): Promise<{ active: boolean }> {
-        throw new Error('probe unavailable');
+      subscribeMessages() {
+        return () => undefined;
       },
     });
 
     ctrl = {
       kind: 'backend',
-      backend: asExecutionRunHostRuntime(backend),
+      backend: runtime,
       backendSupportsResume: false,
       childSessionId,
       buffer: '',
@@ -1148,7 +1134,7 @@ describe('executeBoundedBackendRun', () => {
     const runId = 'run_plan_repair_1';
     const callId = 'subagent_run_plan_repair_1';
     const sidechainId = callId;
-    const childSessionId: SessionId = 'child_session_plan_repair' as SessionId;
+    const childSessionId = 'child_session_plan_repair';
 
     const prompts: string[] = [];
     let sendPromptCount = 0;
@@ -1159,11 +1145,8 @@ describe('executeBoundedBackendRun', () => {
     });
 
     let ctrl!: ExecutionRunBackendController;
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId: childSessionId };
-      },
-      async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
+    const runtime = createPromptRuntime(
+      (_runtime, _sessionId, prompt) => {
         prompts.push(prompt);
         sendPromptCount += 1;
         if (sendPromptCount === 1) {
@@ -1177,15 +1160,12 @@ describe('executeBoundedBackendRun', () => {
           '}',
         ].join('\n');
       },
-      async cancel(_sessionId: SessionId): Promise<void> {},
-      onMessage(): void {},
-      async dispose(): Promise<void> {},
-      async waitForResponseComplete(): Promise<void> {},
-    };
+      { sessionId: childSessionId, onWaitForTurnCompletion: async () => {} },
+    );
 
     ctrl = {
       kind: 'backend',
-      backend: asExecutionRunHostRuntime(backend),
+      backend: runtime,
       backendSupportsResume: false,
       childSessionId,
       buffer: '',

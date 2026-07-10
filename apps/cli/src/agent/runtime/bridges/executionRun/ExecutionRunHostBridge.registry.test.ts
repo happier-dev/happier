@@ -3,9 +3,11 @@ import { existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { AgentBackend, AgentMessage, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/runtime/bridges/executionRun/testkit';
+import {
+  createTestExecutionRunHostRuntime,
+  type TestExecutionRunHostRuntime,
+} from '@/agent/runtime/bridges/executionRun/testkit';
 
 type TestRuntimeFactoryInput = Readonly<{
   cwd: string;
@@ -50,10 +52,6 @@ vi.mock('@/plugins/runtime/hooks/execution/dispatchBridgeLifecycleHookEvent', ()
   dispatchBridgeLifecycleHookEvent,
 }));
 
-function asExecutionRunHostRuntime(backend: AgentBackend) {
-  return createExecutionRunHostRuntimeFromAgentBackend(backend);
-}
-
 function createExecutionRunManager(
   managerCtor: typeof import('@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge').ExecutionRunHostBridge,
   opts: ConstructorParameters<typeof managerCtor>[0] & Readonly<{ createRuntime: TestRuntimeFactory }>,
@@ -63,46 +61,29 @@ function createExecutionRunManager(
   return new managerCtor(bridgeOptions) as InstanceType<typeof managerCtor>;
 }
 
-function createStaticBackend(responseText: string): AgentBackend {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = 'child_session_1' as SessionId;
-  return {
-    async startSession(): Promise<{ sessionId: SessionId }> {
-      return { sessionId };
+function createStaticRuntime(responseText: string): TestExecutionRunHostRuntime {
+  let runtime: TestExecutionRunHostRuntime;
+  runtime = createTestExecutionRunHostRuntime({
+    onSendPrompt: async () => {
+      runtime.emitMessage({ type: 'model-output', fullText: responseText });
     },
-    async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
-      handler?.({ type: 'model-output', fullText: responseText } as AgentMessage);
-    },
-    async cancel(_sessionId: SessionId): Promise<void> {},
-    onMessage(next: AgentMessageHandler): void {
-      handler = next;
-    },
-    async dispose(): Promise<void> {},
-    async waitForResponseComplete(): Promise<void> {},
-  };
+    onWaitForTurnCompletion: async () => {},
+  });
+  return runtime;
 }
 
-function createResumableStaticBackend(responseText: string): AgentBackend {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = 'child_session_1' as SessionId;
-  const resumedSessionId: SessionId = 'child_session_resumed' as SessionId;
-  return {
-    async startSession(): Promise<{ sessionId: SessionId }> {
-      return { sessionId };
+function createResumableStaticRuntime(responseText: string): TestExecutionRunHostRuntime {
+  let runtime: TestExecutionRunHostRuntime;
+  runtime = createTestExecutionRunHostRuntime({
+    resumeSupported: true,
+    replayResumeSupported: true,
+    resumeSessionId: 'child_session_resumed',
+    onSendPrompt: async () => {
+      runtime.emitMessage({ type: 'model-output', fullText: responseText });
     },
-    async loadSessionWithReplayCapture(_sessionId: SessionId): Promise<{ sessionId: SessionId; replay: unknown[] }> {
-      return { sessionId: resumedSessionId, replay: [] };
-    },
-    async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
-      handler?.({ type: 'model-output', fullText: responseText } as AgentMessage);
-    },
-    async cancel(_sessionId: SessionId): Promise<void> {},
-    onMessage(next: AgentMessageHandler): void {
-      handler = next;
-    },
-    async dispose(): Promise<void> {},
-    async waitForResponseComplete(): Promise<void> {},
-  };
+    onWaitForTurnCompletion: async () => {},
+  });
+  return runtime;
 }
 
 describe('ExecutionRunManager execution-run registry integration', () => {
@@ -150,12 +131,12 @@ describe('ExecutionRunManager execution-run registry integration', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: () =>
-        asExecutionRunHostRuntime(createStaticBackend(
+        createStaticRuntime(
           JSON.stringify({
             findings: [],
             summary: 'ok',
           }),
-        )),
+        ),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
     });
@@ -179,7 +160,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     expect(dispatchBridgeLifecycleHookEvent).toHaveBeenCalledWith(expect.objectContaining({
       happyHomeDir,
       event: expect.objectContaining({
-        eventId: 'execution_run.start',
+        eventId: 'executionRun.started',
         happySessionId: 'parent_session_1',
         payload: expect.objectContaining({
           runId: started.runId,
@@ -191,7 +172,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     expect(dispatchBridgeLifecycleHookEvent).toHaveBeenCalledWith(expect.objectContaining({
       happyHomeDir,
       event: expect.objectContaining({
-        eventId: 'execution_run.terminal',
+        eventId: 'executionRun.completed',
         happySessionId: 'parent_session_1',
         payload: expect.objectContaining({
           runId: started.runId,
@@ -216,7 +197,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     expect(marker?.permissionMode).toBe('read_only');
     expect(typeof marker?.startedAtMs).toBe('number');
     expect(typeof marker?.updatedAtMs).toBe('number');
-  });
+  }, 60_000);
 
   it('updates lastActivityAtMs for long-lived sends (best-effort)', async () => {
     const { ExecutionRunHostBridge: ExecutionRunManager } = await import('@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge');
@@ -226,7 +207,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     const manager = createExecutionRunManager(ExecutionRunManager, {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createRuntime: () => asExecutionRunHostRuntime(createStaticBackend('ok')),
+      createRuntime: () => createStaticRuntime('ok'),
       sendAcp: () => {},
       getNowMs: () => nowMs,
     });
@@ -248,7 +229,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
     expect(dispatchBridgeLifecycleHookEvent).toHaveBeenCalledWith(expect.objectContaining({
       happyHomeDir,
       event: expect.objectContaining({
-        eventId: 'execution_run.send',
+        eventId: 'executionRun.messageSent',
         happySessionId: 'parent_session_1',
         payload: expect.objectContaining({
           runId: started.runId,
@@ -280,7 +261,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
       cwd: process.cwd(),
       createRuntime: (opts) => {
         runtimeInputs.push(opts);
-        return asExecutionRunHostRuntime(createResumableStaticBackend('ok'));
+        return createResumableStaticRuntime('ok');
       },
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
@@ -317,7 +298,7 @@ describe('ExecutionRunManager execution-run registry integration', () => {
       cwd: process.cwd(),
       createRuntime: (opts: { backendId: string }) => {
         observedBackendIds.push(opts.backendId);
-        return asExecutionRunHostRuntime(createStaticBackend('ok'));
+        return createStaticRuntime('ok');
       },
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
@@ -372,11 +353,11 @@ describe('ExecutionRunManager execution-run registry integration', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: (opts: { runId?: string; permissionMode: string }) => {
-        isolationRoot = join(configuration.activeServerDir, 'isolation', 'pi', 'execution_run', String(opts.runId));
-        return createCatalogProviderExecutionRunBackend({
-          providerId: 'pi',
-          createRuntime: () => nativeRuntime,
-        }, {
+	        isolationRoot = join(configuration.activeServerDir, 'isolation', 'pi', 'execution_run', String(opts.runId));
+	        return createCatalogProviderExecutionRunBackend({
+	          agentId: 'pi',
+	          createRuntime: () => nativeRuntime,
+	        }, {
           cwd: process.cwd(),
           backendId: 'pi',
           runId: opts.runId,

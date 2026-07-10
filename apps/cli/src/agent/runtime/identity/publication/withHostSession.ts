@@ -3,7 +3,12 @@ import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOpe
 import type { NormalizedRuntimeEventPublication } from '@/agent/runtime/events/createNormalizedRuntimeEventWriter';
 import { createNormalizedRuntimeEventPublicationHub } from '@/agent/runtime/events/createNormalizedRuntimeEventPublicationHub';
 import { resolveHostSessionRuntimeFactoryResult } from '@/agent/runtime/session/loop/factoryResult';
-import type { RuntimeEventV1 } from '@happier-dev/protocol';
+import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import {
+  type RuntimeEventV1,
+  type RuntimeDescriptorV1,
+} from '@happier-dev/protocol';
+import type { Metadata } from '@/api/types';
 
 function isRuntimeEvent(message: unknown): message is RuntimeEventV1 {
   return Boolean(message)
@@ -11,12 +16,62 @@ function isRuntimeEvent(message: unknown): message is RuntimeEventV1 {
     && typeof (message as Readonly<Record<string, unknown>>).kind === 'string';
 }
 
+function normalizeNonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readRuntimeSessionId(runtime: RuntimeTurnOperations): string | null {
+  try {
+    return normalizeNonEmptyString(runtime.readSessionIdentity().sessionId);
+  } catch {
+    return null;
+  }
+}
+
+function withRuntimeProviderSessionId(
+  descriptor: RuntimeDescriptorV1 | null,
+  providerSessionId: string | null,
+): RuntimeDescriptorV1 | null {
+  if (!descriptor || !providerSessionId) return descriptor;
+  if (normalizeNonEmptyString(descriptor.agent.providerSessionId) === providerSessionId) {
+    return descriptor;
+  }
+  return {
+    ...descriptor,
+    agent: {
+      ...descriptor.agent,
+      providerSessionId,
+    },
+  };
+}
+
+function resolveRuntimeIdentityPublication(params: Readonly<{
+  runtime: RuntimeTurnOperations;
+  identity: NormalizedRuntimeEventPublication;
+}>): NormalizedRuntimeEventPublication {
+  return {
+    ...params.identity,
+    runtimeDescriptor: withRuntimeProviderSessionId(
+      params.identity.runtimeDescriptor,
+      readRuntimeSessionId(params.runtime),
+    ),
+  };
+}
+
 function wrapRuntimeTurnOperationsWithPublication(params: Readonly<{
   runtime: RuntimeTurnOperations;
   identity: NormalizedRuntimeEventPublication;
 }>): RuntimeTurnOperations {
+  const readRespondToPermission = () => params.runtime.permissionCapability === 'responds'
+    ? params.runtime.respondToPermission
+    : undefined;
   const hub = createNormalizedRuntimeEventPublicationHub<RuntimeEventV1>({
-    identity: params.identity,
+    identity: () => resolveRuntimeIdentityPublication({
+      runtime: params.runtime,
+      identity: params.identity,
+    }),
     subscribeUpstream: (handler) => params.runtime.subscribeRuntimeEvents((message) => {
       if (isRuntimeEvent(message)) {
         handler(message);
@@ -25,6 +80,9 @@ function wrapRuntimeTurnOperationsWithPublication(params: Readonly<{
   });
 
   return Object.freeze({
+    get permissionCapability() {
+      return params.runtime.permissionCapability;
+    },
     beginTurnLifecycle() {
       params.runtime.beginTurnLifecycle();
     },
@@ -32,8 +90,8 @@ function wrapRuntimeTurnOperationsWithPublication(params: Readonly<{
       await params.runtime.startOrLoadSession(opts);
       hub.publishFallbackIdentity();
     },
-    async sendTurnPrompt(prompt) {
-      await params.runtime.sendTurnPrompt(prompt);
+    async sendTurnPrompt(prompt, meta) {
+      await params.runtime.sendTurnPrompt(prompt, meta);
     },
     ...(typeof params.runtime.compactContext === 'function'
       ? {
@@ -42,8 +100,8 @@ function wrapRuntimeTurnOperationsWithPublication(params: Readonly<{
           },
         }
       : {}),
-    async steerInFlightTurn(message) {
-      await params.runtime.steerInFlightTurn(message);
+    async steerInFlightTurn(message, meta) {
+      await params.runtime.steerInFlightTurn(message, meta);
     },
     async waitForTurnCompletion(opts) {
       await params.runtime.waitForTurnCompletion(opts);
@@ -51,8 +109,11 @@ function wrapRuntimeTurnOperationsWithPublication(params: Readonly<{
     subscribeRuntimeEvents(handler) {
       return hub.subscribe(handler);
     },
-    async respondToPermission(requestId, approved) {
-      await params.runtime.respondToPermission(requestId, approved);
+    get respondToPermission() {
+      const respondToPermission = readRespondToPermission();
+      return respondToPermission
+        ? async (requestId: string, approved: boolean) => await respondToPermission(requestId, approved)
+        : undefined;
     },
     async cancelTurn() {
       await params.runtime.cancelTurn();
@@ -74,15 +135,31 @@ export function withHostSessionRuntimeIdentityPublication(params: Readonly<{
   plan: HostSessionRuntimePlan;
   identity: NormalizedRuntimeEventPublication;
 }>): HostSessionRuntimePlan {
+  const augmentSessionMetadata = params.plan.config.augmentSessionMetadata;
+  const configWithInitialRuntimeIdentity = params.identity.runtimeDescriptor
+    ? {
+        ...params.plan.config,
+        augmentSessionMetadata(metadata: Metadata): Metadata {
+          const augmented = augmentSessionMetadata ? augmentSessionMetadata(metadata) : metadata;
+          return applyRuntimeDescriptorSessionMetadata(
+            augmented,
+            params.identity.runtimeDescriptor,
+          ) as Metadata;
+        },
+      }
+    : params.plan.config;
   const createSessionRuntime = params.plan.config.createSessionRuntime;
   if (typeof createSessionRuntime !== 'function') {
-    return params.plan;
+    return {
+      ...params.plan,
+      config: configWithInitialRuntimeIdentity,
+    };
   }
 
   return {
     ...params.plan,
     config: {
-      ...params.plan.config,
+      ...configWithInitialRuntimeIdentity,
       async createSessionRuntime(runtimeParams) {
         const createdRuntime = await createSessionRuntime(runtimeParams);
         const { runtime, nativeRuntime } = resolveHostSessionRuntimeFactoryResult(createdRuntime);

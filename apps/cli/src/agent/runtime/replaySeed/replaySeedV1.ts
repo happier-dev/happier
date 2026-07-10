@@ -9,6 +9,7 @@ export type ReplaySeedV1 = {
 };
 
 const REPLAY_SEED_CONSUMED_SENTINEL_LOCAL_ID = '__replay_seed_consumed__';
+const REPLAY_SEED_METADATA_REFRESH_TIMEOUT_MS = 3_000;
 
 export function readReplaySeedV1FromMetadata(metadata: unknown): ReplaySeedV1 | null {
   if (!metadata || typeof metadata !== 'object') return null;
@@ -70,6 +71,26 @@ function hasNonEmptyMetadataSnapshot(metadata: unknown): boolean {
   );
 }
 
+async function waitForReplaySeedMetadataRefreshBestEffort(refresh: Promise<unknown>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    await Promise.race([
+      refresh.then(
+        () => undefined,
+        () => undefined,
+      ),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, REPLAY_SEED_METADATA_REFRESH_TIMEOUT_MS);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer !== null) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 export async function resolveProviderPromptWithReplaySeed(params: Readonly<{
   session: {
     getMetadataSnapshot: () => unknown;
@@ -88,13 +109,15 @@ export async function resolveProviderPromptWithReplaySeed(params: Readonly<{
 
   if (shouldRefreshBeforeRead && typeof params.session.refreshSessionSnapshotFromServerBestEffort === 'function') {
     try {
-      await params.session.refreshSessionSnapshotFromServerBestEffort({ reason: 'waitForMetadataUpdate' });
+      await waitForReplaySeedMetadataRefreshBestEffort(
+        params.session.refreshSessionSnapshotFromServerBestEffort({ reason: 'waitForMetadataUpdate' }),
+      );
     } catch {
       // Best-effort only; avoid blocking on snapshot refresh failures.
     }
   } else if (shouldRefreshBeforeRead && typeof params.session.ensureMetadataSnapshot === 'function') {
     try {
-      await params.session.ensureMetadataSnapshot();
+      await params.session.ensureMetadataSnapshot({ timeoutMs: REPLAY_SEED_METADATA_REFRESH_TIMEOUT_MS });
     } catch {
       // Best-effort only; avoid blocking on snapshot ensure failures.
     }

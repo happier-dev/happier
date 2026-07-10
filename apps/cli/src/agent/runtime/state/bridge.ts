@@ -55,7 +55,9 @@ export function createCliRuntimeSessionStateBridge(params: Readonly<{
         fieldId: writeParams.fieldId,
         value: writeParams.value,
         source: 'runtime',
-        enqueue: params.session.enqueueRegisteredSessionStateFieldMutation,
+        enqueue: typeof params.session.enqueueRegisteredSessionStateFieldMutation === 'function'
+          ? (mutation) => params.session.enqueueRegisteredSessionStateFieldMutation?.(mutation)
+          : undefined,
       });
       if (durableResult) return durableResult;
       return engine.writeHappierField({

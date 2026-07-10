@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 
-import { registerSessionRollbackRpcHandler } from './sessionRollbackRpc';
+import {
+  registerSessionRollbackRpcHandler,
+  resolveSessionRollbackRuntimeFacet,
+} from './sessionRollbackRpc';
 
 function createRegistrar() {
   const handlers = new Map<string, (input: unknown) => Promise<unknown>>();
@@ -22,6 +25,45 @@ function createRegistrar() {
 }
 
 describe('registerSessionRollbackRpcHandler', () => {
+  it('routes checkpoint code rollback from a partial runtime facet without requiring conversation rollback', async () => {
+    const { handlers, registrar } = createRegistrar();
+    const checkpointCodeRollback = vi.fn(async () => ({
+      status: 'applied' as const,
+      changedPaths: [],
+      skippedPaths: [],
+      receipts: [],
+      diagnostics: [],
+    }));
+    const runtime = {
+      checkpointCodeRollback,
+    };
+
+    registerSessionRollbackRpcHandler(registrar, () => resolveSessionRollbackRuntimeFacet(runtime));
+
+    const request = {
+      v: 1,
+      sessionId: 'session-1',
+      turnId: 'turn-1',
+      cwd: '/repo',
+      codeMode: 'code_only_without_stash',
+      backupMode: 'happier_checkpoint_only',
+      expectedStartRef: 'refs/happier/checkpoints/session-1/turn-start/turn-1',
+      expectedFinalRef: 'refs/happier/checkpoints/session-1/turn-final/turn-1',
+      codeOnlyTranscriptDivergenceConfirmed: true,
+    };
+
+    await expect(
+      handlers.get(SESSION_RPC_METHODS.SESSION_CHECKPOINT_CODE_ROLLBACK)?.(request),
+    ).resolves.toMatchObject({ status: 'applied' });
+    expect(checkpointCodeRollback).toHaveBeenCalledWith(request);
+    await expect(
+      handlers.get(SESSION_RPC_METHODS.SESSION_ROLLBACK)?.({ v: 1, target: { type: 'latest_turn' } }),
+    ).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'RPC_METHOD_NOT_AVAILABLE',
+    });
+  });
+
   it('routes product checkpoint and restore RPCs through the active runtime facet', async () => {
     const { handlers, registrar } = createRegistrar();
     const sessionCheckpoint = vi.fn(async () => ({

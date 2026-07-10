@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SessionStateFacet, SessionStateFieldWriteValue } from '@happier-dev/agents';
+import type { RegisteredSessionStateFieldMutationV1 } from '../../../api/session/client/transport/mutations/sessionClientDurableMutationTypes';
 
 const { updateSessionMetadataForTargetMock } = vi.hoisted(() => ({
   updateSessionMetadataForTargetMock: vi.fn(),
@@ -81,14 +82,18 @@ describe('createCliRuntimeSessionStateBridge', () => {
   });
 
   it('routes durable runtime session-state fields through the registered-field outbox', async () => {
-    const enqueueRegisteredSessionStateFieldMutation = vi.fn(async () => undefined);
+    const durableMutationOutbox = {
+      enqueueRegisteredSessionStateFieldMutation: vi.fn(async (_mutation: RegisteredSessionStateFieldMutationV1) => undefined),
+    };
     const metadataPortUpdate = vi.fn(async () => ({ ok: true as const, version: 9 }));
     const { createCliRuntimeSessionStateBridge } = await import('./bridge');
     const bridge = createCliRuntimeSessionStateBridge({
       credentials: { token: 'token' } as never,
       session: {
         sessionId: 'session-1',
-        enqueueRegisteredSessionStateFieldMutation,
+        enqueueRegisteredSessionStateFieldMutation: async (mutation: RegisteredSessionStateFieldMutationV1) => {
+          await durableMutationOutbox.enqueueRegisteredSessionStateFieldMutation(mutation);
+        },
       },
       capabilities: {
         runtime: {
@@ -119,7 +124,7 @@ describe('createCliRuntimeSessionStateBridge', () => {
     })).resolves.toEqual({ ok: true, version: 0 });
 
     expect(metadataPortUpdate).not.toHaveBeenCalled();
-    expect(enqueueRegisteredSessionStateFieldMutation).toHaveBeenCalledWith(expect.objectContaining({
+    expect(durableMutationOutbox.enqueueRegisteredSessionStateFieldMutation).toHaveBeenCalledWith(expect.objectContaining({
       fieldId: 'runtime.workState',
       deliveryClass: 'durable_required',
       source: 'runtime',
@@ -128,5 +133,86 @@ describe('createCliRuntimeSessionStateBridge', () => {
         value: workState,
       },
     }));
+  });
+
+  it('routes durable best-effort identity fields through the registered-field outbox when available', async () => {
+    const enqueueRegisteredSessionStateFieldMutation = vi.fn(async (_mutation: RegisteredSessionStateFieldMutationV1) => undefined);
+    const metadataPortUpdate = vi.fn(async () => ({ ok: true as const, version: 9 }));
+    const { createCliRuntimeSessionStateBridge } = await import('./bridge');
+    const bridge = createCliRuntimeSessionStateBridge({
+      credentials: { token: 'token' } as never,
+      session: {
+        sessionId: 'session-1',
+        enqueueRegisteredSessionStateFieldMutation,
+      },
+      metadataPort: {
+        update: metadataPortUpdate,
+      },
+    });
+
+    const providerSessionId: SessionStateFieldWriteValue<'identity.providerSessionId'> = {
+      metadataKey: 'opencodeSessionId',
+      value: 'ses-1',
+    };
+
+    await expect(bridge.writeHappierField({
+      fieldId: 'identity.providerSessionId',
+      value: providerSessionId,
+      reason: 'reconciliation',
+      metadataReason: 'provider-session-id',
+    })).resolves.toEqual({ ok: true, version: 0 });
+
+    expect(metadataPortUpdate).not.toHaveBeenCalled();
+    expect(enqueueRegisteredSessionStateFieldMutation).toHaveBeenCalledWith(expect.objectContaining({
+      fieldId: 'identity.providerSessionId',
+      deliveryClass: 'durable_best_effort',
+      source: 'runtime',
+      op: {
+        kind: 'set',
+        value: providerSessionId,
+      },
+    }));
+  });
+
+  it('returns a typed delivery failure for durable runtime fields when no outbox enqueue is available', async () => {
+    const metadataPortUpdate = vi.fn(async () => ({ ok: true as const, version: 9 }));
+    const { createCliRuntimeSessionStateBridge } = await import('./bridge');
+    const bridge = createCliRuntimeSessionStateBridge({
+      credentials: { token: 'token' } as never,
+      session: { sessionId: 'session-1' },
+      capabilities: {
+        runtime: {
+          workState: {
+            supported: true,
+            happierToProvider: { supported: false },
+            providerToHappier: { supported: false },
+          },
+        },
+      },
+      metadataPort: {
+        update: metadataPortUpdate,
+      },
+    });
+
+    const workState: SessionStateFieldWriteValue<'runtime.workState'> = {
+      v: 1,
+      backendId: 'codex-app-server',
+      updatedAt: 123,
+      items: [],
+    };
+
+    await expect(bridge.writeHappierField({
+      fieldId: 'runtime.workState',
+      value: workState,
+      reason: 'reconciliation',
+      metadataReason: 'work-state',
+    })).resolves.toEqual({
+      ok: false,
+      reason: 'durable_delivery_unavailable',
+      fieldId: 'runtime.workState',
+      deliveryClass: 'durable_required',
+    });
+
+    expect(metadataPortUpdate).not.toHaveBeenCalled();
   });
 });

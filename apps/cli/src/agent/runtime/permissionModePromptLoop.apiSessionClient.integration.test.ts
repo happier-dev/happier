@@ -131,6 +131,16 @@ function createModeQueue() {
   );
 }
 
+function committedQueuedPrompt(text = 'first', localId = 'local-1', userMessageSeq = 1): PermissionModeQueuedPrompt {
+  return {
+    text,
+    localId,
+    localIds: [localId],
+    userMessageSeq,
+    userMessageSeqs: [userMessageSeq],
+  };
+}
+
 function writeFakeOpenCodeAcpAgentScript(params: { dir: string; modeLogPath?: string }): string {
   const scriptPath = join(params.dir, 'fake-opencode-acp-agent.mjs');
   const modeLogPath = params.modeLogPath ? JSON.stringify(params.modeLogPath) : 'null';
@@ -338,6 +348,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
       agentState: null,
       agentStateVersion: 0,
     } as any);
+    session.deferDeliveredUserMessageWatermarkToProviderAcceptance();
     session.popPendingMessage = vi.fn(async () => false);
     const waitForMetadataUpdateSpy = vi.spyOn(session, 'waitForMetadataUpdate');
     const refreshSessionSnapshotSpy = vi.spyOn(session, 'refreshSessionSnapshotFromServerBestEffort');
@@ -347,11 +358,12 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
     }
 
     const queue = createModeQueue();
-    queue.push({ text: 'first', localId: 'local-1' }, { permissionMode: 'default' });
+    queue.push(committedQueuedPrompt(), { permissionMode: 'default' });
 
     const runtime = {
       beginTurnLifecycle: vi.fn(),
       startOrLoadSession: vi.fn(async () => {}),
+      updateSessionRuntimeConfig: vi.fn(async () => {}),
       sendTurnPrompt: vi.fn(async () => {}),
       sendPromptWithMeta: vi.fn(async () => {}),
       waitForTurnCompletion: vi.fn(async () => {}),
@@ -390,6 +402,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
       runtime,
       createOverrideSynchronizer: (isStarted) =>
         createRuntimeOverrideSynchronizers({
+          agentTargetKey: 'backend:codex',
           session,
           runtime: {
             setSessionMode: async (modeId: string) => {
@@ -563,7 +576,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
     });
 
     const queue = createModeQueue();
-    queue.push({ text: 'first', localId: 'local-1' }, { permissionMode: 'default' });
+    queue.push(committedQueuedPrompt(), { permissionMode: 'default' });
 
     const runtime = createAcpRuntime({
       provider: 'opencode',
@@ -609,6 +622,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
       runtime,
       createOverrideSynchronizer: (isStarted) =>
         createRuntimeOverrideSynchronizers({
+          agentTargetKey: 'backend:codex',
           session,
           runtime,
           isStarted,
@@ -731,7 +745,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
     session.popPendingMessage = vi.fn(async () => false);
 
     const queue = createModeQueue();
-    queue.push({ text: 'first', localId: 'local-1' }, { permissionMode: 'default' });
+    queue.push(committedQueuedPrompt(), { permissionMode: 'default' });
 
     const runtime = createAcpRuntime({
       provider: 'opencode',
@@ -818,6 +832,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
       runtime,
       createOverrideSynchronizer: (isStarted) =>
         createRuntimeOverrideSynchronizers({
+          agentTargetKey: 'backend:codex',
           session,
           runtime,
           isStarted,
@@ -977,7 +992,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
     });
 
     const queue = createModeQueue();
-    queue.push({ text: 'first', localId: 'local-1' }, { permissionMode: 'default' });
+    queue.push(committedQueuedPrompt(), { permissionMode: 'default' });
 
     const runtime = createAcpRuntime({
       provider: 'opencode',
@@ -1028,6 +1043,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
       runtime,
       createOverrideSynchronizer: (isStarted) =>
         createRuntimeOverrideSynchronizers({
+          agentTargetKey: 'backend:codex',
           session,
           runtime,
           isStarted,
@@ -1209,7 +1225,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
     });
 
     const queue = createModeQueue();
-    queue.push({ text: 'first', localId: 'local-1' }, { permissionMode: 'default' });
+    queue.push(committedQueuedPrompt(), { permissionMode: 'default' });
 
     const runtime = createAcpRuntime({
       provider: 'opencode',
@@ -1261,6 +1277,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
       runtime,
       createOverrideSynchronizer: (isStarted) =>
         createRuntimeOverrideSynchronizers({
+          agentTargetKey: 'backend:codex',
           session,
           runtime,
           isStarted,

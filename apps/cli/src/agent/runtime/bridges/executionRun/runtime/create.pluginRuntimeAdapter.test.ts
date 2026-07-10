@@ -1,13 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentMessage } from '@/agent/core/AgentBackend';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type {
   ExecutionRunHostRuntime,
   ExecutionRunHostRuntimeMessageHandler,
+  ExecutionRunPermissionCapability,
+  RuntimePermissionResponseOutcome,
 } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 
 const getExecutionRunBackendDescriptorMock = vi.fn();
 const resolveBackendEngineAdapterResolutionMock = vi.fn();
+const requestExecutionRunConnectedServicesMaterializationMock = vi.fn();
+const releaseExecutionRunConnectedServicesMock = vi.fn(async (..._args: unknown[]) => ({ ok: true as const }));
 
 vi.mock('@/agent/executionRuns/registry/executionRunBackendRegistry', () => ({
   getExecutionRunBackendDescriptor: (...args: unknown[]) => getExecutionRunBackendDescriptorMock(...args),
@@ -17,7 +21,18 @@ vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
   resolveBackendEngineAdapterResolution: (...args: unknown[]) => resolveBackendEngineAdapterResolutionMock(...args),
 }));
 
+// The daemon control HTTP bridge is the runner's process boundary for connected-services
+// materialization; tests exercise the real helper + create.ts merge on top of it.
+vi.mock('@/daemon/controlClient', () => ({
+  requestExecutionRunConnectedServicesMaterialization: (...args: unknown[]) =>
+    requestExecutionRunConnectedServicesMaterializationMock(...args),
+  releaseExecutionRunConnectedServices: (...args: unknown[]) =>
+    releaseExecutionRunConnectedServicesMock(...args),
+}));
+
 function createStubRuntimeCoreBackend(opts?: Readonly<{
+  permissionCapability?: ExecutionRunPermissionCapability;
+  dynamicPermissionCapability?: ExecutionRunPermissionCapability;
   runtimeDescriptor?: unknown;
   runtimeCapabilities?: unknown;
   runtimeFacets?: unknown;
@@ -35,9 +50,11 @@ function createStubRuntimeCoreBackend(opts?: Readonly<{
 } {
   let messageHandler: ExecutionRunHostRuntimeMessageHandler | null = null;
   let emittedRuntimeEvents = false;
+  let provisioned = false;
   const calls = {
     readResumeSupport: vi.fn(async () => false),
     provisionSession: vi.fn(async () => {
+      provisioned = true;
       if (!emittedRuntimeEvents) {
         if (opts?.runtimeDescriptor !== undefined) {
           messageHandler?.({ type: 'event', name: 'runtime.descriptor', payload: opts.runtimeDescriptor });
@@ -64,13 +81,34 @@ function createStubRuntimeCoreBackend(opts?: Readonly<{
         }
       };
     }),
-    respondToPermission: vi.fn(async () => undefined),
+    respondToPermission: vi.fn(async () => ({ delivered: true as const })),
     waitForTurnCompletion: vi.fn(async () => undefined),
     dispose: vi.fn(async () => undefined),
   };
 
   return {
-    ...calls,
+    readResumeSupport: calls.readResumeSupport,
+    provisionSession: calls.provisionSession,
+    sendPrompt: calls.sendPrompt,
+    cancel: calls.cancel,
+    subscribeMessages: calls.subscribeMessages,
+    waitForTurnCompletion: calls.waitForTurnCompletion,
+    dispose: calls.dispose,
+    get permissionCapability() {
+      return opts?.dynamicPermissionCapability
+        ? provisioned ? opts.dynamicPermissionCapability : undefined
+        : opts?.permissionCapability;
+    },
+    get respondToPermission() {
+      if (opts?.dynamicPermissionCapability) {
+        return provisioned && opts.dynamicPermissionCapability === 'responds'
+          ? calls.respondToPermission
+          : undefined;
+      }
+      return opts?.permissionCapability === 'responds'
+        ? calls.respondToPermission
+        : undefined;
+    },
     calls,
   };
 }
@@ -78,16 +116,16 @@ function createStubRuntimeCoreBackend(opts?: Readonly<{
 function expectGenericPluginRuntimeDescriptor() {
   return expect.objectContaining({
     v: 1,
-    providerId: 'acme.sample.provider',
-    provider: expect.objectContaining({
+    agentId: 'acme.sample.provider',
+    agent: expect.objectContaining({
       backendMode: 'native',
-      providerExtra: expect.objectContaining({
+      agentExtra: expect.objectContaining({
         owner: 'happier',
         schemaId: 'happier.pluginRuntimeDescriptorExtra',
         v: 1,
         runtimeHandle: expect.objectContaining({
           backendId: 'acme.sample.backend',
-          providerId: 'acme.sample.provider',
+          agentId: 'acme.sample.provider',
           provenance: 'external',
           source: { kind: 'path' },
         }),
@@ -99,16 +137,16 @@ function expectGenericPluginRuntimeDescriptor() {
 function expectExecutionRunFallbackRuntimeDescriptor() {
   return expect.objectContaining({
     v: 1,
-    providerId: 'acme.sample.provider',
-    provider: expect.objectContaining({
+    agentId: 'acme.sample.provider',
+    agent: expect.objectContaining({
       backendMode: 'native',
-      providerExtra: expect.objectContaining({
+      agentExtra: expect.objectContaining({
         owner: 'happier',
         schemaId: 'happier.executionRunRuntimeIdentity',
         v: 1,
         runtimeHandle: expect.objectContaining({
           backendId: 'acme.sample.backend',
-          providerId: 'acme.sample.provider',
+          agentId: 'acme.sample.provider',
           provenance: 'external',
         }),
       }),
@@ -187,7 +225,8 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
       sendPrompt: (sessionId: string, prompt: string) => Promise<void>;
       cancel: (sessionId: string) => Promise<void>;
       subscribeMessages: (handler: (message: AgentMessage) => void) => () => void;
-      respondToPermission: (requestId: string, approved: boolean) => Promise<void>;
+      permissionCapability?: ExecutionRunPermissionCapability;
+      respondToPermission?: (requestId: string, approved: boolean) => Promise<RuntimePermissionResponseOutcome>;
       waitForTurnCompletion: (timeoutMs?: number | null) => Promise<void>;
       dispose: () => Promise<void>;
     }>;
@@ -200,7 +239,8 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
     await expect(runtime.provisionSession({ initialPrompt: 'boot' })).resolves.toEqual({ sessionId: 'plugin-session-1' });
     await expect(runtime.sendPrompt('plugin-session-1', 'hello')).resolves.toBeUndefined();
     await expect(runtime.cancel('plugin-session-1')).resolves.toBeUndefined();
-    await expect(runtime.respondToPermission('perm-1', true)).resolves.toBeUndefined();
+    expect(runtime.permissionCapability).toBe('static');
+    expect(runtime.respondToPermission).toBeUndefined();
     await expect(runtime.waitForTurnCompletion(500)).resolves.toBeUndefined();
     unsubscribe();
     await expect(runtime.dispose()).resolves.toBeUndefined();
@@ -286,8 +326,8 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
       diagnostics: [],
     });
 
-    const { createExecutionRunBackend } = await import('../testkit');
-    const backend = createExecutionRunBackend({
+    const { createExecutionRunRuntime } = await import('./create');
+    const runtime = createExecutionRunRuntime({
       cwd: '/tmp/plugin-backend',
       backendId: 'acme.sample.backend',
       backendTarget: { kind: 'builtInAgent', agentId: 'acme.sample.backend' as never },
@@ -300,16 +340,17 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
     });
 
     const messages: AgentMessage[] = [];
-    backend.onMessage((message) => {
+    const unsubscribe = runtime.subscribeMessages((message) => {
       messages.push(message);
     });
 
-    await expect(backend.startSession('boot')).resolves.toEqual({ sessionId: 'plugin-session-1' });
-    await expect(backend.sendPrompt('plugin-session-1', 'hello')).resolves.toBeUndefined();
-    await expect(backend.cancel('plugin-session-1')).resolves.toBeUndefined();
-    await expect(backend.respondToPermission?.('perm-1', true)).resolves.toBeUndefined();
-    await expect(backend.waitForResponseComplete?.(500)).resolves.toBeUndefined();
-    await expect(backend.dispose()).resolves.toBeUndefined();
+    await expect(runtime.provisionSession({ initialPrompt: 'boot' })).resolves.toEqual({ sessionId: 'plugin-session-1' });
+    await expect(runtime.sendPrompt('plugin-session-1', 'hello')).resolves.toBeUndefined();
+    await expect(runtime.cancel('plugin-session-1')).resolves.toBeUndefined();
+    expect(runtime.respondToPermission).toBeUndefined();
+    await expect(runtime.waitForTurnCompletion?.(500)).resolves.toBeUndefined();
+    unsubscribe();
+    await expect(runtime.dispose()).resolves.toBeUndefined();
 
     expect(resolveBackendEngineAdapterResolutionMock).toHaveBeenCalledWith('acme.sample.backend', expect.any(Object));
     expect(createExecutionRunBackendMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -329,7 +370,7 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
     }));
     expect(getExecutionRunBackendDescriptorMock).not.toHaveBeenCalled();
     expect(runtimeCoreBackend.calls.provisionSession).toHaveBeenCalledWith({ initialPrompt: 'boot' });
-    expect(runtimeCoreBackend.calls.sendPrompt).toHaveBeenCalledWith('plugin-session-1', 'hello');
+    expect(runtimeCoreBackend.calls.sendPrompt).toHaveBeenCalledWith('plugin-session-1', 'hello', undefined);
     expect(messages).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'event',
@@ -405,8 +446,8 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
       diagnostics: [],
     });
 
-    const { createExecutionRunBackend } = await import('../testkit');
-    const backend = createExecutionRunBackend({
+    const { createExecutionRunRuntime } = await import('./create');
+    const runtime = createExecutionRunRuntime({
       cwd: '/tmp/plugin-backend',
       backendId: 'acme.sample.backend',
       backendTarget: { kind: 'builtInAgent', agentId: 'acme.sample.backend' as never },
@@ -414,8 +455,8 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
       runId: 'run_isolated',
     });
 
-    await expect(backend.startSession()).resolves.toEqual({ sessionId: 'plugin-session-1' });
-    await expect(backend.dispose()).resolves.toBeUndefined();
+    await expect(runtime.provisionSession()).resolves.toEqual({ sessionId: 'plugin-session-1' });
+    await expect(runtime.dispose()).resolves.toBeUndefined();
 
     expect(createExecutionRunBackendMock).toHaveBeenCalledWith(expect.objectContaining({
       isolation: {
@@ -428,21 +469,85 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
     }));
   });
 
+  it('preserves dynamic permission capability through plugin runtime wrappers', async () => {
+    getExecutionRunBackendDescriptorMock.mockReturnValue(null);
+    const runtimeCoreBackend = createStubRuntimeCoreBackend({
+      dynamicPermissionCapability: 'responds',
+    });
+    const createExecutionRunBackendMock = vi.fn(() => runtimeCoreBackend);
+    resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
+      backendId: 'acme.sample.backend',
+      providerId: 'acme.sample.provider',
+      provenance: 'external',
+      runtimeOwner: {
+        backendId: 'acme.sample.backend',
+        selected: {
+          kind: 'plugin_engine',
+          ownerId: 'acme.sample.plugin',
+          provenance: 'external',
+          pluginId: 'acme.sample.plugin',
+        },
+        candidates: [{
+          kind: 'plugin_engine',
+          ownerId: 'acme.sample.plugin',
+          provenance: 'external',
+          pluginId: 'acme.sample.plugin',
+        }],
+      },
+      backend: {
+        id: 'acme.sample.backend',
+        providerId: 'acme.sample.provider',
+        provenance: 'external',
+        source: { kind: 'path' },
+        runtimeKind: 'native',
+        capabilities: { executionRun: true },
+      },
+      provider: {
+        id: 'acme.sample.provider',
+        provenance: 'external',
+        source: { kind: 'path' },
+      },
+      engineAdapter: {
+        runtimeCore: {
+          createExecutionRunBackend: createExecutionRunBackendMock,
+        },
+      },
+      executionSurfaces: {},
+      diagnostics: [],
+    });
+
+    const { createExecutionRunRuntime } = await import('./create');
+    const runtime = createExecutionRunRuntime({
+      cwd: '/tmp/plugin-backend',
+      backendId: 'acme.sample.backend',
+      backendTarget: { kind: 'builtInAgent', agentId: 'acme.sample.backend' as never },
+      permissionMode: 'read_only',
+      runId: 'run_dynamic_permission',
+    });
+
+    expect(runtime.respondToPermission).toBeUndefined();
+    await expect(runtime.provisionSession()).resolves.toEqual({ sessionId: 'plugin-session-1' });
+    expect(runtime.respondToPermission).toBeTypeOf('function');
+    await expect(runtime.respondToPermission?.('permission-1', true)).resolves.toEqual({ delivered: true });
+
+    expect(runtimeCoreBackend.calls.respondToPermission).toHaveBeenCalledWith('permission-1', true);
+  });
+
   it('preserves emitted runtime descriptors and fills missing runtime capabilities centrally', async () => {
     getExecutionRunBackendDescriptorMock.mockReturnValue(null);
     const runtimeCoreBackend = createStubRuntimeCoreBackend({
 	      runtimeDescriptor: {
 	        v: 1,
-	        providerId: 'acme.sample.provider',
-	        provider: {
+	        agentId: 'acme.sample.provider',
+	        agent: {
 	          backendMode: 'native',
-	          providerExtra: {
+	          agentExtra: {
 	            owner: 'happier',
 	            schemaId: 'happier.pluginRuntimeDescriptorExtra',
 	            v: 1,
 	            runtimeHandle: {
 	              backendId: 'acme.sample.backend',
-	              providerId: 'acme.sample.provider',
+	              agentId: 'acme.sample.provider',
 	              provenance: 'external',
 	              source: { kind: 'path' },
 	            },
@@ -477,8 +582,8 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
 	      diagnostics: [],
 	    });
 
-    const { createExecutionRunBackend } = await import('../testkit');
-    const backend = createExecutionRunBackend({
+    const { createExecutionRunRuntime } = await import('./create');
+    const runtime = createExecutionRunRuntime({
       cwd: '/tmp/plugin-backend',
       backendId: 'acme.sample.backend',
       backendTarget: { kind: 'builtInAgent', agentId: 'acme.sample.backend' as never },
@@ -491,13 +596,14 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
     });
 
     const messages: AgentMessage[] = [];
-    backend.onMessage((message) => {
+    const unsubscribe = runtime.subscribeMessages((message) => {
       messages.push(message);
     });
 
-    await expect(backend.startSession('boot')).resolves.toEqual({ sessionId: 'plugin-session-1' });
-    await expect(backend.sendPrompt('plugin-session-1', 'hello')).resolves.toBeUndefined();
-    await expect(backend.dispose()).resolves.toBeUndefined();
+    await expect(runtime.provisionSession({ initialPrompt: 'boot' })).resolves.toEqual({ sessionId: 'plugin-session-1' });
+    await expect(runtime.sendPrompt('plugin-session-1', 'hello')).resolves.toBeUndefined();
+    unsubscribe();
+    await expect(runtime.dispose()).resolves.toBeUndefined();
 
     expect(createExecutionRunBackendMock).toHaveBeenCalledWith(expect.objectContaining({
       cwd: '/tmp/plugin-backend',
@@ -564,8 +670,8 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
 	      diagnostics: [],
 	    });
 
-    const { createExecutionRunBackend } = await import('../testkit');
-    const backend = createExecutionRunBackend({
+    const { createExecutionRunRuntime } = await import('./create');
+    const runtime = createExecutionRunRuntime({
       cwd: '/tmp/plugin-backend',
       backendId: 'acme.sample.backend',
       backendTarget: { kind: 'builtInAgent', agentId: 'acme.sample.backend' as never },
@@ -578,11 +684,12 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
     });
 
     const messages: AgentMessage[] = [];
-    backend.onMessage((message) => {
+    const unsubscribe = runtime.subscribeMessages((message) => {
       messages.push(message);
     });
 
-    await expect(backend.startSession('boot')).resolves.toEqual({ sessionId: 'plugin-session-1' });
+    await expect(runtime.provisionSession({ initialPrompt: 'boot' })).resolves.toEqual({ sessionId: 'plugin-session-1' });
+    unsubscribe();
 
     expect(messages).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -629,8 +736,8 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
 	      diagnostics: [],
 	    });
 
-    const { createExecutionRunBackend } = await import('../testkit');
-    const backend = createExecutionRunBackend({
+    const { createExecutionRunRuntime } = await import('./create');
+    const runtime = createExecutionRunRuntime({
       cwd: '/tmp/plugin-backend',
       backendId: 'acme.sample.backend',
       backendTarget: { kind: 'builtInAgent', agentId: 'acme.sample.backend' as never },
@@ -643,12 +750,13 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
     });
 
     const messages: AgentMessage[] = [];
-    backend.onMessage((message) => {
+    const unsubscribe = runtime.subscribeMessages((message) => {
       messages.push(message);
     });
 
-    await expect(backend.startSession('boot')).resolves.toEqual({ sessionId: 'plugin-session-1' });
-    await expect(backend.sendPrompt('plugin-session-1', 'hello')).resolves.toBeUndefined();
+    await expect(runtime.provisionSession({ initialPrompt: 'boot' })).resolves.toEqual({ sessionId: 'plugin-session-1' });
+    await expect(runtime.sendPrompt('plugin-session-1', 'hello')).resolves.toBeUndefined();
+    unsubscribe();
 
     expect(createExecutionRunBackendMock).toHaveBeenCalledWith(expect.objectContaining({
       cwd: '/tmp/plugin-backend',
@@ -718,29 +826,29 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
 	      diagnostics: [],
 	    });
 
-    const { createExecutionRunBackend } = await import('../testkit');
-    const backend = createExecutionRunBackend({
+    const { createExecutionRunRuntime } = await import('./create');
+    const runtime = createExecutionRunRuntime({
       cwd: '/tmp/plugin-backend',
       backendId: 'acme.sample.backend',
       backendTarget: { kind: 'builtInAgent', agentId: 'acme.sample.backend' as never },
       permissionMode: 'read_only',
     });
 
-    await expect(backend.startSession()).rejects.toThrow(/terminal runtime launch/i);
+    await expect(runtime.provisionSession()).rejects.toThrow(/terminal runtime launch/i);
   });
 
   it('fails with unsupported backend when descriptor fallback resolves a non-plugin engine source', async () => {
     getExecutionRunBackendDescriptorMock.mockReturnValue(null);
     resolveBackendEngineAdapterResolutionMock.mockResolvedValue(null);
 
-    const { createExecutionRunBackend } = await import('../testkit');
-    const backend = createExecutionRunBackend({
+    const { createExecutionRunRuntime } = await import('./create');
+    const runtime = createExecutionRunRuntime({
       cwd: '/tmp/non-plugin-backend',
       backendId: 'acme.sample.backend',
       permissionMode: 'read_only',
     });
 
-    await expect(backend.startSession()).rejects.toThrow('Unsupported execution-run backend: acme.sample.backend');
+    await expect(runtime.provisionSession()).rejects.toThrow('Unsupported execution-run backend: acme.sample.backend');
   });
 
   it('does not subscribe late when the caller unsubscribes before runtimeCore resolution finishes', async () => {
@@ -906,6 +1014,140 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
     await expect(runtime.provisionSession()).rejects.toThrow(
       'Refusing to load executable plugin daemon entry from an untrusted source.',
     );
+    expect(createExecutionRunBackendMock).not.toHaveBeenCalled();
+  });
+
+  it('merges daemon-materialized connected-services env into the backend isolation env', async () => {
+    getExecutionRunBackendDescriptorMock.mockReturnValue(null);
+    requestExecutionRunConnectedServicesMaterializationMock.mockResolvedValue({
+      ok: true,
+      result: {
+        env: { CODEX_HOME: '/materialized/run_cs_1/codex-home' },
+        connectedServicesBindings: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': { source: 'connected', selection: 'profile', profileId: 'profile_1' },
+          },
+        },
+      },
+    });
+    const runtimeCoreBackend = createStubRuntimeCoreBackend();
+    const createExecutionRunBackendMock = vi.fn(() => runtimeCoreBackend);
+    resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
+      backendId: 'codex',
+      providerId: 'codex',
+      provenance: 'built_in',
+      backend: {
+        id: 'codex',
+        providerId: 'codex',
+        provenance: 'built_in',
+        source: { kind: 'built_in' },
+        runtimeKind: 'acp',
+        capabilities: { executionRun: true },
+      },
+      provider: {
+        id: 'codex',
+        provenance: 'built_in',
+        source: { kind: 'built_in' },
+      },
+      engineAdapter: {
+        runtimeCore: {
+          createExecutionRunBackend: createExecutionRunBackendMock,
+        },
+      },
+      executionSurfaces: {},
+      diagnostics: [],
+    });
+
+    const runtimeModule = await import('./create');
+    const runtime = runtimeModule.createExecutionRunRuntime({
+      cwd: '/tmp/project',
+      runId: 'run_cs_1',
+      backendId: 'codex',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      permissionMode: 'default',
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': { source: 'connected', selection: 'profile', profileId: 'profile_1' },
+        },
+      },
+    });
+
+    await runtime.provisionSession();
+
+    expect(requestExecutionRunConnectedServicesMaterializationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run_cs_1',
+        agentId: 'codex',
+        cwd: '/tmp/project',
+      }),
+    );
+    expect(createExecutionRunBackendMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        isolation: expect.objectContaining({
+          env: expect.objectContaining({
+            CODEX_HOME: '/materialized/run_cs_1/codex-home',
+          }),
+        }),
+      }),
+    );
+
+    // Run end releases the materialization (unregister + daemon-side cleanup).
+    await runtime.dispose();
+    expect(releaseExecutionRunConnectedServicesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: 'run_cs_1' }),
+    );
+  });
+
+  it('fails closed at backend resolution when the connected-services bridge is unreachable', async () => {
+    getExecutionRunBackendDescriptorMock.mockReturnValue(null);
+    requestExecutionRunConnectedServicesMaterializationMock.mockResolvedValue({
+      error: 'No daemon running, no state file found',
+    });
+    const createExecutionRunBackendMock = vi.fn(() => createStubRuntimeCoreBackend());
+    resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
+      backendId: 'codex',
+      providerId: 'codex',
+      provenance: 'built_in',
+      backend: {
+        id: 'codex',
+        providerId: 'codex',
+        provenance: 'built_in',
+        source: { kind: 'built_in' },
+        runtimeKind: 'acp',
+        capabilities: { executionRun: true },
+      },
+      provider: {
+        id: 'codex',
+        provenance: 'built_in',
+        source: { kind: 'built_in' },
+      },
+      engineAdapter: {
+        runtimeCore: {
+          createExecutionRunBackend: createExecutionRunBackendMock,
+        },
+      },
+      executionSurfaces: {},
+      diagnostics: [],
+    });
+
+    const runtimeModule = await import('./create');
+    const runtime = runtimeModule.createExecutionRunRuntime({
+      cwd: '/tmp/project',
+      runId: 'run_cs_2',
+      backendId: 'codex',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      permissionMode: 'default',
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': { source: 'connected', selection: 'profile', profileId: 'profile_1' },
+        },
+      },
+    });
+
+    await expect(runtime.provisionSession()).rejects.toThrow('No daemon running');
     expect(createExecutionRunBackendMock).not.toHaveBeenCalled();
   });
 });

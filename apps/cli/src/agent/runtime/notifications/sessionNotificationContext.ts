@@ -1,5 +1,5 @@
 import {
-  getProviderDefinition,
+  getAgentCatalogDefinition,
   resolveAgentIdFromSessionMetadata,
 } from '@happier-dev/agents';
 
@@ -60,6 +60,6 @@ export function getSessionNotificationAgentDisplayName(getMetadataSnapshot?: (()
   const agentId = resolveAgentIdFromSessionMetadata(metadata);
   if (!agentId) return null;
 
-  const providerDefinition = getProviderDefinition(agentId);
+  const providerDefinition = getAgentCatalogDefinition(agentId);
   return normalizeNotificationText(providerDefinition?.agentCliRuntime.title);
 }

@@ -75,6 +75,16 @@ type PluginConnectionContextForTest = Readonly<{
         send?: unknown;
         request?: unknown;
     }>;
+    fetch?: (request: Readonly<{
+        url: string;
+        method?: string;
+        headers?: Readonly<Record<string, string>>;
+        body?: unknown;
+    }>) => Promise<Readonly<{
+        ok: boolean;
+        status: number;
+        text(): Promise<string>;
+    }>>;
 }>;
 
 const IDLE_CONNECTION_STATE: ConnectionStateV1 = Object.freeze({
@@ -119,20 +129,20 @@ function createConnectionStateSource(initialState: ConnectionStateV1): Readonly<
 function createPluginContributions() {
     const backend = {
         id: 'acme.sample.backend',
-        providerId: 'acme.sample.provider',
+        agentId: 'acme.sample.provider',
         provenance: 'external',
         source: { kind: 'path' },
         definition: {
             kindVersion: 1,
             id: 'acme.sample.backend',
-            providerId: 'acme.sample.provider',
+            agentId: 'acme.sample.provider',
         },
         richDefinition: {
             source: 'plugin',
             definition: {
                 kindVersion: 1,
                 id: 'acme.sample.backend',
-                providerId: 'acme.sample.provider',
+                agentId: 'acme.sample.provider',
                 runtimeKind: 'native',
                 capabilities: {},
                 surfaceHandlers: [],
@@ -165,14 +175,14 @@ function createPluginContributions() {
         daemonEntryPath: '/tmp/acme.sample/daemon.mjs',
     };
     return {
-        providers: [provider],
-        backends: [backend],
+        agents: [provider],
+        agentRuntimes: [backend],
         actions: [],
         hookRegistrations: [],
         surfaceHandlersByBackendId: new Map(),
         catalogEntriesById: {},
-        backendDefinitionsById: new Map([['acme.sample.backend', backend]]),
-        providerDefinitionsById: new Map([['acme.sample.provider', provider]]),
+        agentRuntimeDefinitionsById: new Map([['acme.sample.backend', backend]]),
+        agentDefinitionsById: new Map([['acme.sample.provider', provider]]),
         pluginDiagnosticsByPluginId: {},
     };
 }
@@ -198,7 +208,7 @@ async function capturePluginContext(params?: Parameters<typeof resolveCliEngineR
         actionHandlersByActionId: new Map(),
         hookHandlersByHookId: new Map(),
         runtimeCoreHandlersByBackendId: new Map(),
-        backendEnginesByBackendId: new Map([
+        agentRuntimesByAgentId: new Map([
             ['acme.sample.backend', {
                 pluginId: 'acme.sample',
                 registration: {
@@ -222,7 +232,12 @@ async function capturePluginContext(params?: Parameters<typeof resolveCliEngineR
                 },
             }],
         ]),
+        networkAllowedPluginIds: new Set(['acme.sample']),
+        networkAllowedUrlOriginsByPluginId: new Map([
+            ['acme.sample', new Set(['https://api.example.test'])],
+        ]),
         pluginDiagnosticsByPluginId: {},
+        activatePluginsByEvent: vi.fn(async () => []),
         readHookEventEnvelopeV1: vi.fn(),
         dispose: vi.fn(async () => undefined),
     });
@@ -354,5 +369,36 @@ describe('PluginContextV1 connection service', () => {
 
         expect(connection.getDaemonLinkState()).toEqual(onlineState);
         expect(connection.isDaemonOnline()).toBe(true);
+    });
+
+    it('binds the default host fetch adapter for plugin runtime contexts with network permission', async () => {
+        const originalFetch = globalThis.fetch;
+        const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => (
+            new Response('ok', {
+                status: 200,
+                headers: { 'content-type': 'text/plain' },
+            })
+        ));
+        globalThis.fetch = fetchMock as typeof globalThis.fetch;
+        try {
+            const context = await capturePluginContext();
+
+            await expect(context.fetch?.({
+                url: 'https://api.example.test/status',
+                method: 'POST',
+                headers: { 'content-type': 'text/plain' },
+                body: 'hello',
+            })).resolves.toMatchObject({
+                ok: true,
+                status: 200,
+            });
+            expect(fetchMock).toHaveBeenCalledWith('https://api.example.test/status', expect.objectContaining({
+                method: 'POST',
+                headers: { 'content-type': 'text/plain' },
+                body: 'hello',
+            }));
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
     });
 });

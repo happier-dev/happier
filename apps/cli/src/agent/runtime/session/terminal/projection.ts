@@ -114,8 +114,8 @@ async function publishSubagentStarted(
     const label = normalizeText(params.projection.label)
         ?? normalizeText(params.projection.role)
         ?? subagentId;
-    const providerId = normalizeText(params.projection.providerId);
-    const providerKind = normalizeText(params.projection.providerKind);
+    const projectionAgentId = normalizeText(params.projection.agentId);
+    const agentKind = normalizeText(params.projection.agentKind);
     const sidechainId = normalizeText(params.projection.sidechainId) ?? subagentId;
 
     await params.subagents.upsert({
@@ -123,14 +123,14 @@ async function publishSubagentStarted(
         input: {
             id: subagentId,
             parentSessionId: params.parentSessionId,
-            origin: 'provider',
+            origin: 'agent',
             kind: 'native',
             status: params.projection.status ?? 'running',
-            ...(providerId
+            ...(projectionAgentId
                 ? {
-                    providerRef: {
-                        providerId,
-                        ...(providerKind ? { providerKind } : {}),
+                    agentRef: {
+                        agentId: projectionAgentId,
+                        ...(agentKind ? { agentKind } : {}),
                     },
                 }
                 : {}),
@@ -140,7 +140,7 @@ async function publishSubagentStarted(
             },
             label,
             display: { label },
-            ...(params.projection.metadata ? { providerMetadata: params.projection.metadata } : {}),
+            ...(params.projection.metadata ? { agentMetadata: params.projection.metadata } : {}),
         },
     });
 }

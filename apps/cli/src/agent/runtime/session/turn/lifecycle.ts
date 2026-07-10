@@ -6,6 +6,8 @@ import {
     type SessionTurnMutationV1,
 } from '@happier-dev/protocol';
 
+const DEFAULT_ACTIVE_TURN_TOUCH_INTERVAL_MS = 60_000;
+
 export type SessionTurnLifecycleMutationPort = Readonly<{
     sessionId: string;
     enqueueSessionTurnMutation?: (mutation: SessionTurnMutationV1) => void | Promise<void>;
@@ -13,7 +15,7 @@ export type SessionTurnLifecycleMutationPort = Readonly<{
 
 type SessionTurnLifecycleParams = Readonly<{
     session: SessionTurnLifecycleMutationPort;
-    provider?: string;
+    agentId?: string;
 }>;
 
 export type SessionTurnLifecycle = Readonly<{
@@ -33,7 +35,7 @@ function stableMutationId(params: Readonly<{
             kind: params.event.kind,
             emittedAtMs: params.event.emittedAtMs,
             turnId: 'turnId' in params.event ? params.event.turnId : null,
-            providerTurnId: 'providerTurnId' in params.event ? params.event.providerTurnId ?? null : null,
+            agentTurnId: 'agentTurnId' in params.event ? params.event.agentTurnId ?? null : null,
         }))
         .digest('hex')
         .slice(0, 32);
@@ -42,10 +44,10 @@ function stableMutationId(params: Readonly<{
 
 function buildMutationBase(params: Readonly<{
     session: SessionTurnLifecycleMutationPort;
-    provider?: string;
+    agentId?: string;
     action: SessionTurnMutationV1['action'];
     event: RuntimeEventV1;
-}>): Pick<SessionTurnMutationV1, 'v' | 'sessionId' | 'mutationId' | 'observedAt' | 'provider'> {
+}>): Pick<SessionTurnMutationV1, 'v' | 'sessionId' | 'mutationId' | 'observedAt' | 'agentId'> {
     return {
         v: 1,
         sessionId: params.session.sessionId,
@@ -55,7 +57,7 @@ function buildMutationBase(params: Readonly<{
             event: params.event,
         }),
         observedAt: params.event.emittedAtMs,
-        ...(params.provider ? { provider: params.provider } : {}),
+        ...(params.agentId ? { agentId: params.agentId } : {}),
     };
 }
 
@@ -64,11 +66,16 @@ function publishMutation(params: Readonly<{
     mutation: SessionTurnMutationV1;
 }>): void {
     if (!params.session.enqueueSessionTurnMutation) return;
-    void Promise.resolve(params.session.enqueueSessionTurnMutation(params.mutation)).catch(() => undefined);
+    try {
+        void Promise.resolve(params.session.enqueueSessionTurnMutation(params.mutation)).catch(() => undefined);
+    } catch {
+        // Mutation persistence is best-effort; runtime lifecycle observation must keep progressing.
+    }
 }
 
 export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): SessionTurnLifecycle {
     let activeTurnId: string | null = null;
+    let lastActiveTurnTouchAtMs: number | null = null;
     const knownTurnIds = new Set<string>();
 
     function hasKnownTurn(turnId: string): boolean {
@@ -85,28 +92,50 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
 
             if (event.kind === 'turn-start') {
                 activeTurnId = event.turnId;
+                lastActiveTurnTouchAtMs = null;
                 knownTurnIds.add(event.turnId);
                 publishMutation({
                     session: params.session,
                     mutation: {
-                        ...buildMutationBase({ session: params.session, provider: params.provider, action: 'begin', event }),
+                        ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'begin', event }),
                         action: 'begin',
                         turnId: event.turnId,
-                        ...(event.providerTurnId ? { providerTurnId: event.providerTurnId } : {}),
+                        ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
                     } satisfies SessionTurnMutationV1,
                 });
                 return;
             }
 
-            if (event.kind === 'turn-provider-id-observed') {
+            if (event.kind === 'turn-progress') {
+                if (activeTurnId !== event.turnId) return;
+                if (
+                    lastActiveTurnTouchAtMs !== null
+                    && event.emittedAtMs - lastActiveTurnTouchAtMs < DEFAULT_ACTIVE_TURN_TOUCH_INTERVAL_MS
+                ) {
+                    return;
+                }
+                lastActiveTurnTouchAtMs = event.emittedAtMs;
+                publishMutation({
+                    session: params.session,
+                    mutation: {
+                        ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'touch_active', event }),
+                        action: 'touch_active',
+                        turnId: event.turnId,
+                        ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
+                    } satisfies SessionTurnMutationV1,
+                });
+                return;
+            }
+
+            if (event.kind === 'turn-agent-id-observed') {
                 if (!hasKnownTurn(event.turnId)) return;
                 publishMutation({
                     session: params.session,
                     mutation: {
-                        ...buildMutationBase({ session: params.session, provider: params.provider, action: 'attach_provider_turn_id', event }),
-                        action: 'attach_provider_turn_id',
+                        ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'attach_agent_turn_id', event }),
+                        action: 'attach_agent_turn_id',
                         turnId: event.turnId,
-                        providerTurnId: event.providerTurnId,
+                        agentTurnId: event.agentTurnId,
                     } satisfies SessionTurnMutationV1,
                 });
                 return;
@@ -117,10 +146,10 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                 publishMutation({
                     session: params.session,
                     mutation: {
-                        ...buildMutationBase({ session: params.session, provider: params.provider, action: 'append_transcript_anchors', event }),
+                        ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'append_transcript_anchors', event }),
                         action: 'append_transcript_anchors',
                         turnId: event.turnId,
-                        ...(event.providerTurnId ? { providerTurnId: event.providerTurnId } : {}),
+                        ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
                         transcriptAnchors: {
                             ...(typeof event.userMessageSeq === 'number' ? { userMessageSeqs: [event.userMessageSeq] } : {}),
                         },
@@ -134,13 +163,16 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                 publishMutation({
                     session: params.session,
                     mutation: {
-                        ...buildMutationBase({ session: params.session, provider: params.provider, action: 'complete', event }),
+                        ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'complete', event }),
                         action: 'complete',
                         turnId: event.turnId,
-                        ...(event.providerTurnId ? { providerTurnId: event.providerTurnId } : {}),
+                        ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
                     } satisfies SessionTurnMutationV1,
                 });
-                if (activeTurnId === event.turnId) activeTurnId = null;
+                if (activeTurnId === event.turnId) {
+                    activeTurnId = null;
+                    lastActiveTurnTouchAtMs = null;
+                }
                 return;
             }
 
@@ -149,14 +181,17 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                 publishMutation({
                     session: params.session,
                     mutation: {
-                        ...buildMutationBase({ session: params.session, provider: params.provider, action: 'fail', event }),
+                        ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'fail', event }),
                         action: 'fail',
                         turnId: event.turnId,
-                        ...(event.providerTurnId ? { providerTurnId: event.providerTurnId } : {}),
+                        ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
                         issue: event.issue,
                     } satisfies SessionTurnMutationV1,
                 });
-                if (activeTurnId === event.turnId) activeTurnId = null;
+                if (activeTurnId === event.turnId) {
+                    activeTurnId = null;
+                    lastActiveTurnTouchAtMs = null;
+                }
                 return;
             }
 
@@ -165,14 +200,17 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                 publishMutation({
                     session: params.session,
                     mutation: {
-                        ...buildMutationBase({ session: params.session, provider: params.provider, action: 'cancel', event }),
+                        ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'cancel', event }),
                         action: 'cancel',
                         turnId: event.turnId,
-                        ...(event.providerTurnId ? { providerTurnId: event.providerTurnId } : {}),
+                        ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
                         ...(event.reason ? { reason: event.reason } : {}),
                     } satisfies SessionTurnMutationV1,
                 });
-                if (activeTurnId === event.turnId) activeTurnId = null;
+                if (activeTurnId === event.turnId) {
+                    activeTurnId = null;
+                    lastActiveTurnTouchAtMs = null;
+                }
                 return;
             }
 
@@ -181,12 +219,12 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                 publishMutation({
                     session: params.session,
                     mutation: {
-                        ...buildMutationBase({ session: params.session, provider: params.provider, action: 'mark_rollback_eligible', event }),
+                        ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'mark_rollback_eligible', event }),
                         action: 'mark_rollback_eligible',
                         turnId: event.turnId,
-                        ...(event.providerTurnId ? { providerTurnId: event.providerTurnId } : {}),
-                        ...(typeof event.providerRollbackOrdinal === 'number'
-                            ? { providerRollbackOrdinal: event.providerRollbackOrdinal }
+                        ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
+                        ...(typeof event.agentRollbackOrdinal === 'number'
+                            ? { agentRollbackOrdinal: event.agentRollbackOrdinal }
                             : {}),
                         transcriptAnchors: {
                             ...(typeof event.startUserMessageSeq === 'number'
@@ -209,13 +247,13 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                 publishMutation({
                     session: params.session,
                     mutation: {
-                        ...buildMutationBase({ session: params.session, provider: params.provider, action: 'mark_rolled_back', event }),
+                        ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'mark_rolled_back', event }),
                         action: 'mark_rolled_back',
                         turnId: event.turnId,
                         restoredToTurnId: event.restoredToTurnId,
-                        ...(event.providerTurnId ? { providerTurnId: event.providerTurnId } : {}),
-                        ...(typeof event.providerRollbackOrdinal === 'number'
-                            ? { providerRollbackOrdinal: event.providerRollbackOrdinal }
+                        ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
+                        ...(typeof event.agentRollbackOrdinal === 'number'
+                            ? { agentRollbackOrdinal: event.agentRollbackOrdinal }
                             : {}),
                     } satisfies SessionTurnMutationV1,
                 });
@@ -226,7 +264,7 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                 publishMutation({
                     session: params.session,
                     mutation: {
-                        ...buildMutationBase({ session: params.session, provider: params.provider, action: 'end_session', event }),
+                        ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'end_session', event }),
                         action: 'end_session',
                         ...(activeTurnId ? { turnId: activeTurnId } : {}),
                     } satisfies SessionTurnMutationV1,

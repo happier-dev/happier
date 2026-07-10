@@ -1,10 +1,12 @@
 import type { PermissionMode } from '@/api/types';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
+import type { SessionModelSelectionV1 } from '@happier-dev/protocol';
 
 import {
     createSessionMetadata,
     type BackendFlavor,
     type SessionMetadataResult,
+    type SessionLaunchControlMetadata,
 } from '@/agent/runtime/createSessionMetadata';
 import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMetadataOverrides';
 import type { InitializeBackendRunSessionOptions } from '@/agent/runtime/initializeBackendRunSession';
@@ -26,8 +28,8 @@ export function createDeferredStartupMetadataPlan(params: Readonly<{
     explicitPermissionModeUpdatedAt?: number;
     sessionModeId?: string;
     sessionModeUpdatedAt?: number;
-    modelId?: string;
-    modelUpdatedAt?: number;
+    modelSelection?: SessionModelSelectionV1;
+    launchControlMetadata: SessionLaunchControlMetadata;
 }>): DeferredStartupMetadataPlan {
     const createMetadata = (machineId: string): SessionMetadataResult => createSessionMetadata({
         flavor: params.flavor,
@@ -42,8 +44,10 @@ export function createDeferredStartupMetadataPlan(params: Readonly<{
                 : Date.now(),
         sessionModeId: params.sessionModeId,
         sessionModeUpdatedAt: params.sessionModeUpdatedAt,
-        modelId: params.modelId,
-        modelUpdatedAt: params.modelUpdatedAt,
+        modelSelectionIntent: params.modelSelection
+            ? { v: 1, updatedAt: params.modelSelection.updatedAt, selection: params.modelSelection.ref }
+            : undefined,
+        launchControlMetadata: params.launchControlMetadata,
     });
 
     return {
@@ -52,8 +56,7 @@ export function createDeferredStartupMetadataPlan(params: Readonly<{
         startupMetadataOverrides: createStartupMetadataOverrides({
             permissionMode: params.explicitPermissionMode,
             permissionModeUpdatedAt: params.explicitPermissionModeUpdatedAt,
-            modelId: params.modelId,
-            modelUpdatedAt: params.modelUpdatedAt,
+            modelSelection: params.modelSelection,
         }),
     };
 }

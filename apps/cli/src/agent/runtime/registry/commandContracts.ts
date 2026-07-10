@@ -1,7 +1,14 @@
+export type CommandDaemonAutostartDefault = 'preferLocalTui';
+
+export type CommandDispatchPolicy = Readonly<{
+    daemonAutostartDefault?: CommandDaemonAutostartDefault;
+}>;
+
 export type CommandDispatchDescriptor<THandler> = Readonly<{
     id: string;
     command: string;
     handler: THandler;
+    policy?: CommandDispatchPolicy;
 }>;
 
 export type CommandDispatchRegistry<THandler> = Readonly<{
@@ -71,5 +78,3 @@ export function createCommandSurfaceCatalog(
         },
     });
 }
-
-export { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';

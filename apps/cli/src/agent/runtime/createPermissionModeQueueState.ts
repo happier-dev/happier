@@ -22,7 +22,13 @@ export function createPermissionModeQueueState(opts: {
    */
   resolvePermissionModeQueueKey?: (permissionMode: PermissionMode) => string;
 }): {
-  messageQueue: MessageQueue2<{ permissionMode: PermissionMode; appendSystemPrompt?: string | null }, PermissionModeQueuedPrompt>;
+  messageQueue: MessageQueue2<{
+    permissionMode: PermissionMode;
+    appendSystemPrompt?: string | null;
+    model?: string;
+    suppressUserEcho?: boolean;
+    providerPromptAlreadyResolved?: boolean;
+  }, PermissionModeQueuedPrompt>;
   rebindSession: (session: ApiSessionClient) => void;
   getCurrentPermissionMode: () => PermissionMode | undefined;
   setCurrentPermissionMode: (mode: PermissionMode | undefined) => void;
@@ -30,11 +36,20 @@ export function createPermissionModeQueueState(opts: {
   setCurrentPermissionModeUpdatedAt: (updatedAt: number) => void;
 } {
   const resolveQueueKey = opts.resolvePermissionModeQueueKey;
-  const messageQueue = new MessageQueue2<{ permissionMode: PermissionMode; appendSystemPrompt?: string | null }, PermissionModeQueuedPrompt>(
+  const messageQueue = new MessageQueue2<{
+    permissionMode: PermissionMode;
+    appendSystemPrompt?: string | null;
+    model?: string;
+    suppressUserEcho?: boolean;
+    providerPromptAlreadyResolved?: boolean;
+  }, PermissionModeQueuedPrompt>(
     (mode) =>
       hashObject({
         permissionMode: resolveQueueKey ? resolveQueueKey(mode.permissionMode) : mode.permissionMode,
         appendSystemPrompt: resolveAppendSystemPromptQueueKeyValue(mode),
+        model: typeof mode.model === 'string' ? mode.model : null,
+        suppressUserEcho: mode.suppressUserEcho === true,
+        providerPromptAlreadyResolved: mode.providerPromptAlreadyResolved === true,
       }),
     {
       batcher: (messages) => combinePermissionModeQueuedPrompts(messages),

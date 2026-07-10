@@ -6,7 +6,7 @@ import type {
     ExecutionRunHostRuntime,
     ExecutionRunHostRuntimeMessageHandler,
 } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import type { ResolvedBackendContribution } from '@/plugins/projection/registry/types';
+import type { ResolvedAgentRuntimeContribution } from '@/plugins/projection/registry/types';
 
 const getExecutionRunBackendDescriptorMock = vi.fn();
 
@@ -36,13 +36,13 @@ function createStubRuntime(): ExecutionRunHostRuntime {
     };
 }
 
-function createBuiltInBackendContribution(backendId: string): ResolvedBackendContribution {
+function createBuiltInBackendContribution(backendId: string): ResolvedAgentRuntimeContribution {
     return {
         id: backendId,
-        providerId: 'built-in-provider',
+        agentId: 'built-in-provider',
         provenance: 'first_party',
         source: { kind: 'bundled' },
-        definition: { kindVersion: 1, id: backendId, providerId: 'built-in-provider' },
+        definition: { kindVersion: 1, id: backendId, agentId: 'built-in-provider' },
         runtimeKind: 'native',
     };
 }

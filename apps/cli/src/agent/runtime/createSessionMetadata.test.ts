@@ -2,15 +2,78 @@ import { describe, expect, it } from 'vitest';
 
 import type { Metadata } from '@/api/types';
 
-import { createSessionMetadata } from './createSessionMetadata';
+import {
+    captureSessionLaunchControlMetadata,
+    createSessionMetadata,
+} from './createSessionMetadata';
 import { HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY } from './sessionConnectedServicesBindingsEnv';
 
 const HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY =
     'HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_V1_JSON';
 
+function createMetadata(
+    options: Omit<Parameters<typeof createSessionMetadata>[0], 'launchControlMetadata'> &
+        Partial<Pick<Parameters<typeof createSessionMetadata>[0], 'launchControlMetadata'>>,
+) {
+    return createSessionMetadata({
+        ...options,
+        launchControlMetadata:
+            options.launchControlMetadata ?? captureSessionLaunchControlMetadata(),
+    });
+}
+
 describe('createSessionMetadata', () => {
+    it('uses an explicit non-secret launch-control snapshot instead of conflicting ambient state', () => {
+        const previousProfileId = process.env.HAPPIER_SESSION_PROFILE_ID;
+        const previousMcpSelection = process.env.HAPPIER_SESSION_MCP_SELECTION_JSON;
+        process.env.HAPPIER_SESSION_PROFILE_ID = 'ambient-profile';
+        process.env.HAPPIER_SESSION_MCP_SELECTION_JSON = JSON.stringify({
+            v: 1,
+            managedServersEnabled: true,
+            forceIncludeServerIds: [],
+            forceExcludeServerIds: [],
+        });
+
+        try {
+            const launchControlMetadata = captureSessionLaunchControlMetadata({
+                explicitEnvironment: {
+                    HAPPIER_SESSION_PROFILE_ID: 'work',
+                    HAPPIER_SESSION_MCP_SELECTION_JSON: JSON.stringify({
+                        v: 1,
+                        managedServersEnabled: false,
+                        forceIncludeServerIds: ['server-a'],
+                        forceExcludeServerIds: [],
+                    }),
+                    OPENAI_API_KEY: 'must-never-enter-metadata',
+                },
+                processEnvironment: process.env,
+            });
+            const { metadata } = createMetadata({
+                flavor: 'codex',
+                machineId: 'machine-1',
+                startedBy: 'terminal',
+                launchControlMetadata,
+            });
+
+            expect(metadata.profileId).toBe('work');
+            expect((metadata as any).mcpSelectionV1).toEqual({
+                v: 1,
+                managedServersEnabled: false,
+                forceIncludeServerIds: ['server-a'],
+                forceExcludeServerIds: [],
+            });
+            expect(JSON.stringify(launchControlMetadata)).not.toContain('must-never-enter-metadata');
+            expect(process.env.HAPPIER_SESSION_MCP_SELECTION_JSON).toBeUndefined();
+        } finally {
+            if (previousProfileId === undefined) delete process.env.HAPPIER_SESSION_PROFILE_ID;
+            else process.env.HAPPIER_SESSION_PROFILE_ID = previousProfileId;
+            if (previousMcpSelection === undefined) delete process.env.HAPPIER_SESSION_MCP_SELECTION_JSON;
+            else process.env.HAPPIER_SESSION_MCP_SELECTION_JSON = previousMcpSelection;
+        }
+    });
+
     it('does not seed legacy messageQueueV1 metadata', () => {
-        const { metadata } = createSessionMetadata({
+        const { metadata } = createMetadata({
             flavor: 'claude',
             machineId: 'machine-1',
             startedBy: 'terminal',
@@ -20,7 +83,7 @@ describe('createSessionMetadata', () => {
     });
 
     it('seeds session mode override aliases when sessionModeId is provided', () => {
-        const { metadata } = createSessionMetadata({
+        const { metadata } = createMetadata({
             flavor: 'opencode',
             machineId: 'machine-1',
             startedBy: 'terminal',
@@ -32,16 +95,32 @@ describe('createSessionMetadata', () => {
         expect((metadata as any).acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 123, modeId: 'plan' });
     });
 
-    it('seeds modelOverrideV1 when modelId is provided', () => {
-        const { metadata } = createSessionMetadata({
+    it('seeds canonical modelSelectionIntentV1 without a legacy dual write', () => {
+        const { metadata } = createMetadata({
             flavor: 'codex',
             machineId: 'machine-1',
             startedBy: 'terminal',
-            modelId: 'gpt-5-codex-high',
-            modelUpdatedAt: 123,
+            modelSelectionIntent: {
+                v: 1,
+                updatedAt: 123,
+                selection: {
+                    agentTargetKey: 'backend:codex',
+                    providerConnectionId: 'pc_work',
+                    modelId: 'gpt-5-codex-high',
+                },
+            },
         } as any);
 
-        expect((metadata as any).modelOverrideV1).toEqual({ v: 1, updatedAt: 123, modelId: 'gpt-5-codex-high' });
+        expect((metadata as any).modelSelectionIntentV1).toEqual({
+            v: 1,
+            updatedAt: 123,
+            selection: {
+                agentTargetKey: 'backend:codex',
+                providerConnectionId: 'pc_work',
+                modelId: 'gpt-5-codex-high',
+            },
+        });
+        expect((metadata as any).modelOverrideV1).toBeUndefined();
     });
 
     it('seeds sessionConfigOptionOverridesV1 from the daemon-provided environment override', () => {
@@ -55,7 +134,7 @@ describe('createSessionMetadata', () => {
         });
 
         try {
-            const { metadata } = createSessionMetadata({
+            const { metadata } = createMetadata({
                 flavor: 'codex',
                 machineId: 'machine-1',
                 startedBy: 'daemon',
@@ -97,7 +176,7 @@ describe('createSessionMetadata', () => {
         });
 
         try {
-            const { metadata } = createSessionMetadata({
+            const { metadata } = createMetadata({
                 flavor: 'codex',
                 machineId: 'machine-1',
                 startedBy: 'daemon',
@@ -129,7 +208,7 @@ describe('createSessionMetadata', () => {
     });
 
     it('seeds sessionLogPath for developer log discovery', () => {
-        const { metadata } = createSessionMetadata({
+        const { metadata } = createMetadata({
             flavor: 'claude',
             machineId: 'machine-1',
             startedBy: 'terminal',
@@ -150,7 +229,7 @@ describe('createSessionMetadata', () => {
         });
 
         try {
-            const { metadata } = createSessionMetadata({
+            const { metadata } = createMetadata({
                 flavor: 'codex',
                 machineId: 'machine-1',
                 startedBy: 'daemon',
@@ -186,7 +265,7 @@ describe('createSessionMetadata', () => {
         });
 
         try {
-            const { metadata } = createSessionMetadata({
+            const { metadata } = createMetadata({
                 flavor: 'codex',
                 machineId: 'machine-1',
                 startedBy: 'daemon',
@@ -222,7 +301,7 @@ describe('createSessionMetadata', () => {
         process.env[HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY] = JSON.stringify(identity);
 
         try {
-            const { metadata } = createSessionMetadata({
+            const { metadata } = createMetadata({
                 flavor: 'codex',
                 machineId: 'machine-1',
                 startedBy: 'daemon',
@@ -253,7 +332,7 @@ describe('createSessionMetadata', () => {
         });
 
         try {
-            const { metadata } = createSessionMetadata({
+            const { metadata } = createMetadata({
                 flavor: 'codex',
                 machineId: 'machine-1',
                 startedBy: 'daemon',
@@ -271,7 +350,7 @@ describe('createSessionMetadata', () => {
     });
 
     it('does not seed acpTransportV1 from the shared metadata factory defaults', () => {
-        const { metadata } = createSessionMetadata({
+        const { metadata } = createMetadata({
             flavor: 'opencode',
             machineId: 'machine-1',
             startedBy: 'terminal',
@@ -281,7 +360,7 @@ describe('createSessionMetadata', () => {
     });
 
     it('applies provider-owned metadata augmentation after building neutral shared metadata', () => {
-        const { metadata } = createSessionMetadata({
+        const { metadata } = createMetadata({
             flavor: 'opencode',
             machineId: 'machine-1',
             startedBy: 'terminal',
@@ -289,19 +368,19 @@ describe('createSessionMetadata', () => {
                 ...current,
                 acpTransportV1: {
                     v: 1,
-                    provider: 'opencode',
+                    agentId: 'opencode',
                 },
             }),
         } as any);
 
         expect((metadata as any).acpTransportV1).toEqual({
             v: 1,
-            provider: 'opencode',
+            agentId: 'opencode',
         });
     });
 
     it('preserves arbitrary configured ACP flavor ids', () => {
-        const { metadata } = createSessionMetadata({
+        const { metadata } = createMetadata({
             flavor: 'acp:custom-kiro',
             machineId: 'machine-1',
             startedBy: 'terminal',
@@ -311,7 +390,7 @@ describe('createSessionMetadata', () => {
     });
 
     it('uses the explicit directory for the session path when provided', () => {
-        const { metadata } = createSessionMetadata({
+        const { metadata } = createMetadata({
             flavor: 'codex',
             machineId: 'machine-1',
             startedBy: 'terminal',
@@ -328,7 +407,7 @@ describe('createSessionMetadata', () => {
         process.env.PWD = '/private/tmp/happier-requested-directory';
 
         try {
-            const { metadata } = createSessionMetadata({
+            const { metadata } = createMetadata({
                 flavor: 'codex',
                 machineId: 'machine-1',
                 startedBy: 'daemon',

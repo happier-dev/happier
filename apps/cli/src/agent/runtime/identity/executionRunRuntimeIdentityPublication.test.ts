@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { normalizePluginBackendCapabilitiesV1 } from '@happier-dev/protocol';
 
-import type { AgentMessage } from '@/agent/core';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type {
   ExecutionRunHostRuntime,
   ExecutionRunHostRuntimeMessageHandler,
@@ -45,7 +45,7 @@ function createEngineResolution(
 ): EngineAdapterResolution {
   return {
     backendId: 'acme.backend',
-    providerId: 'acme.provider',
+    agentId: 'acme.provider',
     provenance: 'external',
     runtimeOwner: {
       backendId: 'acme.backend',
@@ -64,13 +64,13 @@ function createEngineResolution(
     },
     backend: {
       id: 'acme.backend',
-      providerId: 'acme.provider',
+      agentId: 'acme.provider',
       provenance: 'external',
       source: { kind: 'path' },
       definition: {
         kindVersion: 1,
         id: 'acme.backend',
-        providerId: 'acme.provider',
+        agentId: 'acme.provider',
       },
       runtimeKind: 'plugin',
       capabilities: backendCapabilities,
@@ -108,7 +108,7 @@ describe('withExecutionRunRuntimeIdentityPublication', () => {
       })),
     );
 
-    expect(identity.runtimeCapabilities).toEqual({
+    expect(identity.runtimeCapabilities).toMatchObject({
       executionRun: { supported: false },
       backend: {
         executionRun: { supported: false },
@@ -138,12 +138,44 @@ describe('withExecutionRunRuntimeIdentityPublication', () => {
     expect(runtime.waitForTurnCompletion).toBeUndefined();
   });
 
+  it('preserves dynamic permission response capability after startup', async () => {
+    let started = false;
+    const respondToPermission = vi.fn(async () => ({ delivered: true as const }));
+    const runtime = withExecutionRunRuntimeIdentityPublication({
+      runtime: {
+        ...createMinimalRuntime(),
+        get permissionCapability() {
+          return started ? 'responds' as const : undefined;
+        },
+        get respondToPermission() {
+          return started ? respondToPermission : undefined;
+        },
+        async provisionSession() {
+          started = true;
+          return { sessionId: 'runtime-session-1' };
+        },
+      },
+      identity: {
+        runtimeDescriptor: null,
+        runtimeCapabilities: { executionRun: { supported: true } },
+        runtimeFacets: null,
+      },
+    });
+
+    expect(runtime.permissionCapability).toBeUndefined();
+    await expect(runtime.provisionSession()).resolves.toEqual({ sessionId: 'runtime-session-1' });
+    expect(runtime.permissionCapability).toBe('responds');
+    expect(runtime.respondToPermission).toBeTypeOf('function');
+    await expect(runtime.respondToPermission?.('permission-1', true)).resolves.toEqual({ delivered: true });
+    expect(respondToPermission).toHaveBeenCalledWith('permission-1', true);
+  });
+
   it('publishes fallback identity after startup when the backend is silent', async () => {
     const identity = {
       runtimeDescriptor: {
         v: 1,
-        providerId: 'acme.provider',
-        provider: {
+        agentId: 'acme.provider',
+        agent: {
           backendMode: 'native',
         },
       },
@@ -173,8 +205,8 @@ describe('withExecutionRunRuntimeIdentityPublication', () => {
         name: 'runtime.descriptor',
         payload: {
           v: 1,
-          providerId: 'acme.provider',
-          provider: {
+          agentId: 'acme.provider',
+          agent: {
             backendMode: 'native',
           },
         },
@@ -201,8 +233,8 @@ describe('withExecutionRunRuntimeIdentityPublication', () => {
     const identity = {
       runtimeDescriptor: {
         v: 1,
-        providerId: 'fallback.provider',
-        provider: { backendMode: 'fallback' },
+        agentId: 'fallback.provider',
+        agent: { backendMode: 'fallback' },
       },
       runtimeCapabilities: { executionRun: { supported: true } },
       runtimeFacets: {
@@ -224,7 +256,7 @@ describe('withExecutionRunRuntimeIdentityPublication', () => {
             name: 'runtime.descriptor',
             payload: {
               v: 1,
-              providerId: 'leaf.provider',
+              agentId: 'leaf.provider',
               provider: { backendMode: 'leaf' },
             },
           });
@@ -262,8 +294,8 @@ describe('withExecutionRunRuntimeIdentityPublication', () => {
         name: 'runtime.descriptor',
         payload: {
           v: 1,
-          providerId: 'leaf.provider',
-          provider: { backendMode: 'leaf' },
+          agentId: 'leaf.provider',
+          agent: { backendMode: 'leaf' },
         },
       },
       {
@@ -288,8 +320,8 @@ describe('withExecutionRunRuntimeIdentityPublication', () => {
     const identity = {
       runtimeDescriptor: {
         v: 1,
-        providerId: 'fallback.provider',
-        provider: { backendMode: 'fallback' },
+        agentId: 'fallback.provider',
+        agent: { backendMode: 'fallback' },
       },
       runtimeCapabilities: { executionRun: { supported: true } },
       runtimeFacets: {
@@ -336,8 +368,8 @@ describe('withExecutionRunRuntimeIdentityPublication', () => {
         name: 'runtime.descriptor',
         payload: {
           v: 1,
-          providerId: 'fallback.provider',
-          provider: { backendMode: 'fallback' },
+          agentId: 'fallback.provider',
+          agent: { backendMode: 'fallback' },
         },
       },
       {

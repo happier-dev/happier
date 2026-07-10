@@ -11,26 +11,31 @@ import { withExecutionRunHostRuntimeCleanup } from '../hostRuntime/cleanup';
 import { createLazyExecutionRunHostRuntime } from '../hostRuntime/lazy';
 import { withExecutionRunPermissionResponder } from '../hostRuntime/permissionResponder';
 import { cleanupExecutionRunIsolationBundle } from './isolation';
+import {
+  normalizeUnsetEnvKeys,
+  stripUnsetEnvironmentVariables,
+} from '@/utils/processEnv/buildScopedProcessEnv';
 
 export interface CatalogProviderExecutionRunBackendOptions {
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  unsetEnvKeys?: readonly string[];
   permissionMode: ReturnType<typeof normalizePermissionMode>;
   permissionHandler?: AcpPermissionHandler;
 }
 
 export interface CatalogProviderExecutionRunBackendConfig {
-  providerId: string;
-  createRuntime: (opts: CatalogProviderExecutionRunBackendOptions) => unknown;
+  agentId: string;
+  createRuntime: (opts: CatalogProviderExecutionRunBackendOptions) => unknown | PromiseLike<unknown>;
   usesPermissionHandler?: boolean;
   buildRuntimeDescriptor?: (opts: CatalogProviderExecutionRunBackendOptions) => unknown;
   runtimeCapabilities?: unknown;
 }
 
-function requireCatalogExecutionRunHostRuntime(providerId: string, runtime: unknown): ExecutionRunHostRuntime {
+function requireCatalogExecutionRunHostRuntime(agentId: string, runtime: unknown): ExecutionRunHostRuntime {
   return requireExecutionRunHostRuntime(
     runtime,
-    `${providerId} execution-run backend must implement ExecutionRunHostRuntime`,
+    `${agentId} execution-run backend must implement ExecutionRunHostRuntime`,
   );
 }
 
@@ -79,10 +84,12 @@ export function createCatalogProviderExecutionRunBackend(
   opts: CreateCliExecutionRunBackendParams,
 ): ExecutionRunHostRuntime {
   const bundle = resolveExecutionRunIsolationBundle(opts);
-  const env = {
+  const unsetEnvKeys = normalizeUnsetEnvKeys(opts.isolation?.unsetEnvKeys);
+  const mergedEnv = {
     ...(bundle?.env ?? {}),
     ...(opts.isolation?.env ?? {}),
   };
+  const env = stripUnsetEnvironmentVariables(mergedEnv, unsetEnvKeys);
   const permissionHandler = config.usesPermissionHandler === false
     ? undefined
     : createExecutionRunPermissionHandler({
@@ -94,6 +101,7 @@ export function createCatalogProviderExecutionRunBackend(
   const backendOptions: CatalogProviderExecutionRunBackendOptions = {
     cwd: opts.cwd,
     ...(Object.keys(env).length > 0 ? { env } : {}),
+    ...(unsetEnvKeys.length > 0 ? { unsetEnvKeys } : {}),
     permissionMode: resolvedPermissionMode,
     ...(permissionHandler ? { permissionHandler } : {}),
   };
@@ -102,7 +110,10 @@ export function createCatalogProviderExecutionRunBackend(
     resolveRuntime: async () => {
       let runtime: ExecutionRunHostRuntime;
       try {
-        const base = requireCatalogExecutionRunHostRuntime(config.providerId, config.createRuntime(backendOptions));
+        const base = requireCatalogExecutionRunHostRuntime(
+          config.agentId,
+          await config.createRuntime(backendOptions),
+        );
         runtime = withExecutionRunPermissionResponder(base, permissionHandler);
       } catch (error) {
         if (bundle?.shouldCleanupIsolation) {
@@ -120,12 +131,13 @@ export function createCatalogProviderExecutionRunBackend(
       return runtime;
     },
     runtimeDescriptor: config.buildRuntimeDescriptor?.(backendOptions) ?? {
-      backendId: config.providerId,
+      backendId: config.agentId,
       runtimeKind: 'acp',
       source: 'built_in',
     },
     runtimeCapabilities: config.runtimeCapabilities ?? {
       executionRun: { supported: true },
+      permissions: { capability: permissionHandler ? 'responds' : 'static' },
     },
   });
 

@@ -10,8 +10,8 @@ const AUGGIE_PLUGIN_ID = 'happier.agent.auggie';
 
 function createAuggieOnlyContributionRegistry(): ResolvedContributionRegistry {
   const builtInContributions = resolveBuiltInContributions();
-  const provider = builtInContributions.providers.find((entry) => entry.id === AUGGIE_BACKEND_ID);
-  const backend = builtInContributions.backends.find((entry) => entry.id === AUGGIE_BACKEND_ID);
+  const provider = builtInContributions.agents.find((entry) => entry.id === AUGGIE_BACKEND_ID);
+  const backend = builtInContributions.agentRuntimes.find((entry) => entry.id === AUGGIE_BACKEND_ID);
   const activationTargets = builtInContributions.activationTargets?.filter((target) => target.pluginId === AUGGIE_PLUGIN_ID) ?? [];
 
   if (!provider || !backend || activationTargets.length !== 1) {
@@ -19,8 +19,8 @@ function createAuggieOnlyContributionRegistry(): ResolvedContributionRegistry {
   }
 
   return {
-    providers: Object.freeze([provider]),
-    backends: Object.freeze([backend]),
+    agents: Object.freeze([provider]),
+    agentRuntimes: Object.freeze([backend]),
     actions: Object.freeze([]),
     resources: Object.freeze([]),
     uiDescriptors: Object.freeze([]),
@@ -28,7 +28,7 @@ function createAuggieOnlyContributionRegistry(): ResolvedContributionRegistry {
     notificationChannels: Object.freeze([]),
     events: Object.freeze([]),
     executionRunProfiles: Object.freeze([]),
-    installables: Object.freeze([]),
+    managedDependencies: Object.freeze([]),
     requestInterceptors: Object.freeze([]),
     scmHostingProviders: Object.freeze([]),
     scmBackends: Object.freeze([]),
@@ -37,8 +37,8 @@ function createAuggieOnlyContributionRegistry(): ResolvedContributionRegistry {
     hookRegistrations: Object.freeze([]),
     surfaceHandlersByBackendId: new Map(),
     catalogEntriesById: Object.freeze(provider.catalogEntry ? { [provider.catalogEntry.id]: provider.catalogEntry } : {}),
-    providerDefinitionsById: new Map([[provider.id, provider]]),
-    backendDefinitionsById: new Map([[backend.id, backend]]),
+    agentDefinitionsById: new Map([[provider.id, provider]]),
+    agentRuntimeDefinitionsById: new Map([[backend.id, backend]]),
     pluginDiagnosticsByPluginId: Object.freeze({}),
   };
 }
@@ -62,7 +62,7 @@ describe('engineRegistry (auggie runtimeCore)', () => {
 
     expect(resolution).toMatchObject({
       backendId: 'auggie',
-      providerId: 'auggie',
+      agentId: 'auggie',
       selectedSource: 'plugin',
       backend: {
         pluginId: 'happier.agent.auggie',
@@ -78,7 +78,7 @@ describe('engineRegistry (auggie runtimeCore)', () => {
 
     expect(plan).toMatchObject({
       kind: 'hostSessionRuntimePlan',
-      providerId: 'auggie',
+      agentId: 'auggie',
       config: {
         backendDisplayName: 'Auggie',
         providerName: 'Auggie',

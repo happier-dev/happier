@@ -260,38 +260,57 @@ describe('mergeSessionMetadataForStartup', () => {
         expect((merged as any).acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 200, modeId: null });
     });
 
-    it('does not seed modelOverrideV1 from next metadata when attaching', () => {
+    it('does not seed model selection from next metadata when attaching', () => {
         const nowMs = 50;
         const merged = mergeSessionMetadataForStartup({
             current: {} as any,
-            next: { modelOverrideV1: { v: 1, updatedAt: 123, modelId: 'gpt-5-codex-high' } } as any,
+            next: { flavor: 'codex', modelOverrideV1: { v: 1, updatedAt: 123, modelId: 'gpt-5-codex-high' } } as any,
             nowMs,
             mode: 'attach',
         } as any);
 
         expect((merged as any).modelOverrideV1).toBeUndefined();
+        expect((merged as any).modelSelectionIntentV1).toBeUndefined();
     });
 
-    it('applies an explicit model override with a monotonic updatedAt', () => {
+    it('applies an explicit provider-bound model selection with a monotonic updatedAt', () => {
         const nowMs = 50;
         const merged = mergeSessionMetadataForStartup({
-            current: { modelOverrideV1: { v: 1, updatedAt: 100, modelId: 'gpt-5-codex-low' } } as any,
-            next: {} as any,
+            current: { flavor: 'codex', modelOverrideV1: { v: 1, updatedAt: 100, modelId: 'gpt-5-codex-low' } } as any,
+            next: { flavor: 'codex' } as any,
             nowMs,
-            modelOverride: { modelId: 'gpt-5-codex-high', updatedAt: 1 } as any,
+            modelOverride: {
+                v: 1,
+                updatedAt: 1,
+                selection: {
+                    agentTargetKey: 'backend:codex',
+                    providerConnectionId: 'pc_work',
+                    modelId: 'gpt-5-codex-high',
+                },
+            } as any,
         } as any);
 
-        expect((merged as any).modelOverrideV1).toEqual({ v: 1, updatedAt: 101, modelId: 'gpt-5-codex-high' });
+        expect((merged as any).modelSelectionIntentV1).toEqual({
+            v: 1,
+            updatedAt: 101,
+            selection: {
+                agentTargetKey: 'backend:codex',
+                providerConnectionId: 'pc_work',
+                modelId: 'gpt-5-codex-high',
+            },
+        });
+        expect((merged as any).modelOverrideV1).toBeUndefined();
     });
 
     it('preserves a newer model clear tombstone instead of resurrecting next metadata', () => {
         const merged = mergeSessionMetadataForStartup({
-            current: { modelOverrideV1: { v: 1, updatedAt: 200, modelId: null } } as any,
-            next: { modelOverrideV1: { v: 1, updatedAt: 100, modelId: 'gpt-5-codex-high' } } as any,
+            current: { flavor: 'codex', modelOverrideV1: { v: 1, updatedAt: 200, modelId: null } } as any,
+            next: { flavor: 'codex', modelOverrideV1: { v: 1, updatedAt: 100, modelId: 'gpt-5-codex-high' } } as any,
             nowMs: 50,
         });
 
-        expect((merged as any).modelOverrideV1).toEqual({ v: 1, updatedAt: 200, modelId: null });
+        expect((merged as any).modelSelectionIntentV1).toEqual({ v: 1, updatedAt: 200, selection: null });
+        expect((merged as any).modelOverrideV1).toBeUndefined();
     });
 
     it('merges ACP config option overrides per entry through the session-state timestamp policy', () => {

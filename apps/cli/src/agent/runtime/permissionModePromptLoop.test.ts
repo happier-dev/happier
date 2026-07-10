@@ -11,7 +11,10 @@ import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
 import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt } from '@/agent/runtime/permissions/queuedPrompt';
 import { createRuntimeOverrideSynchronizers } from './createRuntimeOverrideSynchronizers';
 import { formatProviderPromptErrorMessage } from './formatProviderPromptErrorMessage';
-import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
+import {
+  createRuntimeTurnFailureAlreadySurfacedError,
+  type RuntimeTurnOperations,
+} from '@/agent/runtime/turns/runtimeTurnOperations';
 import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 
@@ -32,8 +35,14 @@ function createPromptLoopMetadata(overrides: Partial<PromptLoopMetadata> = {}): 
 }
 
 function createModeQueue() {
-  return new MessageQueue2<{ permissionMode: any; appendSystemPrompt?: string | null }, PermissionModeQueuedPrompt>(
-    (mode) => mode.permissionMode,
+  return new MessageQueue2<{
+    permissionMode: any;
+    appendSystemPrompt?: string | null;
+    model?: string;
+    suppressUserEcho?: boolean;
+    providerPromptAlreadyResolved?: boolean;
+  }, PermissionModeQueuedPrompt>(
+    (mode) => JSON.stringify(mode),
     {
       batcher: (messages) => combinePermissionModeQueuedPrompts(messages),
     },
@@ -51,13 +60,25 @@ function createRuntime() {
     respondToPermission: vi.fn(async () => {}),
     cancelTurn: vi.fn(async () => {}),
     readSessionIdentity: vi.fn(() => ({ sessionId: 'resume-from-runtime' })),
-    updateSessionRuntimeConfig: vi.fn(async () => {}),
+    updateSessionRuntimeConfig: vi.fn<RuntimeTurnOperations['updateSessionRuntimeConfig']>(async () => {}),
     resetOrDisposeRuntime: vi.fn(async () => {}),
     compactContext: undefined as undefined | ((command: string) => Promise<void>),
-    sendPromptWithMeta: undefined as undefined | ((params: { text: string; localId?: string | null }) => Promise<void>),
+    sendPromptWithMeta: undefined as undefined | ((params: {
+      text: string;
+      localId?: string | null;
+      localIds?: readonly string[];
+      modelId?: string | null;
+      providerClaimedPendingLocalIds?: readonly string[];
+      userMessageSeq?: number | null;
+      userMessageSeqs?: readonly number[];
+    }) => Promise<void>),
     shouldResumeAfterPermissionModeChange: vi.fn(() => true),
   };
   return operations;
+}
+
+function localIdentityMeta(localId: string) {
+  return { localId, localIds: [localId] };
 }
 
 describe('runPermissionModePromptLoop', () => {
@@ -118,12 +139,195 @@ describe('runPermissionModePromptLoop', () => {
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     });
 
-    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(1, 'SEED\n\nhello');
-    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(2, 'second');
+    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(1, 'SEED\n\nhello', localIdentityMeta('local-1'));
+    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(2, 'second', localIdentityMeta('local-2'));
 
     const finalMetadata = session.__getMetadata();
     expect(finalMetadata?.replaySeedV1?.appliedToLocalId).toBe('local-1');
     expect(finalMetadata?.replaySeedV1?.seedText).toBe('');
+  });
+
+  it('replays already-resolved provider prompts literally without echo, command parsing, or replay seed reapplication', async () => {
+    const session = createPromptLoopSession();
+    session.__setMetadata({
+      ...createPromptLoopMetadata({
+        permissionMode: 'default',
+        permissionModeUpdatedAt: 0,
+      }),
+      replaySeedV1: {
+        v: 1,
+        seedText: 'SEED',
+        sourceSessionId: 'parent',
+        sourceCutoffSeqInclusive: 3,
+        createdAtMs: 123,
+      },
+    });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push(
+      { text: 'RESOLVED\n\n/clear', localId: null, userMessageSeq: 77 },
+      { permissionMode: 'default', suppressUserEcho: true, providerPromptAlreadyResolved: true },
+    );
+
+    let shouldExit = false;
+    const readySpy = vi.fn(() => {
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.resetOrDisposeRuntime).not.toHaveBeenCalled();
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('RESOLVED\n\n/clear', {
+      userMessageSeq: 77,
+      userMessageSeqs: [77],
+    });
+    expect(messageBuffer.getMessages().some((message) => message.type === 'user')).toBe(false);
+    expect(session.__getMetadata()?.replaySeedV1?.seedText).toBe('SEED');
+  });
+
+  it('dispatches provider-claimed pending prompts without waiting for a committed transcript seq', async () => {
+    const session = createPromptLoopSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+    const localId = 'pending-provider-claim-1';
+    session.hasPendingQueueMaterializedLocalId = vi.fn((candidate: string) => candidate === localId) as any;
+    let shouldExit = false;
+    session.getCommittedUserMessageSeq = vi.fn(() => null) as any;
+    session.waitForCommittedUserMessageSeq = vi.fn(async () => {
+      shouldExit = true;
+      return null;
+    }) as any;
+
+    queue.push(
+      {
+        text: 'provider-claimed prompt',
+        localId,
+        localIds: [localId],
+        providerClaimedPendingLocalIds: [localId],
+      },
+      { permissionMode: 'default', suppressUserEcho: true },
+    );
+
+    const readySpy = vi.fn(() => {
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(session.waitForCommittedUserMessageSeq).not.toHaveBeenCalled();
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('provider-claimed prompt', {
+      ...localIdentityMeta(localId),
+      providerClaimedPendingLocalIds: [localId],
+    });
+  });
+
+  it('blocks provider-claimed pending prompts when runtime startup fails before provider send', async () => {
+    const session = createPromptLoopSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+    const localId = 'pending-provider-startup-failure';
+    session.blockPendingMessageDelivery = vi.fn(async () => true) as any;
+    session.confirmUserMessageDeliveredToProvider = vi.fn() as any;
+    runtime.startOrLoadSession = vi.fn(async () => {
+      throw new Error('Codex CLI unavailable');
+    });
+
+    queue.push(
+      {
+        text: 'provider-claimed startup failure prompt',
+        localId,
+        localIds: [localId],
+        providerClaimedPendingLocalIds: [localId],
+      },
+      { permissionMode: 'default', suppressUserEcho: true },
+    );
+
+    let shouldExit = false;
+    const readySpy = vi.fn(() => {
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Codex',
+      agentMessageType: 'codex',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
+    expect(session.blockPendingMessageDelivery).toHaveBeenCalledWith({
+      localIds: [localId],
+      reason: 'runtime_disposed_before_delivery',
+    });
+    expect(session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
   });
 
   it('starts runtime, sends prompt, and emits ready', async () => {
@@ -169,7 +373,7 @@ describe('runPermissionModePromptLoop', () => {
     });
 
     expect(runtime.startOrLoadSession).toHaveBeenCalledWith({});
-    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('hello');
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('hello', localIdentityMeta('local-1'));
     expect(readySpy).toHaveBeenCalledTimes(1);
     expect(flushPendingAfterStart).toHaveBeenCalledTimes(2);
     expect(syncFromMetadata).toHaveBeenCalled();
@@ -237,7 +441,74 @@ describe('runPermissionModePromptLoop', () => {
       type: 'message',
       message: expect.stringContaining('awaiting provider acceptance'),
     }));
-    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('second');
+    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(2, 'second', localIdentityMeta('local-2'));
+  });
+
+  it('does not duplicate a turn-completion failure already surfaced by a runtime event', async () => {
+    const session = createPromptLoopSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = { setPermissionMode: vi.fn(), reset: vi.fn() } as any;
+
+    const sendAgentMessage = vi.spyOn(session, 'sendAgentMessage');
+
+    runtime.waitForTurnCompletion = vi.fn(async () => {
+      throw createRuntimeTurnFailureAlreadySurfacedError({
+        message: 'Plugin session runtime turn failed: OpenCode permission request was denied.',
+        event: {
+          kind: 'turn-failed',
+          sessionId: session.sessionId,
+          emittedAtMs: 2,
+          turnId: 'turn-1',
+          issue: {
+            v: 1,
+            scope: 'primary_session',
+            status: 'failed',
+            code: 'opencode_permission_denied',
+            source: 'permission_blocked',
+            agentId: 'opencode',
+            occurredAt: 2,
+            sanitizedPreview: 'OpenCode permission request was denied.',
+          },
+        },
+      });
+    });
+
+    queue.push({ text: 'first', localId: 'local-1' }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    const readySpy = vi.fn(() => {
+      shouldExit = true;
+    });
+
+    await expect(runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    })).resolves.toBeUndefined();
+
+    expect(sendAgentMessage).not.toHaveBeenCalledWith('qwen', expect.objectContaining({
+      type: 'message',
+      message: expect.stringContaining('OpenCode permission request was denied'),
+    }));
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(1);
+    expect(readySpy).toHaveBeenCalledTimes(1);
   });
 
   it('parks a CLASSIFIED steer-acceptance injection failure and relaunches on the next message (incident pid-82626, T2b)', async () => {
@@ -316,7 +587,7 @@ describe('runPermissionModePromptLoop', () => {
       message: expect.stringContaining('awaiting provider acceptance'),
     }));
     expect(dispatchCountAtRelaunchWake).toBe(1);
-    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('next message after the park');
+    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(2, 'next message after the park', localIdentityMeta('local-2'));
   });
 
   it('still propagates an abort-like turn-completion failure (shutdown path)', async () => {
@@ -372,6 +643,7 @@ describe('runPermissionModePromptLoop', () => {
     const session = createPromptLoopSession();
     const callOrder: string[] = [];
     Object.assign(session, {
+      hasPendingQueueMaterializedLocalId: vi.fn((localId: string) => localId === 'local-committed-1'),
       getCommittedUserMessageSeq: vi.fn(() => null),
       waitForCommittedUserMessageSeq: vi.fn(async (localId: string, options?: { timeoutMs?: number; pollMs?: number }) => {
         callOrder.push(`wait:${localId}:${options?.timeoutMs ?? 'none'}:${options?.pollMs ?? 'none'}`);
@@ -426,6 +698,136 @@ describe('runPermissionModePromptLoop', () => {
     ]);
   });
 
+  it('waits for direct queued local prompts to commit before provider dispatch', async () => {
+    const session = createPromptLoopSession();
+    const callOrder: string[] = [];
+    Object.assign(session, {
+      hasPendingQueueMaterializedLocalId: vi.fn(() => false),
+      getCommittedUserMessageSeq: vi.fn(() => null),
+      waitForCommittedUserMessageSeq: vi.fn(async (localId: string) => {
+        callOrder.push(`wait:${localId}`);
+        return 42;
+      }),
+    });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    runtime.beginTurnLifecycle = vi.fn(() => {
+      callOrder.push('begin-turn');
+    });
+    runtime.sendTurnPrompt = vi.fn(async () => {
+      callOrder.push('send-prompt');
+    });
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push({ text: 'hello', localId: 'local-direct-1' }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(callOrder).toEqual([
+      'wait:local-direct-1',
+      'begin-turn',
+      'send-prompt',
+    ]);
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('hello', {
+      localId: 'local-direct-1',
+      localIds: ['local-direct-1'],
+      userMessageSeq: 42,
+      userMessageSeqs: [42],
+    });
+  });
+
+  it('defers provider dispatch when the pending-queue materialized user transcript row has not committed yet', async () => {
+    const session = createPromptLoopSession();
+    const callOrder: string[] = [];
+    let waitCount = 0;
+    Object.assign(session, {
+      hasPendingQueueMaterializedLocalId: vi.fn((localId: string) => localId === 'local-committed-late'),
+      getCommittedUserMessageSeq: vi.fn(() => null),
+      waitForCommittedUserMessageSeq: vi.fn(async (localId: string, options?: { timeoutMs?: number; pollMs?: number }) => {
+        waitCount += 1;
+        callOrder.push(`wait:${localId}:${waitCount}:${options?.timeoutMs ?? 'none'}:${options?.pollMs ?? 'none'}`);
+        return waitCount === 1 ? null : 42;
+      }),
+    });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    runtime.beginTurnLifecycle = vi.fn(() => {
+      callOrder.push('begin-turn');
+    });
+    runtime.sendTurnPrompt = vi.fn(async () => {
+      callOrder.push('send-prompt');
+    });
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push({ text: 'hello', localId: 'local-committed-late' }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('hello', {
+      ...localIdentityMeta('local-committed-late'),
+      userMessageSeq: 42,
+      userMessageSeqs: [42],
+    });
+    expect(callOrder).toEqual([
+      expect.stringMatching(/^wait:local-committed-late:1:/),
+      expect.stringMatching(/^wait:local-committed-late:2:/),
+      'begin-turn',
+      'send-prompt',
+    ]);
+  });
+
   it('sends already-echoed queued prompts without duplicating the user transcript row', async () => {
     const session = createPromptLoopSession();
     const queue = new MessageQueue2<
@@ -473,8 +875,381 @@ describe('runPermissionModePromptLoop', () => {
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     });
 
-    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('recover as a new turn');
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('recover as a new turn', localIdentityMeta('local-already-echoed'));
     expect(messageBuffer.getMessages().filter((message) => message.type === 'user')).toEqual([]);
+  });
+
+  it('does not skip queued provider prompts that only reached local queue handoff', async () => {
+    const session = createPromptLoopSession();
+    session.__setMetadata(createPromptLoopMetadata({
+      userMessageDeliveryWatermarkModeV1: 'queueHandoff',
+      deliveredUserMessageSeqV1: 1,
+    }));
+    Object.assign(session, {
+      getDeliveredUserMessageSeq: vi.fn(() => 1),
+      getProviderAcceptedUserMessageSeq: vi.fn(() => null),
+    });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push(
+      { text: 'local handoff only', localId: 'local-delivered', userMessageSeq: 1 },
+      { permissionMode: 'default' },
+    );
+    queue.push(
+      { text: 'fresh prompt', localId: 'local-fresh', userMessageSeq: 2 },
+      { permissionMode: 'read-only' },
+    );
+
+    let shouldExit = false;
+    const readySpy = vi.fn(() => {
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(1);
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('local handoff only', {
+      ...localIdentityMeta('local-delivered'),
+      userMessageSeq: 1,
+      userMessageSeqs: [1],
+    });
+    expect(messageBuffer.getMessages().filter((message) => message.type === 'user')).toEqual([
+      expect.objectContaining({ content: 'local handoff only' }),
+    ]);
+  });
+
+  it('does not discard queued prompts that only reached local queue handoff in provider-acceptance mode', async () => {
+    const session = createPromptLoopSession();
+    Object.assign(session, {
+      getDeliveredUserMessageSeq: vi.fn(() => 4),
+      getProviderAcceptedUserMessageSeq: vi.fn(() => 3),
+    });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push(
+      { text: 'provider accepted already', localId: 'local-provider-accepted', userMessageSeq: 3 },
+      { permissionMode: 'default' },
+    );
+    queue.push(
+      { text: 'local handoff only', localId: 'local-handoff-only', userMessageSeq: 4 },
+      { permissionMode: 'default' },
+    );
+    queue.push(
+      { text: 'fresh after handoff', localId: 'local-fresh-after-handoff', userMessageSeq: 5 },
+      { permissionMode: 'read-only' },
+    );
+
+    let shouldExit = false;
+    const readySpy = vi.fn(() => {
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(1);
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('local handoff only', {
+      ...localIdentityMeta('local-handoff-only'),
+      userMessageSeq: 4,
+      userMessageSeqs: [4],
+    });
+    expect(messageBuffer.getMessages().filter((message) => message.type === 'user')).toEqual([
+      expect.objectContaining({ content: 'local handoff only' }),
+    ]);
+  });
+
+  it('skips local-id-only queued prompts that provider acceptance already claimed', async () => {
+    const session = createPromptLoopSession();
+    Object.assign(session, {
+      getProviderAcceptedUserMessageSeq: vi.fn(() => null),
+      hasPendingQueueMaterializedLocalId: vi.fn((localId: string) => localId === 'local-provider-claimed'),
+      hasUserMessageProviderAcceptance: vi.fn((query: { localIds?: readonly string[] }) =>
+        query.localIds?.includes('local-provider-claimed') === true),
+    });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push(
+      {
+        text: 'provider already accepted this local prompt',
+        localId: 'local-provider-claimed',
+        localIds: ['local-provider-claimed'],
+        providerClaimedPendingLocalIds: ['local-provider-claimed'],
+      },
+      { permissionMode: 'default' },
+    );
+    queue.push(
+      { text: 'fresh after accepted local prompt', localId: 'local-fresh', userMessageSeq: 2 },
+      { permissionMode: 'default' },
+    );
+
+    let shouldExit = false;
+    const readySpy = vi.fn(() => {
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(session.hasUserMessageProviderAcceptance).toHaveBeenCalledWith({
+      localIds: ['local-provider-claimed'],
+      userMessageSeq: null,
+      userMessageSeqs: [],
+    });
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(1);
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('fresh after accepted local prompt', {
+      ...localIdentityMeta('local-fresh'),
+      userMessageSeq: 2,
+      userMessageSeqs: [2],
+    });
+    expect(messageBuffer.getMessages().filter((message) => message.type === 'user')).toEqual([
+      expect.objectContaining({ content: 'fresh after accepted local prompt' }),
+    ]);
+  });
+
+  it('does not treat an absent provider-accepted watermark as a delivered watermark fallback', async () => {
+    const session = createPromptLoopSession();
+    Object.assign(session, {
+      getDeliveredUserMessageSeq: vi.fn(() => 1),
+      getProviderAcceptedUserMessageSeq: vi.fn(() => null),
+    });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push(
+      { text: 'local handoff only', localId: 'local-handoff-only', userMessageSeq: 1 },
+      { permissionMode: 'default' },
+    );
+
+    let shouldExit = false;
+    const readySpy = vi.fn(() => {
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(1);
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('local handoff only', {
+      ...localIdentityMeta('local-handoff-only'),
+      userMessageSeq: 1,
+      userMessageSeqs: [1],
+    });
+  });
+
+  it('honors provider-acceptance watermark mode even when the explicit accepted getter is absent', async () => {
+    const session = createPromptLoopSession();
+    session.__setMetadata(createPromptLoopMetadata({
+      userMessageDeliveryWatermarkModeV1: 'providerAcceptance',
+      deliveredUserMessageSeqV1: 1,
+    }));
+    Object.assign(session, {
+      getDeliveredUserMessageSeq: vi.fn(() => 1),
+    });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push(
+      { text: 'provider acceptance still owed', localId: 'local-owed-provider-acceptance', userMessageSeq: 1 },
+      { permissionMode: 'default' },
+    );
+    queue.push(
+      { text: 'later prompt', localId: 'local-later', userMessageSeq: 2 },
+      { permissionMode: 'read-only' },
+    );
+
+    let shouldExit = false;
+    const readySpy = vi.fn(() => {
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(1);
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('provider acceptance still owed', {
+      ...localIdentityMeta('local-owed-provider-acceptance'),
+      userMessageSeq: 1,
+      userMessageSeqs: [1],
+    });
+  });
+
+  it('keeps queue-handoff prompts in same-mode batches until provider acceptance', async () => {
+    const session = createPromptLoopSession();
+    Object.assign(session, {
+      getDeliveredUserMessageSeq: vi.fn(() => 1),
+    });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push(
+      { text: 'local handoff only', localId: 'local-delivered', userMessageSeq: 1 },
+      { permissionMode: 'default' },
+    );
+    queue.push(
+      { text: 'fresh prompt', localId: 'local-fresh', userMessageSeq: 2 },
+      { permissionMode: 'default' },
+    );
+
+    let shouldExit = false;
+    const readySpy = vi.fn(() => {
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledTimes(1);
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('local handoff only\nfresh prompt', {
+      localId: 'local-delivered',
+      localIds: ['local-delivered', 'local-fresh'],
+      userMessageSeq: 2,
+      userMessageSeqs: [1, 2],
+    });
+    expect(messageBuffer.getMessages().filter((message) => message.type === 'user')).toEqual([
+      expect.objectContaining({ content: 'local handoff only\nfresh prompt' }),
+    ]);
   });
 
   it('runs checkpoint lifecycle hooks without blocking prompt dispatch or turn completion', async () => {
@@ -537,11 +1312,88 @@ describe('runPermissionModePromptLoop', () => {
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     });
 
-    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('hello');
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('hello', localIdentityMeta('local-checkpoint-1'));
     expect(calls).toEqual([
       'message-start:local-checkpoint-1',
       'turn-start:local-checkpoint-1:turn-checkpoint-1',
       'turn-final:local-checkpoint-1:turn-checkpoint-1:completed',
+    ]);
+  });
+
+  it('maps canonical runtime turn events into checkpoint lifecycle status', async () => {
+    const session = createPromptLoopSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    let runtimeMessageHandler: ((message: unknown) => void) | null = null;
+    runtime.subscribeRuntimeEvents = vi.fn((handler: (message: unknown) => void) => {
+      runtimeMessageHandler = handler;
+      return () => {
+        runtimeMessageHandler = null;
+      };
+    });
+    runtime.sendTurnPrompt = vi.fn(async () => {
+      runtimeMessageHandler?.({
+        kind: 'turn-start',
+        sessionId: 'session-1',
+        emittedAtMs: 1,
+        turnId: 'codex-turn-1',
+        startedBy: 'user',
+      });
+      runtimeMessageHandler?.({
+        kind: 'turn-complete',
+        sessionId: 'session-1',
+        emittedAtMs: 2,
+        turnId: 'codex-turn-1',
+      });
+    });
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+    const calls: string[] = [];
+
+    queue.push({ text: 'hello', localId: 'local-canonical-runtime' }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      checkpointLifecycle: {
+        onBeforePromptDispatch: async ({ messageId }) => {
+          calls.push(`message-start:${messageId}`);
+        },
+        onTurnStarted: async ({ messageId, turnId }) => {
+          calls.push(`turn-start:${messageId}:${turnId}`);
+        },
+        onTurnFinal: async ({ messageId, turnId, status }) => {
+          calls.push(`turn-final:${messageId}:${turnId}:${status}`);
+        },
+      },
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(calls).toEqual([
+      'message-start:local-canonical-runtime',
+      'turn-start:local-canonical-runtime:codex-turn-1',
+      'turn-final:local-canonical-runtime:codex-turn-1:completed',
     ]);
   });
 
@@ -654,7 +1506,7 @@ describe('runPermissionModePromptLoop', () => {
 
     expect(beforePendingMaterialize).toHaveBeenCalled();
     expect(session.popPendingMessage).not.toHaveBeenCalled();
-    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('after-gate');
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('after-gate', localIdentityMeta('local-gate'));
   });
 
   it('drains accepted pending rows after eager initial resume before parking idle', async () => {
@@ -749,7 +1601,10 @@ describe('runPermissionModePromptLoop', () => {
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     });
 
-    expect(session.materializeNextPendingMessageSafely).toHaveBeenCalledWith({ reconcileWhenEmpty: 'force' });
+    expect(session.materializeNextPendingMessageSafely).toHaveBeenCalledWith({
+      reconcileWhenEmpty: 'force',
+      activeTurnDeliveryPolicy: 'allow_live_delivery',
+    });
     expect(messageBuffer.getMessages()).toContainEqual(expect.objectContaining({
       type: 'status',
       content: 'Pending prompts could not be restored after startup; please retry once the session is reachable.',
@@ -757,6 +1612,57 @@ describe('runPermissionModePromptLoop', () => {
     expect(sendAgentMessageSpy).toHaveBeenCalledWith('qwen', {
       type: 'message',
       message: 'Pending prompts could not be restored after startup; please retry once the session is reachable.',
+    });
+  });
+
+  it('passes runtime-idle delivery timing into eager pending drain materialization', async () => {
+    const session = createPromptLoopSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+    session.materializeNextPendingMessageSafely = vi.fn(async () => ({
+      type: 'deferred' as const,
+      reason: 'runtime_activity_active' as const,
+    }));
+
+    let shouldExit = false;
+    const onAfterStart = vi.fn(() => {
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {},
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      initialResumeId: 'resume-123',
+      strictInitialResume: true,
+      onAfterStart,
+      pendingQueueDeliveryTiming: 'after_runtime_idle',
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    } as Parameters<typeof runPermissionModePromptLoop>[0] & { pendingQueueDeliveryTiming: 'after_runtime_idle' });
+
+    expect(session.materializeNextPendingMessageSafely).toHaveBeenCalledWith({
+      reconcileWhenEmpty: 'force',
+      activeTurnDeliveryPolicy: 'allow_live_delivery',
+      deliveryTiming: 'after_runtime_idle',
     });
   });
 
@@ -812,6 +1718,55 @@ describe('runPermissionModePromptLoop', () => {
       type: 'message',
       message: 'Pending prompts could not be restored after startup because session authentication failed; reconnect and retry.',
     });
+  });
+
+  it('parks after an idle pending materialization auth failure and continues with later input', async () => {
+    const session = createPromptLoopSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+    session.materializeNextPendingMessageSafely = vi.fn(async () => {
+      queueMicrotask(() => {
+        queue.push({ text: 'after auth park', localId: 'local-after-auth' }, { permissionMode: 'default' });
+      });
+      return {
+        type: 'deferred' as const,
+        reason: 'supervisor_auth_failed' as const,
+      };
+    });
+
+    let shouldExit = false;
+    await expect(runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    })).resolves.toBeUndefined();
+
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith(
+      'after auth park',
+      localIdentityMeta('local-after-auth'),
+    );
   });
 
   it('uses a preloaded resume metadata snapshot instead of refreshing session detail before eager start', async () => {
@@ -994,7 +1949,7 @@ describe('runPermissionModePromptLoop', () => {
     });
 
     expect(runtime.startOrLoadSession).toHaveBeenCalledTimes(1);
-    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('APPEND\n\nhello');
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('APPEND\n\nhello', localIdentityMeta('local-eager-1'));
   });
 
   it('uses sendPromptWithMeta when provided by the runtime', async () => {
@@ -1042,8 +1997,205 @@ describe('runPermissionModePromptLoop', () => {
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     });
 
-    expect(runtime.sendPromptWithMeta).toHaveBeenCalledWith({ text: 'hello', localId: 'local-1' });
+    expect(runtime.sendPromptWithMeta).toHaveBeenCalledWith({ text: 'hello', ...localIdentityMeta('local-1') });
     expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
+  });
+
+  it('preserves provider-claimed pending identity when dispatching through sendPromptWithMeta', async () => {
+    const session = createPromptLoopSession();
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    runtime.sendPromptWithMeta = vi.fn(async () => {});
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+    const localId = 'local-provider-claimed-meta';
+
+    queue.push(
+      {
+        text: 'provider claimed meta prompt',
+        localId,
+        localIds: [localId],
+        providerClaimedPendingLocalIds: [localId],
+      },
+      { permissionMode: 'default', suppressUserEcho: true },
+    );
+
+    let shouldExit = false;
+    const readySpy = vi.fn(() => {
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.sendPromptWithMeta).toHaveBeenCalledWith({
+      text: 'provider claimed meta prompt',
+      ...localIdentityMeta(localId),
+      providerClaimedPendingLocalIds: [localId],
+    });
+    expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
+  });
+
+  it('passes a queued model override as prompt metadata without mutating the persistent runtime model', async () => {
+    const session = createPromptLoopSession();
+    session.__setMetadata(createPromptLoopMetadata({
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 0,
+    }));
+
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const configUpdates: unknown[] = [];
+    runtime.updateSessionRuntimeConfig = vi.fn<RuntimeTurnOperations['updateSessionRuntimeConfig']>(async (update) => {
+      configUpdates.push(update);
+    });
+    runtime.sendPromptWithMeta = vi.fn(async () => {});
+
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push(
+      { text: 'hello with selected model', localId: 'local-model-1' },
+      { permissionMode: 'default', model: 'opencode/big-pickle' },
+    );
+
+    let shouldExit = false;
+    const readySpy = vi.fn(() => {
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: (isStarted) =>
+        createRuntimeOverrideSynchronizers({
+          agentTargetKey: 'backend:codex',
+          session,
+          runtime: {
+            setSessionMode: async () => {},
+            setSessionModel: async () => {},
+            setSessionConfigOption: async () => {},
+          },
+          isStarted,
+        }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.updateSessionRuntimeConfig).not.toHaveBeenCalledWith({ modelId: 'opencode/big-pickle' });
+    expect(runtime.sendPromptWithMeta).toHaveBeenCalledWith({
+      text: 'hello with selected model',
+      modelId: 'opencode/big-pickle',
+      ...localIdentityMeta('local-model-1'),
+    });
+  });
+
+  it('applies a queued permission mode override before dispatching the prompt', async () => {
+    const session = createPromptLoopSession();
+    session.__setMetadata(createPromptLoopMetadata({
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 0,
+    }));
+
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const configUpdates: unknown[] = [];
+    runtime.updateSessionRuntimeConfig = vi.fn<RuntimeTurnOperations['updateSessionRuntimeConfig']>(async (update) => {
+      configUpdates.push(update);
+    });
+    runtime.sendPromptWithMeta = vi.fn(async () => {
+      expect(configUpdates).toContainEqual({ permissionMode: 'read-only' });
+    });
+
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push(
+      { text: 'hello read-only', localId: 'local-permission-1' },
+      { permissionMode: 'read-only' },
+    );
+
+    let shouldExit = false;
+    const readySpy = vi.fn(() => {
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: (isStarted) =>
+        createRuntimeOverrideSynchronizers({
+          agentTargetKey: 'backend:codex',
+          session,
+          runtime: {
+            setSessionMode: async () => {},
+            setSessionModel: async () => {},
+            setSessionConfigOption: async () => {},
+          },
+          isStarted,
+        }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.updateSessionRuntimeConfig).toHaveBeenCalledWith({ permissionMode: 'read-only' });
+    expect(runtime.sendPromptWithMeta).toHaveBeenCalledWith({
+      text: 'hello read-only',
+      ...localIdentityMeta('local-permission-1'),
+    });
   });
 
   it('formats object-shaped prompt errors without leaking [object Object] into the transcript', async () => {
@@ -1094,10 +2246,64 @@ describe('runPermissionModePromptLoop', () => {
       type: 'message',
       message: expect.stringContaining('"message": "Internal error"'),
     });
+    expect(sendAgentMessageSpy).toHaveBeenCalledWith('qwen', {
+      type: 'turn_failed',
+      id: 'local-object-error',
+    });
     const sentMessages = sendAgentMessageSpy.mock.calls.map((call) =>
       'message' in call[1] ? call[1].message ?? '' : '',
     );
     expect(sentMessages.join('\n')).not.toContain('[object Object]');
+  });
+
+  it('marks the queued turn failed when runtime startup fails before prompt dispatch', async () => {
+    const session = createPromptLoopSession();
+    const sendAgentMessageSpy = vi.spyOn(session, 'sendAgentMessage');
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    runtime.startOrLoadSession = vi.fn(async () => {
+      throw new ReferenceError('Qwen CLI (qwen) is not available from any configured source.');
+    });
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push({ text: 'hello', localId: 'local-start-error' }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    await runPermissionModePromptLoop({
+      providerName: 'Qwen',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {
+        shouldExit = true;
+      },
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: formatProviderPromptErrorMessage,
+    });
+
+    expect(sendAgentMessageSpy).toHaveBeenCalledWith('qwen', {
+      type: 'message',
+      message: expect.stringContaining('Qwen CLI (qwen) is not available'),
+    });
+    expect(sendAgentMessageSpy).toHaveBeenCalledWith('qwen', {
+      type: 'turn_failed',
+      id: 'local-start-error',
+    });
   });
 
   it('does not surface abort-like prompt failures as agent messages', async () => {
@@ -1278,6 +2484,7 @@ describe('runPermissionModePromptLoop', () => {
       runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
       createOverrideSynchronizer: (isStarted) =>
         createRuntimeOverrideSynchronizers({
+          agentTargetKey: 'backend:codex',
           session,
           runtime: {
             setSessionMode: async (modeId: string) => {
@@ -1352,6 +2559,7 @@ describe('runPermissionModePromptLoop', () => {
       runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
       createOverrideSynchronizer: (isStarted) =>
         createRuntimeOverrideSynchronizers({
+          agentTargetKey: 'backend:codex',
           session,
           runtime: {
             setSessionMode: async () => {},
@@ -1420,6 +2628,7 @@ describe('runPermissionModePromptLoop', () => {
       runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
       createOverrideSynchronizer: (isStarted) =>
         createRuntimeOverrideSynchronizers({
+          agentTargetKey: 'backend:codex',
           session,
           runtime: {
             setSessionMode: async () => {},
@@ -1516,6 +2725,7 @@ describe('runPermissionModePromptLoop', () => {
         runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
         createOverrideSynchronizer: (isStarted) =>
           createRuntimeOverrideSynchronizers({
+            agentTargetKey: 'backend:codex',
             session,
             runtime: {
               setSessionMode: async (modeId: string) => {
@@ -1618,6 +2828,7 @@ describe('runPermissionModePromptLoop', () => {
       runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
       createOverrideSynchronizer: (isStarted) =>
         createRuntimeOverrideSynchronizers({
+          agentTargetKey: 'backend:codex',
           session,
           runtime: {
             setSessionMode: async (modeId: string) => {
@@ -1711,8 +2922,8 @@ describe('runPermissionModePromptLoop', () => {
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     });
 
-    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(1, 'APPEND\n\nhello');
-    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(2, 'second');
+    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(1, 'APPEND\n\nhello', localIdentityMeta('local-1'));
+    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(2, 'second', localIdentityMeta('local-2'));
   });
 
   it('does not prepend appendSystemPrompt when resuming an existing provider session', async () => {
@@ -1759,11 +2970,15 @@ describe('runPermissionModePromptLoop', () => {
     });
 
     expect(runtime.startOrLoadSession).toHaveBeenCalledWith({ resumeId: 'resume-1', importHistory: false });
-    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('hello');
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('hello', localIdentityMeta('local-1'));
   });
 
   it('handles /clear by resetting runtime and skipping prompt send', async () => {
     const session = createPromptLoopSession();
+    Object.assign(session, {
+      confirmUserMessageDeliveredToProvider: vi.fn(),
+      confirmUserMessageLocallyConsumed: vi.fn(),
+    });
     const updateMetadataSpy = vi.spyOn(session, 'updateMetadata');
     session.__setMetadata({
       ...createPromptLoopMetadata({
@@ -1786,7 +3001,7 @@ describe('runPermissionModePromptLoop', () => {
       reset: vi.fn(),
     } as any;
 
-    queue.push({ text: '/clear', localId: 'local-2' }, { permissionMode: 'default' });
+    queue.push({ text: '/clear', localId: 'local-2', userMessageSeq: 64 }, { permissionMode: 'default' });
 
     let shouldExit = false;
     const readySpy = vi.fn(() => {
@@ -1830,10 +3045,20 @@ describe('runPermissionModePromptLoop', () => {
     expect(onBeforeReset).toHaveBeenCalledWith({ reason: 'clear' });
     expect(onAfterReset).toHaveBeenCalledWith({ reason: 'clear' });
     expect(onAfterLoopBoundary).toHaveBeenCalledWith({ reason: 'clear_reset' });
+    expect(session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
+    expect(session.confirmUserMessageLocallyConsumed).toHaveBeenCalledWith({
+      localIds: ['local-2'],
+      userMessageSeq: 64,
+      userMessageSeqs: [64],
+    });
   });
 
   it('handles /compact through a runtime compaction hook without sending it as a normal prompt', async () => {
     const session = createPromptLoopSession();
+    Object.assign(session, {
+      confirmUserMessageDeliveredToProvider: vi.fn(),
+      confirmUserMessageLocallyConsumed: vi.fn(),
+    });
     session.__setMetadata({
       ...createPromptLoopMetadata({
         permissionMode: 'default',
@@ -1856,7 +3081,7 @@ describe('runPermissionModePromptLoop', () => {
       reset: vi.fn(),
     } as any;
 
-    queue.push({ text: '/compact keep latest task details', localId: 'local-compact' }, { permissionMode: 'default' });
+    queue.push({ text: '/compact keep latest task details', localId: 'local-compact', userMessageSeq: 65 }, { permissionMode: 'default' });
 
     let shouldExit = false;
     const readySpy = vi.fn(() => {
@@ -1889,6 +3114,124 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.sendTurnPrompt).not.toHaveBeenCalled();
     expect(runtime.sendPromptWithMeta).toBeUndefined();
     expect(readySpy).toHaveBeenCalledTimes(1);
+    expect(session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
+    expect(session.confirmUserMessageLocallyConsumed).toHaveBeenCalledWith({
+      localIds: ['local-compact'],
+      userMessageSeq: 65,
+      userMessageSeqs: [65],
+    });
+  });
+
+  it('skips replayed locally consumed slash commands without provider custody', async () => {
+    const session = createPromptLoopSession();
+    Object.assign(session, {
+      getProviderAcceptedUserMessageSeq: vi.fn(() => null),
+      hasUserMessageLocalConsumption: vi.fn((query: { userMessageSeq?: number | null }) => query.userMessageSeq === 64),
+      confirmUserMessageDeliveredToProvider: vi.fn(),
+    });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push({ text: '/clear', localId: 'local-clear-replay', userMessageSeq: 64 }, { permissionMode: 'default' });
+    queue.push({ text: 'fresh prompt', localId: 'local-fresh', userMessageSeq: 65 }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    const readySpy = vi.fn(() => {
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.resetOrDisposeRuntime).not.toHaveBeenCalled();
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('fresh prompt', {
+      ...localIdentityMeta('local-fresh'),
+      userMessageSeq: 65,
+      userMessageSeqs: [65],
+    });
+    expect(session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
+  });
+
+  it('skips local-id-only replayed slash commands that were already locally consumed', async () => {
+    const session = createPromptLoopSession();
+    Object.assign(session, {
+      getProviderAcceptedUserMessageSeq: vi.fn(() => null),
+      hasUserMessageLocalConsumption: vi.fn((query: { localIds?: readonly string[] }) =>
+        query.localIds?.includes('local-clear-replay') === true),
+      confirmUserMessageDeliveredToProvider: vi.fn(),
+    });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push({ text: '/clear', localId: 'local-clear-replay' }, { permissionMode: 'default' });
+    queue.push({ text: 'fresh prompt', localId: 'local-fresh', userMessageSeq: 65 }, { permissionMode: 'default' });
+
+    let shouldExit = false;
+    const readySpy = vi.fn(() => {
+      shouldExit = true;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(session.hasUserMessageLocalConsumption).toHaveBeenCalledWith({
+      localIds: ['local-clear-replay'],
+      userMessageSeq: null,
+      userMessageSeqs: [],
+    });
+    expect(runtime.resetOrDisposeRuntime).not.toHaveBeenCalled();
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('fresh prompt', {
+      ...localIdentityMeta('local-fresh'),
+      userMessageSeq: 65,
+      userMessageSeqs: [65],
+    });
+    expect(session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
   });
 
   it('does not leak unsupported /compact commands as normal prompts', async () => {
@@ -1987,14 +3330,79 @@ describe('runPermissionModePromptLoop', () => {
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     });
 
-    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(1, 'first');
-    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(2, 'second');
+    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(1, 'first', localIdentityMeta('local-3'));
+    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(2, 'second', localIdentityMeta('local-4'));
     expect(runtime.resetOrDisposeRuntime).toHaveBeenCalledTimes(1);
     expect(runtime.startOrLoadSession).toHaveBeenNthCalledWith(1, {});
     expect(runtime.startOrLoadSession).toHaveBeenNthCalledWith(2, { resumeId: 'resume-from-runtime', importHistory: false });
     expect(onBeforeReset).toHaveBeenCalledWith({ reason: 'mode_change' });
     expect(onAfterReset).toHaveBeenCalledWith({ reason: 'mode_change' });
     expect(onAfterLoopBoundary).toHaveBeenCalledWith({ reason: 'mode_change_reset' });
+  });
+
+  it('replays pending-queue materialized follow-ups after a model-backed mode reset', async () => {
+    const session = createPromptLoopSession();
+    Object.assign(session, {
+      hasPendingQueueMaterializedLocalId: vi.fn((localId: string) => localId === 'local-ui-followup'),
+      getCommittedUserMessageSeq: vi.fn((localId: string) => localId === 'local-ui-followup' ? 4 : null),
+      waitForCommittedUserMessageSeq: vi.fn(async () => 4),
+    });
+    const queue = createModeQueue();
+    const runtime = createRuntime();
+    runtime.updateSessionRuntimeConfig = vi.fn(async () => ({ status: 'unsupported' as const }));
+    const messageBuffer = new MessageBuffer();
+    const permissionHandler = {
+      setPermissionMode: vi.fn(),
+      reset: vi.fn(),
+    } as any;
+
+    queue.push(
+      { text: 'initial', localId: 'local-ui-initial', userMessageSeq: 1 },
+      { permissionMode: 'default', model: 'Gemini 3.5 Flash (Low)' },
+    );
+    queue.push(
+      { text: 'follow-up', localId: 'local-ui-followup' },
+      { permissionMode: 'default' },
+    );
+
+    let readyCount = 0;
+    const readySpy = vi.fn(() => {
+      readyCount += 1;
+    });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Antigravity',
+      agentMessageType: 'antigravity',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler,
+      runtime: runtime as unknown as Parameters<typeof runPermissionModePromptLoop>[0]['runtime'],
+      createOverrideSynchronizer: () => ({ syncFromMetadata: () => {}, flushPendingAfterStart: async () => {} }),
+      messageBuffer,
+      shouldExit: () => readyCount >= 2,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: readySpy,
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(runtime.resetOrDisposeRuntime).toHaveBeenCalledTimes(1);
+    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(1, 'initial', {
+      ...localIdentityMeta('local-ui-initial'),
+      modelId: 'Gemini 3.5 Flash (Low)',
+      userMessageSeq: 1,
+      userMessageSeqs: [1],
+    });
+    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(2, 'follow-up', {
+      ...localIdentityMeta('local-ui-followup'),
+      userMessageSeq: 4,
+      userMessageSeqs: [4],
+    });
   });
 
   it('drops vendor resume when permission settings change on a runtime that requires a fresh session', async () => {
@@ -2037,8 +3445,8 @@ describe('runPermissionModePromptLoop', () => {
       formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
     });
 
-    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(1, 'first');
-    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(2, 'second');
+    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(1, 'first', localIdentityMeta('local-3b'));
+    expect(runtime.sendTurnPrompt).toHaveBeenNthCalledWith(2, 'second', localIdentityMeta('local-4b'));
     expect(runtime.resetOrDisposeRuntime).toHaveBeenCalledTimes(1);
     expect(runtime.startOrLoadSession).toHaveBeenNthCalledWith(1, {});
     expect(runtime.startOrLoadSession).toHaveBeenNthCalledWith(2, {});
@@ -2102,7 +3510,7 @@ describe('runPermissionModePromptLoop', () => {
     expect(runtime.resetOrDisposeRuntime).toHaveBeenCalledTimes(1);
     expect(runtime.startOrLoadSession).toHaveBeenNthCalledWith(2, {});
     expect(sendAgentMessageSpy).toHaveBeenCalledWith('qwen', { type: 'message', message: 'Resume failed; starting a new session.' });
-    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('hello');
+    expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('hello', localIdentityMeta('local-5'));
   });
 
   it('disables ACP replay history import when resuming a forked session (acp_fork_latest)', async () => {

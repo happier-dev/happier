@@ -71,6 +71,27 @@ async function bestEffortSignalDirectChildren(parentPid: number, signal: NodeJS.
   });
 }
 
+function hasProcessGroupForPid(pid: number): boolean {
+  if (process.platform === 'win32') return false;
+
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function bestEffortKillProcessGroup(groupLeaderPid: number, signal: NodeJS.Signals): void {
+  if (process.platform === 'win32') return;
+
+  try {
+    process.kill(-groupLeaderPid, signal);
+  } catch {
+    // ignore
+  }
+}
+
 async function waitForAllGone(pids: number[], timeoutMs: number): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -89,18 +110,29 @@ export async function killProcessTree(
   if (!pid) return;
 
   const graceMs = Math.max(1, opts?.graceMs ?? 1000);
+  const shouldSignalProcessGroup = hasProcessGroupForPid(pid);
 
-  // Outer test harnesses often terminate the CLI process tree by pid. If we spawn ACP CLIs with
-  // `detached: true`, the agent process falls outside that tree and can leak. Keep agents attached,
-  // and explicitly kill descendants on dispose.
+  // A detached POSIX child is its own process-group leader. Signal that group first so
+  // late-forked descendants in the same group cannot escape the initial psList snapshot.
+  // Keep psList/pkill fallback for Windows and non-detached roots, where no group with
+  // this PID exists.
   const descendants = await resolveDescendantPids(pid).catch(() => []);
   const all = [...descendants, pid];
 
+  if (shouldSignalProcessGroup) bestEffortKillProcessGroup(pid, 'SIGTERM');
   for (const targetPid of all) await bestEffortSignalDirectChildren(targetPid, 'SIGTERM');
   for (const targetPid of all) bestEffortKillPid(targetPid, 'SIGTERM');
   await waitForAllGone(all, graceMs);
 
   const remaining = all.filter((p) => isAlive(p));
+  if (remaining.length === 0 && !shouldSignalProcessGroup) return;
+
+  if (shouldSignalProcessGroup) {
+    bestEffortKillProcessGroup(pid, 'SIGTERM');
+    await new Promise((resolve) => setTimeout(resolve, Math.min(100, graceMs)));
+    bestEffortKillProcessGroup(pid, 'SIGKILL');
+  }
+
   if (remaining.length === 0) return;
 
   for (const targetPid of remaining) await bestEffortSignalDirectChildren(targetPid, 'SIGKILL');

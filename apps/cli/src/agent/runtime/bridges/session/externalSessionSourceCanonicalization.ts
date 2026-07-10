@@ -1,5 +1,5 @@
 import type {
-  ExternalSessionsProviderId,
+  ExternalSessionsAgentId,
   ExternalSessionsSource,
   RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
@@ -22,25 +22,25 @@ export type CanonicalizedExternalSessionSourceResult = Readonly<{
 
 type ExternalSessionCanonicalizationDeps = Readonly<{
   resolveExternalSessionProviderOps?: (
-    providerId: ExternalSessionsProviderId,
+    agentId: ExternalSessionsAgentId,
   ) => Promise<ExternalSessionExecutionSurface | null>;
 }>;
 
 async function resolveExternalSessionProviderOps(
-  providerId: ExternalSessionsProviderId,
+  agentId: ExternalSessionsAgentId,
 ): Promise<ExternalSessionExecutionSurface | null> {
-  return (await resolveBackendExecutionSurfaces(providerId)).externalSession;
+  return (await resolveBackendExecutionSurfaces(agentId)).externalSession;
 }
 
 export async function resolveExternalSessionLinkIdentity(params: Readonly<{
-  providerId: ExternalSessionsProviderId;
+  agentId: ExternalSessionsAgentId;
   remoteSessionId: string;
   source: ExternalSessionsSource;
   runtimeDescriptor?: RuntimeDescriptorV1 | null;
   metadata?: Record<string, unknown>;
 }>, deps: ExternalSessionCanonicalizationDeps = {}): Promise<ExternalSessionLinkIdentity> {
   const resolveOps = deps.resolveExternalSessionProviderOps ?? resolveExternalSessionProviderOps;
-  const providerOps = await resolveOps(params.providerId);
+  const providerOps = await resolveOps(params.agentId);
   if (!providerOps?.resolveLinkIdentity) {
     return {
       remoteSessionId: params.remoteSessionId,
@@ -57,17 +57,17 @@ export async function resolveExternalSessionLinkIdentity(params: Readonly<{
 }
 
 export async function canonicalizeLinkedExternalSessionSource(params: Readonly<{
-  providerId: ExternalSessionsProviderId;
+  agentId: ExternalSessionsAgentId;
   metadata: Record<string, unknown>;
   remoteSessionId: string;
   source: ExternalSessionsSource;
 }>, deps: ExternalSessionCanonicalizationDeps = {}): Promise<CanonicalizedExternalSessionSourceResult> {
   const resolveOps = deps.resolveExternalSessionProviderOps ?? resolveExternalSessionProviderOps;
-  const providerOps = await resolveOps(params.providerId);
+  const providerOps = await resolveOps(params.agentId);
   const runtimeIdentity = resolveSessionRuntimeIdentityFallback({
     metadata: params.metadata,
     providerDefaults: {
-      providerId: params.providerId,
+      agentId: params.agentId,
       externalSessionSource: params.source,
       externalSessionRemoteSessionId: params.remoteSessionId,
     },

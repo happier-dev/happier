@@ -13,8 +13,8 @@ const GEMINI_PLUGIN_ID = 'happier.agent.gemini';
 
 function createGeminiOnlyContributionRegistry(): ResolvedContributionRegistry {
   const builtInContributions = resolveBuiltInContributions();
-  const provider = builtInContributions.providers.find((entry) => entry.id === GEMINI_BACKEND_ID);
-  const backend = builtInContributions.backends.find((entry) => entry.id === GEMINI_BACKEND_ID);
+  const provider = builtInContributions.agents.find((entry) => entry.id === GEMINI_BACKEND_ID);
+  const backend = builtInContributions.agentRuntimes.find((entry) => entry.id === GEMINI_BACKEND_ID);
   const activationTargets = builtInContributions.activationTargets?.filter((target) => target.pluginId === GEMINI_PLUGIN_ID) ?? [];
 
   if (!provider || !backend || activationTargets.length !== 1) {
@@ -22,8 +22,8 @@ function createGeminiOnlyContributionRegistry(): ResolvedContributionRegistry {
   }
 
   return {
-    providers: Object.freeze([provider]),
-    backends: Object.freeze([backend]),
+    agents: Object.freeze([provider]),
+    agentRuntimes: Object.freeze([backend]),
     actions: Object.freeze([]),
     resources: Object.freeze([]),
     uiDescriptors: Object.freeze([]),
@@ -31,7 +31,7 @@ function createGeminiOnlyContributionRegistry(): ResolvedContributionRegistry {
     notificationChannels: Object.freeze([]),
     events: Object.freeze([]),
     executionRunProfiles: Object.freeze([]),
-    installables: Object.freeze([]),
+    managedDependencies: Object.freeze([]),
     requestInterceptors: Object.freeze([]),
     scmHostingProviders: Object.freeze([]),
     scmBackends: Object.freeze([]),
@@ -40,8 +40,8 @@ function createGeminiOnlyContributionRegistry(): ResolvedContributionRegistry {
     hookRegistrations: Object.freeze([]),
     surfaceHandlersByBackendId: new Map(),
     catalogEntriesById: Object.freeze(provider.catalogEntry ? { [provider.catalogEntry.id]: provider.catalogEntry } : {}),
-    providerDefinitionsById: new Map([[provider.id, provider]]),
-    backendDefinitionsById: new Map([[backend.id, backend]]),
+    agentDefinitionsById: new Map([[provider.id, provider]]),
+    agentRuntimeDefinitionsById: new Map([[backend.id, backend]]),
     pluginDiagnosticsByPluginId: Object.freeze({}),
   };
 }
@@ -74,7 +74,7 @@ describe('engineRegistry (gemini runtimeCore)', () => {
     });
 
     expect({
-      engines: [...runtimeRegistry.backendEnginesByBackendId.entries()].map(([backendId, entry]) => ({
+      engines: [...runtimeRegistry.agentRuntimesByAgentId.entries()].map(([backendId, entry]) => ({
         backendId,
         pluginId: entry.pluginId,
       })),
@@ -129,7 +129,7 @@ describe('engineRegistry (gemini runtimeCore)', () => {
 
     expect(plan).toMatchObject({
       kind: 'hostSessionRuntimePlan',
-      providerId: GEMINI_BACKEND_ID,
+      agentId: GEMINI_BACKEND_ID,
       config: {
         providerName: 'Gemini CLI',
         agentMessageType: 'gemini',

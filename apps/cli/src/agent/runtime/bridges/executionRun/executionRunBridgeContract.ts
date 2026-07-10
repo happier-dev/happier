@@ -8,6 +8,16 @@ import type {
   ExecutionRunState,
 } from './executionRunTypes';
 import type { ExecutionRunParentSessionPermissionResponseTarget } from '@/agent/executionRuns/policy/executionRunPermissionInteractionPolicy';
+import type { RuntimePermissionResponseOutcome } from './executionRunHostRuntime';
+
+export type ExecutionRunPermissionResponseBridgeResult =
+  | Readonly<{ ok: true; delivery: RuntimePermissionResponseOutcome }>
+  | Readonly<{
+      ok: false;
+      errorCode?: string;
+      error?: string;
+      delivery?: RuntimePermissionResponseOutcome;
+    }>;
 
 /**
  * Canonical live execution-run host-bridge surface. This is the concrete owner that superseded
@@ -54,6 +64,7 @@ export interface ExecutionRunHostBridgeContract {
     params: Readonly<{ streamId: string }>,
   ): Promise<{ ok: true } | { ok: false; errorCode: string; error: string }>;
   stop(runId: string): Promise<{ ok: boolean; errorCode?: string; error?: string }>;
+  dispose?(): Promise<void>;
   respondToPermissionRequest(
     runId: string,
     params: Readonly<{
@@ -61,6 +72,6 @@ export interface ExecutionRunHostBridgeContract {
       approved: boolean;
       responseTarget?: ExecutionRunParentSessionPermissionResponseTarget | null;
     }>,
-  ): Promise<{ ok: boolean; errorCode?: string; error?: string }>;
+  ): Promise<ExecutionRunPermissionResponseBridgeResult>;
   applyAction(runId: string, params: ExecutionRunActionParams): Promise<ExecutionRunActionResult>;
 }

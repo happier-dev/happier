@@ -8,6 +8,8 @@ import {
   ConnectedServiceIdSchema,
   readConnectedServiceLimitCategoryV1,
 } from '@happier-dev/protocol';
+import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
+import { hasConnectedServiceRuntimeAuthRecoveryContext } from './connectedServiceRuntimeAuthRecoveryContext';
 
 export type PrimarySessionRuntimeIssueCause =
   | 'status_error'
@@ -21,7 +23,7 @@ export type PrimarySessionRuntimeIssueCause =
 
 export type ClassifyPrimarySessionRuntimeIssueInput = Readonly<{
   provider?: string | null;
-  providerTurnId?: string | null;
+  agentTurnId?: string | null;
   sessionSeq?: number | null;
   cause?: PrimarySessionRuntimeIssueCause | null;
   error?: unknown;
@@ -29,9 +31,9 @@ export type ClassifyPrimarySessionRuntimeIssueInput = Readonly<{
 }>;
 
 const causeSourceMap = {
-  status_error: 'provider_status_error',
-  process_exit: 'provider_process_exit',
-  session_error: 'provider_session_error',
+  status_error: 'agent_status_error',
+  process_exit: 'agent_process_exit',
+  session_error: 'agent_session_error',
   usage_limit: 'usage_limit',
   auth_error: 'auth_error',
   stream_error: 'stream_error',
@@ -40,10 +42,10 @@ const causeSourceMap = {
 } as const satisfies Record<PrimarySessionRuntimeIssueCause, SessionRuntimeIssueSourceV1>;
 
 const sanitizedPreviewBySource = {
-  provider_status_error: 'Provider reported an error',
-  provider_process_exit: 'Provider process exited',
-  provider_process_exit_after_switch: 'Provider process exited after connected-service switch',
-  provider_session_error: 'Provider session failed',
+  agent_status_error: 'Provider reported an error',
+  agent_process_exit: 'Provider process exited',
+  agent_process_exit_after_switch: 'Provider process exited after connected-service switch',
+  agent_session_error: 'Provider session failed',
   usage_limit: 'Usage limit reached',
   auth_error: 'Authentication failed',
   dependency_failure: 'Provider dependency failed',
@@ -70,7 +72,7 @@ function extractErrorText(error: unknown): string {
 function refineStatusErrorSource(input: ClassifyPrimarySessionRuntimeIssueInput): SessionRuntimeIssueSourceV1 {
   const text = extractErrorText(input.error).toLowerCase();
   if (/\btemporar(?:y|ily)\s+limiting\s+requests\b/u.test(text) && /\bnot\s+your\s+usage\s+limit\b/u.test(text)) {
-    return 'provider_status_error';
+    return 'agent_status_error';
   }
   if (/\b(unauthorized|unauthenticated|authentication|auth|login required|not logged in|api key|401|403)\b/u.test(text)) {
     return 'auth_error';
@@ -81,7 +83,7 @@ function refineStatusErrorSource(input: ClassifyPrimarySessionRuntimeIssueInput)
   if (/\b(permission denied|permission blocked|blocked by policy|not allowed|access denied)\b/u.test(text)) {
     return 'permission_blocked';
   }
-  return 'provider_status_error';
+  return 'agent_status_error';
 }
 
 function normalizeNonEmptyString(value: unknown): string | null {
@@ -108,8 +110,8 @@ function normalizeStateMode(value: unknown): 'shared' | 'isolated' | null {
 
 function readProviderProcessExitAfterSwitchDetails(
   error: unknown,
-): SessionRuntimeIssueV1['providerProcessExitAfterSwitch'] {
-  const details = readRecord(readRecord(error)?.providerProcessExitAfterSwitch);
+): SessionRuntimeIssueV1['agentProcessExitAfterSwitch'] {
+  const details = readRecord(readRecord(error)?.agentProcessExitAfterSwitch);
   if (!details) return undefined;
   const exitCode = normalizeNonNegativeInteger(details.exitCode);
   const signal = normalizeNullableString(details.signal, 128);
@@ -247,20 +249,20 @@ function buildUsageLimitDetailsFromStableText(
   };
 }
 
-function readRecord(value: unknown): Record<string, unknown> | null {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : null;
 }
 
-function readRuntimeAuthClassification(error: unknown): Record<string, unknown> | null {
-  return readRecord(readRecord(error)?.runtimeAuthClassification);
+function readRuntimeAuthClassification(error: unknown): Readonly<Record<string, unknown>> | null {
+  return sanitizeConnectedServiceRuntimeFailureClassification(readRecord(readRecord(error)?.runtimeAuthClassification));
 }
 
-function readRuntimeAuthRecoveryResult(error: unknown): Record<string, unknown> | null {
+function readRuntimeAuthRecoveryResult(error: unknown): Readonly<Record<string, unknown>> | null {
   return readRecord(readRecord(error)?.runtimeAuthRecoveryResult);
 }
 
 function resolveRuntimeAuthRecoveryDecision(
-  recoveryResult: Record<string, unknown> | null,
+  recoveryResult: Readonly<Record<string, unknown>> | null,
 ): NonNullable<SessionRuntimeUsageLimitDetailsV1['recoveryDecision']> | null {
   const recoveryStatus = normalizeNonEmptyString(recoveryResult?.status);
   if (recoveryStatus === 'temporary_retry_armed') return 'waiting_for_reset';
@@ -289,7 +291,7 @@ function resolveRuntimeAuthRecoveryDecision(
 }
 
 function buildUsageLimitDetailsFromRuntimeAuthClassification(
-  classification: Record<string, unknown> | null,
+  classification: Readonly<Record<string, unknown>> | null,
   recoveryDecision: NonNullable<SessionRuntimeUsageLimitDetailsV1['recoveryDecision']> | null,
 ): SessionRuntimeUsageLimitDetailsV1 | null {
   if (!classification) return null;
@@ -308,8 +310,7 @@ function buildUsageLimitDetailsFromRuntimeAuthClassification(
   if (!serviceId.success) return null;
   const groupId = normalizeNonEmptyString(classification.groupId);
   const profileId = normalizeNonEmptyString(classification.profileId);
-  const connectedServiceRecovery = normalizeNonEmptyString(classification.connectedServiceRecovery);
-  const hasConnectedServiceRecovery = connectedServiceRecovery !== 'unavailable';
+  const hasConnectedServiceRecovery = hasConnectedServiceRuntimeAuthRecoveryContext(classification);
   const rateLimits = readRecord(classification.rateLimits);
   const providerLimitId = normalizeNonEmptyString(classification.providerLimitId ?? rateLimits?.providerLimitId);
   const limitCategory = readConnectedServiceLimitCategoryV1(classification.limitCategory ?? rateLimits?.limitCategory);
@@ -341,7 +342,7 @@ function buildUsageLimitDetailsFromRuntimeAuthClassification(
 }
 
 function refineRuntimeAuthClassificationSource(
-  classification: Record<string, unknown> | null,
+  classification: Readonly<Record<string, unknown>> | null,
 ): SessionRuntimeIssueSourceV1 | null {
   const kind = normalizeNonEmptyString(classification?.kind);
   switch (kind) {
@@ -355,7 +356,7 @@ function refineRuntimeAuthClassificationSource(
     case 'plan':
     case 'validation':
     case 'account_disabled':
-      return 'provider_status_error';
+      return 'agent_status_error';
     case 'dependency_failure':
       return 'dependency_failure';
     default:
@@ -375,11 +376,11 @@ export function classifyPrimarySessionRuntimeIssue(
     runtimeAuthRecoveryDecision,
   );
   const runtimeAuthSource = refineRuntimeAuthClassificationSource(runtimeAuthClassification);
-  const providerProcessExitAfterSwitch = readProviderProcessExitAfterSwitchDetails(input.error);
+  const agentProcessExitAfterSwitch = readProviderProcessExitAfterSwitchDetails(input.error);
   const source = runtimeAuthSource
     ? runtimeAuthSource
-    : input.cause === 'process_exit' && providerProcessExitAfterSwitch
-    ? 'provider_process_exit_after_switch'
+    : input.cause === 'process_exit' && agentProcessExitAfterSwitch
+    ? 'agent_process_exit_after_switch'
     : input.cause === 'status_error'
     ? refineStatusErrorSource(input)
     : causeSourceMap[input.cause ?? 'unknown'] ?? 'unknown';
@@ -387,11 +388,11 @@ export function classifyPrimarySessionRuntimeIssue(
   const usageLimit = runtimeAuthUsageLimit ?? (source === 'usage_limit'
     ? buildUsageLimitDetailsFromStableText(input.error, occurredAt)
     : null);
-  const temporaryThrottle = source === 'provider_status_error'
+  const temporaryThrottle = source === 'agent_status_error'
     ? buildTemporaryThrottleDetails(input.error)
     : null;
   const provider = normalizeNonEmptyString(input.provider);
-  const providerTurnId = normalizeNonEmptyString(input.providerTurnId);
+  const agentTurnId = normalizeNonEmptyString(input.agentTurnId);
   const sessionSeq = normalizeNonNegativeInteger(input.sessionSeq);
 
   return {
@@ -403,11 +404,11 @@ export function classifyPrimarySessionRuntimeIssue(
     occurredAt,
     ...(sessionSeq === null ? {} : { sessionSeq }),
     ...(provider === null ? {} : { provider }),
-    ...(providerTurnId === null ? {} : { providerTurnId }),
+    ...(agentTurnId === null ? {} : { agentTurnId }),
     sanitizedPreview: buildSafeModelNotFoundPreview(input.error)
       ?? (temporaryThrottle ? 'Provider is temporarily limiting requests' : sanitizedPreviewBySource[source]),
     ...(usageLimit === null ? {} : { usageLimit }),
     ...(temporaryThrottle === null ? {} : { temporaryThrottle }),
-    ...(providerProcessExitAfterSwitch === undefined ? {} : { providerProcessExitAfterSwitch }),
+    ...(agentProcessExitAfterSwitch === undefined ? {} : { agentProcessExitAfterSwitch }),
   };
 }

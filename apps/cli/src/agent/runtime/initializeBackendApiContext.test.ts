@@ -44,7 +44,7 @@ describe('initializeBackendApiContext', () => {
   });
 
   it('skips machine registration when explicitly requested', async () => {
-    createApiClient.mockResolvedValue({ api: true });
+    createApiClient.mockResolvedValue({ api: true, setLocalMachineId: vi.fn() });
     readSettingsMock.mockResolvedValue({ machineId: 'machine-original' });
 
     const { initializeBackendApiContext } = await import('./initializeBackendApiContext');
@@ -61,7 +61,7 @@ describe('initializeBackendApiContext', () => {
   });
 
   it('registers machine by default and returns rotated id when provided', async () => {
-    createApiClient.mockResolvedValue({ api: true });
+    createApiClient.mockResolvedValue({ api: true, setLocalMachineId: vi.fn() });
     readSettingsMock.mockResolvedValue({ machineId: 'machine-original' });
     readDaemonStateMock.mockResolvedValue(null);
     ensureMachineRegisteredMock.mockResolvedValue({ machineId: 'machine-rotated' });
@@ -77,9 +77,28 @@ describe('initializeBackendApiContext', () => {
     expect(result.machineId).toBe('machine-rotated');
   });
 
+  it('records the resolved runtime machine id on the API client', async () => {
+    const api = { setLocalMachineId: vi.fn() };
+    createApiClient.mockResolvedValue(api);
+    readSettingsMock.mockResolvedValue({ machineId: 'machine-original' });
+    readDaemonStateMock.mockResolvedValue(null);
+    ensureMachineRegisteredMock.mockResolvedValue({ machineId: 'machine-rotated' });
+
+    const { initializeBackendApiContext } = await import('./initializeBackendApiContext');
+
+    const result = await initializeBackendApiContext({
+      credentials,
+      machineMetadata,
+    });
+
+    expect(result.api).toBe(api);
+    expect(result.machineId).toBe('machine-rotated');
+    expect(api.setLocalMachineId).toHaveBeenCalledWith('machine-rotated');
+  });
+
   it('skips machine registration when daemon is already running', async () => {
     const processKillSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
-    createApiClient.mockResolvedValue({ api: true });
+    createApiClient.mockResolvedValue({ api: true, setLocalMachineId: vi.fn() });
     readSettingsMock.mockResolvedValue({ machineId: 'machine-original' });
     readDaemonStateMock.mockResolvedValue({ pid: 12345 });
 

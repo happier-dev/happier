@@ -1,4 +1,9 @@
 import type { MaterializeNextPendingResult } from '@/api/session/sessionClientPort';
+import type { PendingMaterializationActiveTurnPolicy } from '@/api/session/pendingMaterializationActiveTurnPolicy';
+import type {
+  PendingMaterializationDeliveryTiming,
+  PendingQueueDeliveryBlockedReason,
+} from '@/api/session/pendingQueueV2Transport';
 
 export type MessageBatch<Mode, Message> = {
   message: Message;
@@ -14,9 +19,17 @@ export type SessionProviderInputConsumerSession = Readonly<{
   getMetadataSnapshot?: () => unknown;
   materializeNextPendingMessageSafely?: (opts?: {
     reconcileWhenEmpty?: PendingMaterializationReconcileWhenEmpty;
+    activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
+    deliveryTiming?: PendingMaterializationDeliveryTiming;
   }) => Promise<MaterializeNextPendingResult>;
   popPendingMessage: () => Promise<boolean>;
-  shouldAttemptPendingMaterialization?: () => boolean | Promise<boolean>;
+  blockPendingMessageDelivery?: (params: Readonly<{
+    localIds?: readonly string[] | null;
+    reason: PendingQueueDeliveryBlockedReason;
+  }>) => Promise<boolean>;
+  shouldAttemptPendingMaterialization?: (opts?: {
+    activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
+  }) => boolean | Promise<boolean>;
   reconcilePendingQueueState?: (opts: { force: boolean }) => unknown | Promise<unknown>;
 }>;
 
@@ -36,6 +49,9 @@ export type DrainPendingOptions = Readonly<{
   abortSignal?: AbortSignal;
   shouldContinue?: () => boolean | Promise<boolean>;
   logPrefix?: string;
+  activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
+  resolveActiveTurnDeliveryPolicy?: () => PendingMaterializationActiveTurnPolicy | undefined;
+  deliveryTiming?: PendingMaterializationDeliveryTiming;
 }>;
 
 export type DrainPendingResult = Readonly<{

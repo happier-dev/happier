@@ -3,9 +3,10 @@ import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 import type { BackendSurfaceDeclarationV1 } from '@happier-dev/protocol';
 
 import { createResolvedContributionRegistry } from '../../../plugins/projection/registry/createResolvedContributionRegistry';
+import { ExternalSessionProviderFailureError } from '@/session/external/providerOps';
 import type {
-  ResolvedBackendContribution,
-  ResolvedProviderContribution,
+  ResolvedAgentRuntimeContribution,
+  ResolvedAgentContribution,
 } from '../../../plugins/projection/registry/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '../../../plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 
@@ -20,7 +21,7 @@ vi.mock('../../../plugins/runtime/loadPluginDaemonModule', () => ({
 import { resolvePluginBackendSurfaceHandlers } from './resolvePluginBackendSurfaceHandlers';
 import type { BackendExecutionSurfaces } from './engineRegistryTypes';
 
-function createProviderContribution(): ResolvedProviderContribution {
+function createProviderContribution(): ResolvedAgentContribution {
     return {
         id: 'acme.runtime',
         provenance: 'external',
@@ -33,16 +34,16 @@ function createProviderContribution(): ResolvedProviderContribution {
     };
 }
 
-function createBackendContribution(): ResolvedBackendContribution {
+function createBackendContribution(): ResolvedAgentRuntimeContribution {
     return {
         id: 'acme.runtime.backend',
-        providerId: 'acme.runtime',
+        agentId: 'acme.runtime',
         provenance: 'external',
         source: { kind: 'path' },
         definition: {
             kindVersion: 1,
             id: 'acme.runtime.backend',
-            providerId: 'acme.runtime',
+            agentId: 'acme.runtime',
         },
         runtimeKind: 'acp',
         daemonEntryPath: '/tmp/acme-runtime/daemon.mjs',
@@ -53,21 +54,23 @@ function createBackendContribution(): ResolvedBackendContribution {
 }
 
 function createRuntimeRegistry(
-  backend: ResolvedBackendContribution,
-  provider: ResolvedProviderContribution = createProviderContribution(),
+  backend: ResolvedAgentRuntimeContribution,
+  provider: ResolvedAgentContribution = createProviderContribution(),
 ): ResolvedExecutablePluginRuntimeRegistry {
   const contributions = createResolvedContributionRegistry({
-    providers: [provider],
-    backends: [backend],
+    agents: [provider],
+    agentRuntimes: [backend],
     hookRegistrations: [],
   });
 
     return {
     contributes: contributions,
+    activatedPluginIds: new Set(),
+    activatePluginsByEvent: async () => [],
     actionHandlersByActionId: new Map(),
     hookHandlersByHookId: new Map(),
     runtimeCoreHandlersByBackendId: new Map(),
-    backendEnginesByBackendId: new Map(),
+    agentRuntimesByAgentId: new Map(),
     scmHostingProvidersById: new Map(),
     networkAllowedUrlOriginsByPluginId: new Map(),
     processSpawnAllowedPathsByPluginId: new Map(),
@@ -87,7 +90,7 @@ function createLinkedSession(
     rawSession,
     metadata: { path: '/repo/from-metadata' },
     sessionPath: '/repo/from-session-path',
-    providerId: 'claude',
+    agentId: 'claude',
     machineId: 'machine-1',
     remoteSessionId: 'provider-session-1',
     source: { kind: 'claudeConfig', configDir: '/tmp/.claude', projectId: 'project-1' },
@@ -115,7 +118,7 @@ describe('resolvePluginBackendSurfaceHandlers', () => {
         exportName: 'launch',
       },
     };
-    const backendWithSurfaceHandlers: ResolvedBackendContribution = {
+    const backendWithSurfaceHandlers: ResolvedAgentRuntimeContribution = {
       ...backend,
       surfaceHandlers: [surfaceHandler],
     };
@@ -174,7 +177,7 @@ describe('resolvePluginBackendSurfaceHandlers', () => {
         },
       },
     ];
-    const backendWithSurfaceHandlers: ResolvedBackendContribution = {
+    const backendWithSurfaceHandlers: ResolvedAgentRuntimeContribution = {
       ...backend,
       surfaceHandlers,
     };
@@ -311,7 +314,7 @@ describe('resolvePluginBackendSurfaceHandlers', () => {
         },
       },
     ];
-    const backendWithSurfaceHandlers: ResolvedBackendContribution = {
+    const backendWithSurfaceHandlers: ResolvedAgentRuntimeContribution = {
       ...backend,
       surfaceHandlers,
     };
@@ -382,7 +385,7 @@ describe('resolvePluginBackendSurfaceHandlers', () => {
         },
       },
     ];
-    const backendWithSurfaceHandlers: ResolvedBackendContribution = {
+    const backendWithSurfaceHandlers: ResolvedAgentRuntimeContribution = {
       ...backend,
       surfaceHandlers,
     };
@@ -422,7 +425,7 @@ describe('resolvePluginBackendSurfaceHandlers', () => {
         },
       },
     ];
-    const backendWithSurfaceHandlers: ResolvedBackendContribution = {
+    const backendWithSurfaceHandlers: ResolvedAgentRuntimeContribution = {
       ...backend,
       surfaceHandlers,
     };
@@ -487,7 +490,7 @@ describe('resolvePluginBackendSurfaceHandlers', () => {
         },
       },
     ];
-    const backendWithSurfaceHandlers: ResolvedBackendContribution = {
+    const backendWithSurfaceHandlers: ResolvedAgentRuntimeContribution = {
       ...backend,
       surfaceHandlers,
     };
@@ -523,14 +526,71 @@ describe('resolvePluginBackendSurfaceHandlers', () => {
     expect(result.surfaces.externalSession?.getActivity).toBeUndefined();
     expect(result.surfaces.externalSession?.readAfterTranscript).toBeUndefined();
     expect(result.surfaces.externalSession?.resolveTakeoverSpawnOptions).toBeUndefined();
+    const env = { PI_CODING_AGENT_DIR: '/tmp/omp-agent' } as NodeJS.ProcessEnv;
+    await expect(result.surfaces.externalSession?.validateSource?.({
+      source: { kind: 'codexHome', home: 'user' },
+      env,
+    })).resolves.toEqual({
+      ok: true,
+      source: { kind: 'codexHome', home: 'user' },
+    });
+    expect((resolveSource.mock.calls[0]?.[0] as { env?: NodeJS.ProcessEnv }).env).toBe(env);
     await expect(result.surfaces.externalSession?.listCandidates?.({
       source: { kind: 'codexHome', home: 'user' },
       limit: 10,
     })).resolves.toEqual({ candidates: [], nextCursor: null });
   });
 
+  it('preserves typed provider failures from daemon external-session candidate handlers', async () => {
+    const backend = createBackendContribution();
+    const provider = createProviderContribution();
+    const surfaceHandlers: BackendSurfaceDeclarationV1[] = [
+      {
+        surfaceApiVersion: 1,
+        id: 'backend.externalSession.listCandidates',
+        kind: 'externalSession',
+        operation: 'listCandidates',
+        support: 'supported',
+        handler: {
+          target: 'daemon',
+          exportName: 'listCandidates',
+        },
+      },
+    ];
+    const backendWithSurfaceHandlers: ResolvedAgentRuntimeContribution = {
+      ...backend,
+      surfaceHandlers,
+    };
+    const listCandidates = vi.fn(async () => ({
+      ok: false as const,
+      code: 'agent_unavailable' as const,
+      message: 'external_session_candidate_service_unavailable',
+      retryable: true,
+    }));
+    loadPluginDaemonModuleMock.mockResolvedValue({
+      listCandidates,
+    });
+
+    const result = await resolvePluginBackendSurfaceHandlers({
+      backend: backendWithSurfaceHandlers,
+      provider,
+      runtimeRegistry: createRuntimeRegistry(backendWithSurfaceHandlers),
+    });
+
+    await expect(result.surfaces.externalSession?.listCandidates?.({
+      source: { kind: 'codexHome', home: 'user' },
+      limit: 10,
+    })).rejects.toMatchObject({
+      name: 'ExternalSessionProviderFailureError',
+      code: 'agent_unavailable',
+      operation: 'externalSession.listCandidates',
+      message: 'external_session_candidate_service_unavailable',
+      retryable: true,
+    } satisfies Partial<ExternalSessionProviderFailureError>);
+  });
+
   it('preserves host direct-session takeover context around manifest launch hints', async () => {
-    const provider: ResolvedProviderContribution = {
+    const provider: ResolvedAgentContribution = {
       ...createProviderContribution(),
       id: 'claude',
       provenance: 'first_party',
@@ -552,16 +612,16 @@ describe('resolvePluginBackendSurfaceHandlers', () => {
         exportName: 'resolveTakeoverLaunch',
       },
     };
-    const backendWithSurfaceHandlers: ResolvedBackendContribution = {
+    const backendWithSurfaceHandlers: ResolvedAgentRuntimeContribution = {
       ...createBackendContribution(),
       id: 'claude',
-      providerId: 'claude',
+      agentId: 'claude',
       provenance: 'first_party',
       source: { kind: 'bundled' },
       definition: {
         kindVersion: 1,
         id: 'claude',
-        providerId: 'claude',
+        agentId: 'claude',
       },
       surfaceHandlers: [surfaceHandler],
     };
@@ -618,7 +678,7 @@ describe('resolvePluginBackendSurfaceHandlers', () => {
         exportName: 'resolveTakeoverLaunch',
       },
     };
-    const backendWithSurfaceHandlers: ResolvedBackendContribution = {
+    const backendWithSurfaceHandlers: ResolvedAgentRuntimeContribution = {
       ...backend,
       surfaceHandlers: [surfaceHandler],
     };
@@ -656,7 +716,7 @@ describe('resolvePluginBackendSurfaceHandlers', () => {
         exportName: 'launch',
       },
     };
-    const backendWithSurfaceHandlers: ResolvedBackendContribution = {
+    const backendWithSurfaceHandlers: ResolvedAgentRuntimeContribution = {
       ...backend,
       surfaceHandlers: [surfaceHandler],
     };
@@ -713,7 +773,7 @@ describe('resolvePluginBackendSurfaceHandlers', () => {
         },
       },
     ];
-    const backendWithSurfaceHandlers: ResolvedBackendContribution = {
+    const backendWithSurfaceHandlers: ResolvedAgentRuntimeContribution = {
       ...backend,
       surfaceHandlers,
     };
@@ -774,7 +834,7 @@ describe('resolvePluginBackendSurfaceHandlers', () => {
         exportName: 'launch',
       },
     };
-    const backendWithSurfaceHandlers: ResolvedBackendContribution = {
+    const backendWithSurfaceHandlers: ResolvedAgentRuntimeContribution = {
       ...backend,
       surfaceHandlers: [surfaceHandler],
     };
@@ -799,7 +859,7 @@ describe('resolvePluginBackendSurfaceHandlers', () => {
   });
 
   it('fails closed for prompt-trust plugin backend surface handlers before importing the daemon module', async () => {
-    const backend: ResolvedBackendContribution = {
+    const backend: ResolvedAgentRuntimeContribution = {
       ...createBackendContribution(),
       sourceSpec: {
         kind: 'archive',
@@ -807,9 +867,9 @@ describe('resolvePluginBackendSurfaceHandlers', () => {
         trustPolicy: 'prompt',
         installPolicy: 'managed_install',
       },
-    } as ResolvedBackendContribution;
+    } as ResolvedAgentRuntimeContribution;
     const provider = createProviderContribution();
-    const backendWithSurfaceHandlers: ResolvedBackendContribution = {
+    const backendWithSurfaceHandlers: ResolvedAgentRuntimeContribution = {
       ...backend,
       surfaceHandlers: [{
         surfaceApiVersion: 1,
@@ -852,7 +912,7 @@ describe('resolvePluginBackendSurfaceHandlers', () => {
   });
 
   it('fails closed for untrusted plugin backend surface handlers before importing the daemon module', async () => {
-    const backend: ResolvedBackendContribution = {
+    const backend: ResolvedAgentRuntimeContribution = {
       ...createBackendContribution(),
       sourceSpec: {
         kind: 'archive',
@@ -860,9 +920,9 @@ describe('resolvePluginBackendSurfaceHandlers', () => {
         trustPolicy: 'untrusted',
         installPolicy: 'managed_install',
       },
-    } as ResolvedBackendContribution;
+    } as ResolvedAgentRuntimeContribution;
     const provider = createProviderContribution();
-    const backendWithSurfaceHandlers: ResolvedBackendContribution = {
+    const backendWithSurfaceHandlers: ResolvedAgentRuntimeContribution = {
       ...backend,
       surfaceHandlers: [{
         surfaceApiVersion: 1,
@@ -918,7 +978,7 @@ describe('resolvePluginBackendSurfaceHandlers', () => {
         exportName: 'launch',
       },
     } as BackendSurfaceDeclarationV1;
-    const backendWithSurfaceHandlers: ResolvedBackendContribution = {
+    const backendWithSurfaceHandlers: ResolvedAgentRuntimeContribution = {
       ...backend,
       surfaceHandlers: [surfaceHandler],
     };
@@ -951,7 +1011,7 @@ describe('resolvePluginBackendSurfaceHandlers', () => {
         exportName: 'launch',
       },
     };
-    const backendWithSurfaceHandlers: ResolvedBackendContribution = {
+    const backendWithSurfaceHandlers: ResolvedAgentRuntimeContribution = {
       ...backend,
       surfaceHandlers: [surfaceHandler],
     };

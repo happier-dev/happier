@@ -1,4 +1,4 @@
-import { getBackendDefinition, isAgentId, legacyCustomAcpCompat } from '@happier-dev/agents';
+import { getBackendCatalogDefinition, isAgentId, legacyCustomAcpCompat } from '@happier-dev/agents';
 import {
   buildBackendTargetKeyV2,
   readBackendTargetRefV2,
@@ -38,7 +38,7 @@ export function matchesExecutionRunLegacyBackendId(
   const publicBackendId = resolveExecutionRunPublicBackendId(backendTarget);
   if (publicBackendId === normalizedBackendId) {
     const canonicalBackendTarget = readBackendTargetRefV2(backendTarget);
-    if (canonicalBackendTarget.sourceKind === 'configured' && isAgentId(normalizedBackendId) && getBackendDefinition(normalizedBackendId)) {
+    if (canonicalBackendTarget.sourceKind === 'configured' && isAgentId(normalizedBackendId) && getBackendCatalogDefinition(normalizedBackendId)) {
       return false;
     }
     return true;

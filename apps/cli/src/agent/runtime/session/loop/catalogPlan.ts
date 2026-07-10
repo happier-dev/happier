@@ -1,4 +1,4 @@
-import { initialMachineMetadata } from '@/daemon/startDaemon';
+import { initialMachineMetadata } from '@/daemon/machine/metadata';
 import { logger } from '@/ui/logger';
 import type {
   HostSessionRuntimeConfig,
@@ -38,7 +38,7 @@ export type CatalogHostSessionRuntimeDefaults<TRuntime extends RuntimeTurnOperat
 }>;
 
 export function createCatalogHostSessionRuntimeConfig<TRuntime extends RuntimeTurnOperations>(params: Readonly<{
-  providerId: string;
+  agentId: string;
   config: CatalogHostSessionRuntimeDefaults<TRuntime>;
 }>): CatalogHostSessionRuntimePlanConfig<TRuntime> {
   const {
@@ -47,9 +47,9 @@ export function createCatalogHostSessionRuntimeConfig<TRuntime extends RuntimeTu
     uiLogPrefix = `[${backendDisplayName}]`,
     providerName = displayName,
     waitingForCommandLabel = displayName,
-    agentMessageType = params.providerId,
+    agentMessageType = params.agentId,
     checkpointToolProtocol = 'acp',
-    attachMetadataLogLabel = params.providerId,
+    attachMetadataLogLabel = params.agentId,
     ...config
   } = params.config;
 
@@ -75,7 +75,7 @@ export function createCatalogHostSessionRuntimePlan<
   TOptions extends HostSessionRuntimeRunOptions,
   TRuntime extends RuntimeTurnOperations,
 >(params: Readonly<{
-  providerId: string;
+  agentId: string;
   opts: TOptions;
   config: CatalogHostSessionRuntimePlanConfig<TRuntime>;
 }>): HostSessionRuntimePlan {
@@ -83,7 +83,7 @@ export function createCatalogHostSessionRuntimePlan<
 
   return {
     kind: HOST_SESSION_RUNTIME_PLAN_KIND,
-    providerId: params.providerId,
+    agentId: params.agentId,
     opts: params.opts,
     config: {
       ...config,

@@ -2,8 +2,8 @@ import type { Metadata, PermissionMode } from '@/api/types';
 import {
     computeMonotonicUpdatedAt,
     readAcpSessionModeIntentFromMetadata,
-    readModelIntentFromMetadata,
     readPermissionModeIntentFromMetadata,
+    resolveModelSelectionIntentFromSessionMetadata,
 } from '@happier-dev/agents';
 import {
     applyAcpConfigOptionIntentSessionMetadata,
@@ -17,9 +17,14 @@ import {
 } from '@happier-dev/agents/session/state/metadataWriters';
 import {
     readSessionMcpSelectionV1FromMetadata,
+    buildBackendTargetKeyV2,
+    SessionModelSelectionResolutionError,
+    type ProviderBoundModelRef,
+    type SessionModelSelectionIntentV1,
     type SessionAttachMetadataIdentityPolicy,
 } from '@happier-dev/protocol';
 import { resolveSessionConfigOptionOverridesFromMetadataSnapshot } from './sessionConfigOptionOverrideSync';
+import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 
 type AcpConfigOptionOverrideUpdate = Readonly<{
     configId: string;
@@ -130,10 +135,7 @@ export type SessionModeOverride = {
     updatedAt?: number | null;
 };
 
-export type ModelOverride = {
-    modelId: string | null;
-    updatedAt?: number | null;
-};
+export type ModelOverride = SessionModelSelectionIntentV1;
 
 function resolveSessionMcpSelectionForStartup(opts: {
     current: Metadata;
@@ -240,90 +242,80 @@ function resolveSessionModeOverrideForStartup(opts: {
     return null;
 }
 
+function resolveModelAgentTargetKey(opts: Readonly<{
+    current: Metadata;
+    next: Metadata;
+    override?: ModelOverride | null;
+}>): string {
+    const overrideTarget = opts.override?.selection?.agentTargetKey;
+    if (overrideTarget) return overrideTarget;
+    const currentTarget = resolveBackendTargetFromSessionMetadata(opts.current);
+    if (currentTarget) return buildBackendTargetKeyV2(currentTarget);
+    const nextTarget = resolveBackendTargetFromSessionMetadata(opts.next);
+    if (nextTarget) return buildBackendTargetKeyV2(nextTarget);
+    throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
+}
+
 function resolveModelOverrideForStartup(opts: {
     current: Metadata;
     next: Metadata;
     nowMs: number;
     override?: ModelOverride | null;
     mode: StartupMergeMode;
-}): { modelId: string | null; updatedAt: number } | null {
-    const currentOverride = readModelIntentFromMetadata(opts.current);
-    const nextOverride = readModelIntentFromMetadata(opts.next);
+}): SessionModelSelectionIntentV1 | null {
+    const hasModelIntent = (metadata: Metadata): boolean => Object.prototype.hasOwnProperty.call(metadata, 'modelSelectionIntentV1')
+        || Object.prototype.hasOwnProperty.call(metadata, 'modelOverrideV1');
+    if (!opts.override && !hasModelIntent(opts.current) && !hasModelIntent(opts.next)) return null;
 
-    let modelId: string | null = null;
+    const agentTargetKey = resolveModelAgentTargetKey(opts);
+    const currentOverride = resolveModelSelectionIntentFromSessionMetadata(opts.current, agentTargetKey);
+    const nextOverride = resolveModelSelectionIntentFromSessionMetadata(opts.next, agentTargetKey);
+
+    let selection: ProviderBoundModelRef | null = null;
     let updatedAt: number | null = null;
 
     if (opts.mode === 'attach') {
         // Attach safety:
         // - Never seed override from "next" metadata (derived from local process defaults).
         if (currentOverride) {
-            modelId = currentOverride.modelId;
+            selection = currentOverride.selection;
             updatedAt = currentOverride.updatedAt;
         }
     } else {
         if (currentOverride) {
-            modelId = currentOverride.modelId;
+            selection = currentOverride.selection;
             updatedAt = currentOverride.updatedAt;
         } else if (nextOverride) {
-            modelId = nextOverride.modelId;
+            selection = nextOverride.selection;
             updatedAt = nextOverride.updatedAt;
         }
     }
 
     const override = opts.override;
     if (override) {
-        const normalized = typeof override.modelId === 'string' ? override.modelId.trim() : '';
-        if (normalized) {
-            const baselineAt = updatedAt ?? 0;
-            const overrideAt = typeof override.updatedAt === 'number' ? override.updatedAt : opts.nowMs;
-            const nextAt = computeMonotonicUpdatedAt({
-                previousUpdatedAt: baselineAt,
-                desiredUpdatedAt: overrideAt,
-                previousValue: modelId ?? '',
-                desiredValue: normalized,
-                policy: 'force_update',
-            });
-            if (nextAt === null) {
-                if (!modelId) return null;
-                if (updatedAt === null && opts.mode === 'start') {
-                    return { modelId, updatedAt: opts.nowMs };
-                }
-                if (typeof updatedAt === 'number') {
-                    return { modelId, updatedAt };
-                }
-                return null;
-            }
-            return { modelId: normalized, updatedAt: nextAt };
-        } else if (override.modelId === null) {
-            const baselineAt = updatedAt ?? 0;
-            const overrideAt = typeof override.updatedAt === 'number' ? override.updatedAt : opts.nowMs;
-            const nextAt = computeMonotonicUpdatedAt({
-                previousUpdatedAt: baselineAt,
-                desiredUpdatedAt: overrideAt,
-                previousValue: modelId ?? '',
-                desiredValue: '',
-                policy: 'force_update',
-            });
-            if (nextAt === null) {
-                if (typeof updatedAt === 'number') return { modelId, updatedAt };
-                return null;
-            }
-            return { modelId: null, updatedAt: nextAt };
+        if (override.selection && override.selection.agentTargetKey !== agentTargetKey) {
+            throw new SessionModelSelectionResolutionError('model_selection_agent_target_mismatch');
         }
+        const baselineAt = updatedAt ?? 0;
+        const nextAt = computeMonotonicUpdatedAt({
+            previousUpdatedAt: baselineAt,
+            desiredUpdatedAt: override.updatedAt,
+            previousValue: JSON.stringify(selection),
+            desiredValue: JSON.stringify(override.selection),
+            policy: 'force_update',
+        });
+        if (nextAt === null) {
+            return typeof updatedAt === 'number' ? { v: 1, selection, updatedAt } : null;
+        }
+        return { v: 1, selection: override.selection, updatedAt: nextAt };
     }
-
-    if (modelId === null) {
-        return typeof updatedAt === 'number' ? { modelId, updatedAt } : null;
-    }
-
-    if (!modelId) return null;
 
     if (updatedAt === null && opts.mode === 'start') {
-        return { modelId, updatedAt: opts.nowMs };
+        return { v: 1, selection, updatedAt: opts.nowMs };
     }
 
     if (typeof updatedAt === 'number') {
-        return { modelId, updatedAt };
+        return { v: 1, selection, updatedAt };
     }
     return null;
 }
@@ -439,7 +431,7 @@ export function mergeSessionMetadataForStartup(opts: {
     if (model) {
         merged = applyModelIntentSessionMetadata(clearModelIntentSessionMetadata(merged), {
             v: 1,
-            modelId: model.modelId,
+            selection: model.selection,
             updatedAt: model.updatedAt,
         }) as Metadata;
     } else if (mode === 'attach') {

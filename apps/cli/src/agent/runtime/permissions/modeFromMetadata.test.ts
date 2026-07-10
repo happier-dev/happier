@@ -96,7 +96,7 @@ describe('resolveSessionModeOverrideFromMetadataSnapshot', () => {
       metadata: {
         sessionModesV1: {
           v: 1,
-          provider: 'opencode',
+          agentId: 'opencode',
           updatedAt: 1,
           currentModeId: 'build',
           availableModes: [
@@ -118,7 +118,7 @@ describe('resolveSessionModeOverrideFromMetadataSnapshot', () => {
       metadata: {
         sessionModesV1: {
           v: 1,
-          provider: 'codex',
+          agentId: 'codex',
           updatedAt: 1,
           currentModeId: 'plan',
           availableModes: [
@@ -168,52 +168,59 @@ describe('computePendingSessionModeOverrideApplication', () => {
   });
 });
 
-describe('resolveModelOverrideFromMetadataSnapshot', () => {
-  it('returns null when metadata does not include an override', () => {
-    const fn = (permissionModeFromMetadata as any).resolveModelOverrideFromMetadataSnapshot;
+describe('resolveModelSelectionIntentFromMetadataSnapshot', () => {
+  it('resolves a provider-bound canonical selection only for the known agent target', () => {
+    const fn = (permissionModeFromMetadata as any).resolveModelSelectionIntentFromMetadataSnapshot;
     expect(typeof fn).toBe('function');
 
-    expect(fn({ metadata: { path: '/tmp' } as any })).toBeNull();
-  });
-
-  it('parses modelOverrideV1 when present', () => {
-    const fn = (permissionModeFromMetadata as any).resolveModelOverrideFromMetadataSnapshot;
-    expect(typeof fn).toBe('function');
-
-    expect(fn({ metadata: { modelOverrideV1: { v: 1, updatedAt: 12, modelId: 'gemini-2.5-pro' } } as any }))
-      .toEqual({ modelId: 'gemini-2.5-pro', updatedAt: 12 });
-  });
-
-  it('treats modelOverrideV1.modelId="default" as no override', () => {
-    const fn = (permissionModeFromMetadata as any).resolveModelOverrideFromMetadataSnapshot;
-    expect(typeof fn).toBe('function');
-
-    expect(fn({ metadata: { modelOverrideV1: { v: 1, updatedAt: 12, modelId: 'default' } } as any }))
-      .toBeNull();
-  });
-});
-
-describe('computePendingModelOverrideApplication', () => {
-  it('returns null when the override is not newer than the last applied timestamp', () => {
-    const fn = (permissionModeFromMetadata as any).computePendingModelOverrideApplication;
-    expect(typeof fn).toBe('function');
-
-    const res = fn({
-      metadata: { modelOverrideV1: { v: 1, updatedAt: 10, modelId: 'gemini-2.5-pro' } } as any,
-      lastAppliedUpdatedAt: 10,
+    expect(fn({
+      agentTargetKey: 'backend:codex',
+      metadata: {
+        modelSelectionIntentV1: {
+          v: 1,
+          updatedAt: 21,
+          selection: {
+            agentTargetKey: 'backend:codex',
+            providerConnectionId: 'pc_work',
+            modelId: 'gpt-provider',
+          },
+        },
+      },
+    })).toEqual({
+      v: 1,
+      updatedAt: 21,
+      selection: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: 'pc_work',
+        modelId: 'gpt-provider',
+      },
     });
-    expect(res).toBeNull();
   });
 
-  it('returns the override when it is newer than the last applied timestamp', () => {
-    const fn = (permissionModeFromMetadata as any).computePendingModelOverrideApplication;
-    expect(typeof fn).toBe('function');
-
-    const res = fn({
-      metadata: { modelOverrideV1: { v: 1, updatedAt: 11, modelId: 'gemini-2.5-pro' } } as any,
-      lastAppliedUpdatedAt: 10,
+  it('preserves a canonical clear intent and refuses a mismatched target', () => {
+    const fn = (permissionModeFromMetadata as any).resolveModelSelectionIntentFromMetadataSnapshot;
+    const clear = {
+      modelSelectionIntentV1: { v: 1, updatedAt: 22, selection: null },
+    };
+    expect(fn({ agentTargetKey: 'backend:codex', metadata: clear })).toEqual({
+      v: 1,
+      updatedAt: 22,
+      selection: null,
     });
-    expect(res).toEqual({ modelId: 'gemini-2.5-pro', updatedAt: 11 });
+    expect(() => fn({
+      agentTargetKey: 'backend:claude',
+      metadata: {
+        modelSelectionIntentV1: {
+          v: 1,
+          updatedAt: 23,
+          selection: {
+            agentTargetKey: 'backend:codex',
+            providerConnectionId: null,
+            modelId: 'gpt-provider',
+          },
+        },
+      },
+    })).toThrow(/target mismatch/i);
   });
 });
 

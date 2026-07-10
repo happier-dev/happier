@@ -163,6 +163,12 @@ export class MessageQueue2<Mode, Message = string> {
     return this.queue.length;
   }
 
+  discardMatching(predicate: (message: Message, mode: Mode) => boolean): number {
+    const before = this.queue.length;
+    this.queue = this.queue.filter((item) => !predicate(item.message, item.mode));
+    return before - this.queue.length;
+  }
+
   /**
    * Wait for messages and return all messages with the same mode as a single batch.
    *
@@ -228,8 +234,15 @@ export class MessageQueue2<Mode, Message = string> {
   }
 
   private waitForMessages(abortSignal?: AbortSignal): Promise<boolean> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       let abortHandler: (() => void) | null = null;
+
+      const waiterFunc = (hasMessages: boolean) => {
+        if (abortHandler && abortSignal) {
+          abortSignal.removeEventListener('abort', abortHandler);
+        }
+        resolve(hasMessages);
+      };
 
       if (abortSignal) {
         abortHandler = () => {
@@ -249,13 +262,6 @@ export class MessageQueue2<Mode, Message = string> {
         abortSignal.addEventListener('abort', abortHandler);
       }
 
-      const waiterFunc = (hasMessages: boolean) => {
-        if (abortHandler && abortSignal) {
-          abortSignal.removeEventListener('abort', abortHandler);
-        }
-        resolve(hasMessages);
-      };
-
       if (this.queue.length > 0) {
         if (abortHandler && abortSignal) {
           abortSignal.removeEventListener('abort', abortHandler);
@@ -269,6 +275,14 @@ export class MessageQueue2<Mode, Message = string> {
           abortSignal.removeEventListener('abort', abortHandler);
         }
         resolve(false);
+        return;
+      }
+
+      if (this.waiter) {
+        if (abortHandler && abortSignal) {
+          abortSignal.removeEventListener('abort', abortHandler);
+        }
+        reject(new Error('MessageQueue2 already has an active waiter'));
         return;
       }
 

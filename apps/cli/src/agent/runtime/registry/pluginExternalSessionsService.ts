@@ -1,7 +1,7 @@
 import {
-    ExternalSessionsProviderIdSchema,
+    ExternalSessionsAgentIdSchema,
     ExternalSessionsSourceSchema,
-    type ExternalSessionsProviderId,
+    type ExternalSessionsAgentId,
     type ExternalSessionsSource,
     type ExternalSessionTakeoverInputV1,
     type ExternalSessionTakeoverResultV1,
@@ -25,7 +25,7 @@ import {
 } from '@/session/actions/externalSessions/actionConfiguration';
 
 type ProviderOpsResolver = (
-    providerId: ExternalSessionsProviderId,
+    agentId: ExternalSessionsAgentId,
 ) => ExternalSessionProviderOps | null | Promise<ExternalSessionProviderOps | null>;
 
 type ExternalSessionsRuntimeContextOperation =
@@ -37,7 +37,7 @@ type ExternalSessionsRuntimeContextOperation =
 type ExternalSessionsRuntimeContextResolver = (
     request: Readonly<{
         operation: ExternalSessionsRuntimeContextOperation;
-        providerId: ExternalSessionsProviderId;
+        agentId: ExternalSessionsAgentId;
         source: ExternalSessionsSource;
         remoteSessionId?: string;
     }>,
@@ -45,7 +45,7 @@ type ExternalSessionsRuntimeContextResolver = (
 
 type PluginExternalSessionsAttachHandler = (
     params: ExternalSessionAttachParamsV1 & Readonly<{
-        providerId: ExternalSessionsProviderId;
+        agentId: ExternalSessionsAgentId;
         source: ExternalSessionsSource;
     }>,
 ) => Promise<ExternalSessionAttachResultV1>;
@@ -74,8 +74,8 @@ function normalizeBoundedInteger(
     return Math.max(min, Math.min(max, Math.trunc(value)));
 }
 
-function normalizeProviderId(raw: string | undefined, fallback: string): ExternalSessionsProviderId {
-    const parsed = ExternalSessionsProviderIdSchema.safeParse(raw && raw.trim().length > 0 ? raw : fallback);
+function normalizeProviderId(raw: string | undefined, fallback: string): ExternalSessionsAgentId {
+    const parsed = ExternalSessionsAgentIdSchema.safeParse(raw && raw.trim().length > 0 ? raw : fallback);
     if (!parsed.success) {
         throw new Error('invalid_provider');
     }
@@ -91,7 +91,7 @@ function normalizeSource(raw: unknown): ExternalSessionsSource {
 }
 
 async function resolveValidatedProviderOps(params: Readonly<{
-    providerId: ExternalSessionsProviderId;
+    agentId: ExternalSessionsAgentId;
     source: ExternalSessionsSource;
     resolveProviderOps: ProviderOpsResolver;
     resolveRuntimeContext?: ExternalSessionsRuntimeContextResolver;
@@ -102,13 +102,13 @@ async function resolveValidatedProviderOps(params: Readonly<{
     source: ExternalSessionsSource;
     runtime: ExternalSessionRuntimeContextV1 | null;
 }>> {
-    const ops = await params.resolveProviderOps(params.providerId);
+    const ops = await params.resolveProviderOps(params.agentId);
     if (!ops) {
-        throw new Error('provider_unavailable');
+        throw new Error('agent_unavailable');
     }
     const runtime = await params.resolveRuntimeContext?.({
         operation: params.operation,
-        providerId: params.providerId,
+        agentId: params.agentId,
         source: params.source,
         ...(params.remoteSessionId ? { remoteSessionId: params.remoteSessionId } : {}),
     }) ?? null;
@@ -123,7 +123,7 @@ async function resolveValidatedProviderOps(params: Readonly<{
 }
 
 function providerError(error: unknown): string {
-    return error instanceof Error && error.message ? error.message : 'provider_unavailable';
+    return error instanceof Error && error.message ? error.message : 'agent_unavailable';
 }
 
 export function createPluginExternalSessionsService(
@@ -135,22 +135,22 @@ export function createPluginExternalSessionsService(
         operation: ExternalSessionsRuntimeContextOperation,
         remoteSessionId?: string,
     ) => {
-        const providerId = normalizeProviderId(rawProviderId, params.defaultProviderId);
+        const agentId = normalizeProviderId(rawProviderId, params.defaultProviderId);
         const source = normalizeSource(rawSource);
         const resolved = await resolveValidatedProviderOps({
-            providerId,
+            agentId: agentId,
             source,
             resolveProviderOps: params.resolveProviderOps,
             resolveRuntimeContext: params.resolveRuntimeContext,
             operation,
             remoteSessionId,
         });
-        return { providerId, ...resolved };
+        return { agentId, ...resolved };
     };
 
     const service: PluginContextV1['sessions']['external'] = Object.freeze({
         listCandidates: async (request: ExternalSessionListCandidatesParamsV1 = {}) => {
-            const { ops, source, runtime } = await resolveProvider(request.providerId, request.source, 'listCandidates');
+            const { ops, source, runtime } = await resolveProvider(request.agentId, request.source, 'listCandidates');
             const limit = normalizeBoundedInteger(request.limit, resolveDefaultCandidatesLimit(), 1, 500);
             const result = await ops.listCandidates({
                 source,
@@ -178,11 +178,11 @@ export function createPluginExternalSessionsService(
                 });
             }
             try {
-                const providerId = normalizeProviderId(request.providerId, params.defaultProviderId);
+                const agentId = normalizeProviderId(request.agentId, params.defaultProviderId);
                 const source = normalizeSource(request.source);
                 return await params.attach({
                     ...request,
-                    providerId,
+                    agentId,
                     source,
                 });
             } catch (error) {
@@ -205,7 +205,7 @@ export function createPluginExternalSessionsService(
         pageTranscript: async (request: ExternalSessionTranscriptPageParamsV1) => {
             try {
                 const { ops, source, runtime } = await resolveProvider(
-                    request.providerId,
+                    request.agentId,
                     request.source,
                     'pageTranscript',
                     request.remoteSessionId,
@@ -232,7 +232,7 @@ export function createPluginExternalSessionsService(
             } catch (error) {
                 return {
                     ok: false as const,
-                    errorCode: 'provider_unavailable' as const,
+                    errorCode: 'agent_unavailable' as const,
                     error: providerError(error),
                 };
             }
@@ -240,7 +240,7 @@ export function createPluginExternalSessionsService(
         readAfterTranscript: async (request: ExternalSessionTranscriptReadAfterParamsV1) => {
             try {
                 const { ops, source, runtime } = await resolveProvider(
-                    request.providerId,
+                    request.agentId,
                     request.source,
                     'readAfterTranscript',
                     request.remoteSessionId,
@@ -264,7 +264,7 @@ export function createPluginExternalSessionsService(
             } catch (error) {
                 return {
                     ok: false as const,
-                    errorCode: 'provider_unavailable' as const,
+                    errorCode: 'agent_unavailable' as const,
                     error: providerError(error),
                 };
             }
@@ -277,7 +277,7 @@ export function createPluginExternalSessionsService(
             let unsubscribeUpdates: (() => void) | null = null;
             let releaseLease: (() => Promise<void>) | null = null;
 
-            void resolveProvider(request.providerId, request.source, 'followTranscript', request.remoteSessionId)
+            void resolveProvider(request.agentId, request.source, 'followTranscript', request.remoteSessionId)
                 .then(async ({ ops, source, runtime }) => {
                     if (!ops.acquireFollowLease) return;
                     const lease = await ops.acquireFollowLease({
@@ -296,6 +296,7 @@ export function createPluginExternalSessionsService(
                     unsubscribeUpdates = lease.subscribeToTranscriptUpdates?.((event) => {
                         onEvent({
                             items: event.items,
+                            fromCursor: event.fromCursor,
                             nextCursor: event.nextCursor,
                         });
                     }) ?? null;

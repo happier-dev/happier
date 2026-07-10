@@ -1,4 +1,5 @@
 import type { SessionStateSyncEngine } from '@happier-dev/agents';
+import { waitForSessionMetadataRetryBackoff } from '@/agent/runtime/session/metadataWaitRetryBackoff';
 
 type MetadataObservableSession = Readonly<{
   sessionId: string;
@@ -60,7 +61,13 @@ export function observeCanonicalSessionStateMetadata(params: Readonly<{
     void (async () => {
       while (!disposed) {
         const hasUpdate = await waitForMetadataUpdate(abortController.signal).catch(() => false);
-        if (!hasUpdate || disposed) return;
+        if (!hasUpdate) {
+          if (!disposed) {
+            await waitForSessionMetadataRetryBackoff({ abortSignal: abortController.signal });
+          }
+          continue;
+        }
+        if (disposed) return;
         await mirrorCurrentDisplayTitle('user-mutation');
       }
     })();

@@ -31,7 +31,9 @@ function createSessionHarness() {
 
 function createQueue() {
   // MessageQueue2 already implements push + pushIsolateAndClear.
-  const queue = new MessageQueue2<{ permissionMode: any }, PermissionModeQueuedPrompt>((mode) => mode.permissionMode);
+  const queue = new MessageQueue2<{ permissionMode: any; model?: string }, PermissionModeQueuedPrompt>(
+    (mode) => JSON.stringify(mode),
+  );
   const spyPush = vi.spyOn(queue, 'push');
   const spyIsolate = vi.spyOn(queue, 'pushIsolateAndClear');
   return { queue, spyPush, spyIsolate };
@@ -77,6 +79,71 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(steerText).toHaveBeenCalledWith('steer me', { localId: null });
+    expect(spyPush).not.toHaveBeenCalled();
+  });
+
+  it('queues model-carrying messages instead of steering them into an active turn', async () => {
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue, spyPush } = createQueue();
+
+    const steerText = vi.fn(async () => {});
+
+    registerPermissionModeMessageQueueBinding({
+      session,
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => true,
+        steerText,
+      },
+    } as any);
+
+    emitUserMessage({
+      content: { text: 'switch model next' },
+      localId: 'local-model-steer-1',
+      meta: { model: 'opencode/big-pickle' },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(steerText).not.toHaveBeenCalled();
+    expect(spyPush).toHaveBeenCalledWith(
+      { text: 'switch model next', localId: 'local-model-steer-1', localIds: ['local-model-steer-1'] },
+      { permissionMode: 'default', model: 'opencode/big-pickle' },
+    );
+  });
+
+  it('passes the committed user-message seq to steerText so provider acceptance can confirm the watermark (HF-1)', async () => {
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue, spyPush } = createQueue();
+
+    const steerText = vi.fn(async () => {});
+
+    registerPermissionModeMessageQueueBinding({
+      session: {
+        ...session,
+        getCommittedUserMessageSeq: (localId: string) => (localId === 'local-steer-seq' ? 17 : null),
+      },
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => true,
+        steerText,
+      },
+    } as any);
+
+    emitUserMessage({ content: { text: 'steer with seq' }, localId: 'local-steer-seq', meta: {} });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(steerText).toHaveBeenCalledWith('steer with seq', {
+      localId: 'local-steer-seq',
+      localIds: ['local-steer-seq'],
+      userMessageSeq: 17,
+      userMessageSeqs: [17],
+    });
     expect(spyPush).not.toHaveBeenCalled();
   });
 
@@ -138,7 +205,7 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(steerText).toHaveBeenCalledWith('SEED\n\nsteer me', { localId: 'local-1' });
+    expect(steerText).toHaveBeenCalledWith('SEED\n\nsteer me', { localId: 'local-1', localIds: ['local-1'] });
     expect(spyPush).not.toHaveBeenCalled();
 
     const finalMeta = session.getMetadataSnapshot();
@@ -254,14 +321,53 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     emitUserMessage({ content: { text: 'first' }, meta: {} });
     emitUserMessage({ content: { text: 'second' }, meta: {} });
 
-    // Allow the async steer tasks to start.
-    await Promise.resolve();
+    // Allow the async steer task to enter the runtime call before releasing its gate. The
+    // binding may perform bounded best-effort metadata work before steering.
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     resolveFirstGate();
-    await Promise.resolve();
-    await Promise.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(maxInFlight).toBe(1);
+    expect(spyPush).not.toHaveBeenCalled();
+  });
+
+  it('drops stale async steer work after the bound session changes', async () => {
+    const first = createSessionHarness();
+    const second = createSessionHarness();
+    const { queue, spyPush } = createQueue();
+
+    let releaseRefresh: () => void = () => {
+      throw new Error('refresh gate not initialized');
+    };
+    first.session.refreshSessionSnapshotFromServerBestEffort = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        releaseRefresh = resolve;
+      });
+    });
+
+    const steerText = vi.fn(async () => {});
+    const binding = registerPermissionModeMessageQueueBinding({
+      session: first.session,
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => true,
+        steerText,
+      },
+    } as any);
+
+    first.emitUserMessage({ content: { text: 'stale steer' }, meta: {} });
+    await Promise.resolve();
+    binding.bindSession(second.session);
+    releaseRefresh();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(steerText).not.toHaveBeenCalled();
     expect(spyPush).not.toHaveBeenCalled();
   });
 
@@ -369,6 +475,31 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     expect(steerText).not.toHaveBeenCalled();
     expect(spyIsolate).not.toHaveBeenCalled();
     expect(spyPush).toHaveBeenCalledWith({ text: '/compact', localId: null }, { permissionMode: 'default' });
+  });
+
+  it('steers native provider slash commands that are not Happier context-mutating commands', async () => {
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue, spyPush } = createQueue();
+
+    const steerText = vi.fn(async () => {});
+
+    registerPermissionModeMessageQueueBinding({
+      session,
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => true,
+        steerText,
+      },
+    } as any);
+
+    emitUserMessage({ content: { text: '/model' }, meta: {} });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(steerText).toHaveBeenCalledWith('/model', { localId: null });
+    expect(spyPush).not.toHaveBeenCalled();
   });
 
   it('signals onPromptQueuedDuringTurn when a mode-changing message is queued behind a running turn (L1)', async () => {

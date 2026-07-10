@@ -1,4 +1,4 @@
-import type { AgentMessage } from '@/agent/core';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
 
 export type ExecutionRunHostRuntimeMessageHandler = (message: AgentMessage) => void;
 
@@ -19,14 +19,43 @@ export type ExecutionRunTurnLivenessProbeResult = Readonly<{
     diagnostics?: Readonly<Record<string, unknown>>;
 }>;
 
+export type ExecutionRunPermissionCapability = 'responds' | 'inline' | 'static';
+
+export type RuntimePermissionResponseOutcome = Readonly<{ delivered: true }>
+    | Readonly<{
+        delivered: false;
+        reason: 'no_active_session' | 'unknown_request';
+    }>;
+
 export type ExecutionRunHostRuntime = Readonly<{
+    permissionCapability?: ExecutionRunPermissionCapability;
     readResumeSupport: (opts?: Readonly<{ captureReplay?: boolean }>) => Promise<boolean>;
     provisionSession: (opts?: ExecutionRunSessionProvisionOptions) => Promise<ExecutionRunSessionProvisionResult>;
-    sendPrompt: (sessionId: string, prompt: string) => Promise<void>;
-    sendSteerPrompt?: (sessionId: string, prompt: string) => Promise<void>;
+    sendPrompt: (
+        sessionId: string,
+        prompt: string,
+        meta?: Readonly<{
+            localInputId?: string | null;
+            localInputIds?: readonly string[];
+            providerClaimedPendingLocalIds?: readonly string[];
+            userMessageSeq?: number | null;
+            userMessageSeqs?: readonly number[];
+        }>,
+    ) => Promise<void>;
+    sendSteerPrompt?: (
+        sessionId: string,
+        prompt: string,
+        meta?: Readonly<{
+            localInputId?: string | null;
+            localInputIds?: readonly string[];
+            providerClaimedPendingLocalIds?: readonly string[];
+            userMessageSeq?: number | null;
+            userMessageSeqs?: readonly number[];
+        }>,
+    ) => Promise<void>;
     cancel: (sessionId: string) => Promise<void>;
     subscribeMessages: (handler: ExecutionRunHostRuntimeMessageHandler) => () => void;
-    respondToPermission?: (requestId: string, approved: boolean) => Promise<void>;
+    respondToPermission?: (requestId: string, approved: boolean) => Promise<RuntimePermissionResponseOutcome>;
     waitForTurnCompletion?: (timeoutMs?: number | null) => Promise<void>;
     probeTurnLiveness?: (sessionId: string) => Promise<ExecutionRunTurnLivenessProbeResult>;
     dispose: () => Promise<void>;

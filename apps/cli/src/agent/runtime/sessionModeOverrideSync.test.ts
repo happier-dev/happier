@@ -74,7 +74,7 @@ describe('createSessionModeOverrideSynchronizer', () => {
         getMetadataSnapshot: () => ({
           sessionModesV1: {
             v: 1,
-            provider: 'opencode',
+            agentId: 'opencode',
             updatedAt: 1,
             currentModeId: 'build',
             availableModes: [
@@ -106,7 +106,7 @@ describe('createSessionModeOverrideSynchronizer', () => {
         getMetadataSnapshot: () => ({
           sessionModesV1: {
             v: 1,
-            provider: 'codex',
+            agentId: 'codex',
             updatedAt: 1,
             currentModeId: 'plan',
             availableModes: [

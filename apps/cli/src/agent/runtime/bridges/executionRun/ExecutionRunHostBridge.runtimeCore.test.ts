@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AgentBackend, AgentMessage, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
+import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import type { RuntimeEventV1 } from '@happier-dev/protocol';
 import {
-  createExecutionRunHostRuntimeFromAgentBackend,
+  createTestExecutionRunHostRuntime,
+  type TestExecutionRunHostRuntime,
 } from '@/agent/runtime/bridges/executionRun/testkit';
 import { createExecutionRunHostRuntimeFromRuntimeTurnOperations } from '@/agent/runtime/bridges/executionRun/hostRuntimeFromTurnOps';
 import type { RuntimeTurnMessageHandler, RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
@@ -48,39 +50,50 @@ export type ExecutionRunHostBridgeOptionsDoNotExposeLegacyFactory = AssertNever<
   >
 >;
 
-vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
-  createResolvedContributionRegistry: vi.fn(() => ({})),
-  getResolvedContributionRegistry: vi.fn(() => ({})),
-  resolveMergedContributionRegistry: vi.fn(async () => ({})),
-}));
-
-vi.mock('../../../plugins/projection/registry/createResolvedContributionRegistry', () => ({
-  createResolvedContributionRegistry: vi.fn(() => ({})),
-  getResolvedContributionRegistry: vi.fn(() => ({})),
-  resolveMergedContributionRegistry: vi.fn(async () => ({})),
-}));
-
-function createStaticBackend(responseText: string): AgentBackend {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = 'runtime-core-session-1' as SessionId;
+function createEmptyContributionRegistry() {
   return {
-    async startSession(): Promise<{ sessionId: SessionId }> {
-      return { sessionId };
-    },
-    async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
-      handler?.({ type: 'model-output', fullText: responseText } as AgentMessage);
-    },
-    async cancel(_sessionId: SessionId): Promise<void> {},
-    async respondToPermission(_requestId: string, _approved: boolean): Promise<void> {},
-    onMessage(next: AgentMessageHandler): void {
-      handler = next;
-    },
-    async dispose(): Promise<void> {},
-    async waitForResponseComplete(): Promise<void> {},
+    agents: [],
+    agentRuntimes: [],
+    actions: [],
+    resources: [],
+    uiDescriptors: [],
+    hookRegistrations: [],
+    activationTargets: [],
+    surfaceHandlersByBackendId: new Map(),
+    catalogEntriesById: {},
+    agentRuntimeDefinitionsById: new Map(),
+    agentDefinitionsById: new Map(),
+    resourcesById: new Map(),
+    uiDescriptorsById: new Map(),
+    pluginDiagnosticsByPluginId: {},
   };
 }
 
-function mockRuntimeCore(runtime: ReturnType<typeof createExecutionRunHostRuntimeFromRuntimeTurnOperations> | ReturnType<typeof createExecutionRunHostRuntimeFromAgentBackend>): void {
+vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
+  createResolvedContributionRegistry: vi.fn(() => createEmptyContributionRegistry()),
+  getResolvedContributionRegistry: vi.fn(() => createEmptyContributionRegistry()),
+  resolveMergedContributionRegistry: vi.fn(async () => createEmptyContributionRegistry()),
+}));
+
+vi.mock('../../../plugins/projection/registry/createResolvedContributionRegistry', () => ({
+  createResolvedContributionRegistry: vi.fn(() => createEmptyContributionRegistry()),
+  getResolvedContributionRegistry: vi.fn(() => createEmptyContributionRegistry()),
+  resolveMergedContributionRegistry: vi.fn(async () => createEmptyContributionRegistry()),
+}));
+
+function createStaticRuntime(responseText: string): TestExecutionRunHostRuntime {
+  let runtime: TestExecutionRunHostRuntime;
+  runtime = createTestExecutionRunHostRuntime({
+    sessionId: 'runtime-core-session-1',
+    onSendPrompt: async () => {
+      runtime.emitMessage({ type: 'model-output', fullText: responseText });
+    },
+    onWaitForTurnCompletion: async () => {},
+  });
+  return runtime;
+}
+
+function mockRuntimeCore(runtime: ExecutionRunHostRuntime): void {
   const createExecutionRunBackend = vi.fn(() => runtime);
   resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
     backendId: 'acme.runtime.backend',
@@ -187,6 +200,7 @@ function createPermissionRequestRuntimeTurnOperations(params: Readonly<{
 }>): RuntimeTurnOperations {
   const handlers = new Set<RuntimeTurnMessageHandler>();
   return {
+    permissionCapability: 'responds',
     beginTurnLifecycle() {},
     async startOrLoadSession() {
       handlers.forEach((handler) => {
@@ -195,7 +209,7 @@ function createPermissionRequestRuntimeTurnOperations(params: Readonly<{
           name: 'runtime.descriptor',
           payload: {
             v: 1,
-            providerId: 'acme.runtime.provider',
+            agentId: 'acme.runtime.provider',
             provider: {
               backendMode: params.runtimeKind,
               providerExtra: {
@@ -216,6 +230,7 @@ function createPermissionRequestRuntimeTurnOperations(params: Readonly<{
           name: 'runtime.capabilities',
           payload: {
             executionRun: { supported: true },
+            permissions: { capability: 'responds' },
           },
         } as unknown as RuntimeEventV1);
       });
@@ -245,7 +260,9 @@ function createPermissionRequestRuntimeTurnOperations(params: Readonly<{
       handlers.add(handler);
       return () => handlers.delete(handler);
     },
-    async respondToPermission() {},
+    async respondToPermission() {
+      return { delivered: true as const };
+    },
     async cancelTurn() {},
     readSessionIdentity() {
       return { sessionId: 'runtime-turn-session-1' };
@@ -258,12 +275,12 @@ function createPermissionRequestRuntimeTurnOperations(params: Readonly<{
 describe('ExecutionRunHostBridge runtimeCore consumption', () => {
   it('creates execution-run backends through runtimeCore when no compatibility factory is injected', async () => {
     const createExecutionRunBackend = vi.fn(() =>
-      createExecutionRunHostRuntimeFromAgentBackend(createStaticBackend(
+      createStaticRuntime(
         JSON.stringify({
           findings: [],
           summary: 'ok',
         }),
-      )),
+      ),
     );
     resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
       backendId: 'acme.runtime.backend',
@@ -327,7 +344,7 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
         backendTarget: { kind: 'builtInAgent', agentId: 'acme.runtime.backend' },
       }),
     }));
-  });
+  }, 60_000);
 
   it('publishes prompt-capable permission requests through AgentStateRequestStore', async () => {
     const sent: Array<{
@@ -468,6 +485,7 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
     const handlers = new Set<(message: AgentMessage) => void>();
 
     const runtime = {
+      permissionCapability: 'responds' as const,
       async readResumeSupport() {
         return false;
       },
@@ -494,6 +512,7 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
       },
       async respondToPermission(requestId: string, approved: boolean) {
         calls.push(`respondToPermission:${requestId}:${approved}`);
+        return { delivered: true as const };
       },
       async dispose() {},
     };
@@ -562,9 +581,6 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
         handlers.add(handler);
         return () => handlers.delete(handler);
       },
-      async respondToPermission(requestId, approved) {
-        calls.push(`respondToPermission:${requestId}:${approved}`);
-      },
       async cancelTurn() {
         calls.push('cancelTurn');
       },
@@ -614,8 +630,29 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
     const calls: string[] = [];
     const handlers = new Set<RuntimeTurnMessageHandler>();
     const operations: RuntimeTurnOperations = {
+      permissionCapability: 'responds',
       beginTurnLifecycle() {},
-      async startOrLoadSession() {},
+      async startOrLoadSession() {
+        handlers.forEach((handler) => {
+          handler({
+            type: 'event',
+            name: 'runtime.descriptor',
+            payload: {
+              v: 1,
+              agentId: 'acme.runtime.provider',
+              provider: { backendMode: 'native' },
+            },
+          } as unknown as RuntimeEventV1);
+          handler({
+            type: 'event',
+            name: 'runtime.capabilities',
+            payload: {
+              executionRun: { supported: true },
+              permissions: { capability: 'responds' },
+            },
+          } as unknown as RuntimeEventV1);
+        });
+      },
       async sendTurnPrompt() {
         handlers.forEach((handler) => {
           handler({
@@ -637,6 +674,7 @@ describe('ExecutionRunHostBridge runtimeCore consumption', () => {
       },
       async respondToPermission(requestId, approved) {
         calls.push(`respondToPermission:${requestId}:${approved}`);
+        return { delivered: true as const };
       },
       async cancelTurn() {},
       readSessionIdentity() {

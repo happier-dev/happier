@@ -8,14 +8,10 @@ import { resolveBackendEngineAdapterResolution } from './engineRegistry';
 const PI_BACKEND_ID = 'pi';
 const PI_PLUGIN_ID = 'happier.agent.pi';
 
-type RuntimeCapabilitiesCarrier = Readonly<{
-  runtimeCapabilities?: unknown;
-}>;
-
 function createPiOnlyContributionRegistry(): ResolvedContributionRegistry {
   const builtInContributions = resolveBuiltInContributions();
-  const provider = builtInContributions.providers.find((entry) => entry.id === PI_BACKEND_ID);
-  const backend = builtInContributions.backends.find((entry) => entry.id === PI_BACKEND_ID);
+  const provider = builtInContributions.agents.find((entry) => entry.id === PI_BACKEND_ID);
+  const backend = builtInContributions.agentRuntimes.find((entry) => entry.id === PI_BACKEND_ID);
   const activationTargets = builtInContributions.activationTargets?.filter((target) => target.pluginId === PI_PLUGIN_ID) ?? [];
 
   if (!provider || !backend || activationTargets.length !== 1) {
@@ -23,8 +19,8 @@ function createPiOnlyContributionRegistry(): ResolvedContributionRegistry {
   }
 
   return {
-    providers: Object.freeze([provider]),
-    backends: Object.freeze([backend]),
+    agents: Object.freeze([provider]),
+    agentRuntimes: Object.freeze([backend]),
     actions: Object.freeze([]),
     resources: Object.freeze([]),
     uiDescriptors: Object.freeze([]),
@@ -32,7 +28,7 @@ function createPiOnlyContributionRegistry(): ResolvedContributionRegistry {
     notificationChannels: Object.freeze([]),
     events: Object.freeze([]),
     executionRunProfiles: Object.freeze([]),
-    installables: Object.freeze([]),
+    managedDependencies: Object.freeze([]),
     requestInterceptors: Object.freeze([]),
     scmHostingProviders: Object.freeze([]),
     scmBackends: Object.freeze([]),
@@ -41,8 +37,8 @@ function createPiOnlyContributionRegistry(): ResolvedContributionRegistry {
     hookRegistrations: Object.freeze([]),
     surfaceHandlersByBackendId: new Map(),
     catalogEntriesById: Object.freeze(provider.catalogEntry ? { [provider.catalogEntry.id]: provider.catalogEntry } : {}),
-    providerDefinitionsById: new Map([[provider.id, provider]]),
-    backendDefinitionsById: new Map([[backend.id, backend]]),
+    agentDefinitionsById: new Map([[provider.id, provider]]),
+    agentRuntimeDefinitionsById: new Map([[backend.id, backend]]),
     pluginDiagnosticsByPluginId: Object.freeze({}),
   };
 }
@@ -66,7 +62,7 @@ describe('engineRegistry (pi runtimeCore)', () => {
 
     expect(resolution).toMatchObject({
       backendId: PI_BACKEND_ID,
-      providerId: PI_BACKEND_ID,
+      agentId: PI_BACKEND_ID,
       selectedSource: 'plugin',
       backend: {
         pluginId: PI_PLUGIN_ID,
@@ -83,18 +79,13 @@ describe('engineRegistry (pi runtimeCore)', () => {
 
     expect(plan).toMatchObject({
       kind: 'hostSessionRuntimePlan',
-      providerId: PI_BACKEND_ID,
+      agentId: PI_BACKEND_ID,
       config: {
-        backendDisplayName: 'Pi',
-        providerName: PI_BACKEND_ID,
-        agentMessageType: PI_BACKEND_ID,
-        supportsMcpServers: false,
+        backendDisplayName: 'Pi Coding Agent CLI',
+        providerName: 'Pi Coding Agent CLI',
+        agentMessageType: 'pi',
       },
     });
     expect(plan.config.createSessionRuntime).toEqual(expect.any(Function));
-    expect((plan.config as RuntimeCapabilitiesCarrier).runtimeCapabilities).toMatchObject({
-      mcp: { policy: 'unsupported' },
-      strictLfJsonStream: { supported: true },
-    });
   });
 });

@@ -20,20 +20,20 @@ describe('createCatalogRuntimeCore', () => {
     };
     const plan: HostSessionRuntimePlan = {
       kind: HOST_SESSION_RUNTIME_PLAN_KIND,
-      providerId: 'qwen',
+      agentId: 'qwen',
       opts: sessionParams as never,
       config: {} as never,
     };
     const createHostSessionRuntimePlan = vi.fn(async () => plan);
 
     const factory = createCatalogRuntimeCore({
-      providerId: 'qwen',
+      agentId: 'qwen',
       createHostSessionRuntimePlan,
       createRuntime: vi.fn(),
     });
 
     const runtimeCore = await factory({
-      backend: { id: 'qwen', providerId: 'qwen', source: 'built_in' },
+      backend: { id: 'qwen', agentId: 'qwen', source: 'built_in' },
       provider: { id: 'qwen', source: 'built_in' },
       executionSurfaces: {
         terminalRuntime: null,

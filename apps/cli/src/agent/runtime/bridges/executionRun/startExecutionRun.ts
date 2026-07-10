@@ -1,14 +1,24 @@
 import { randomUUID } from 'node:crypto';
 
-import type { SessionId } from '@/agent/core/AgentBackend';
+import type { SessionId } from '@/agent/core/AgentMessage';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import {
   resolveExecutionRunIntentProfile,
   resolveExecutionRunIntentProfileFromCatalog,
   type ExecutionRunProfileContributionCatalog,
 } from '@/agent/executionRuns/profiles/intentRegistry';
-import type { ExecutionRunStructuredMeta } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import {
+  resolveExecutionRunStructuredOutputRecovery,
+  type ExecutionRunStructuredMeta,
+  type ExecutionRunStructuredOutputRecovery,
+} from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
+import {
+  REVIEW_SCM_SCOPE_INPUT_KEY,
+  ReviewScmScopeV1Schema,
+  type AcpConfigOptionOverridesV1,
+  type BackendTargetRefV1,
+  type ConnectedServiceBindingsV1,
+} from '@happier-dev/protocol';
 import type { ExecutionRunHostRuntime } from './executionRunHostRuntime';
 import type {
   ExecutionRunManagerStartParams,
@@ -35,6 +45,8 @@ import {
 } from './backendTargets';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol';
 import type { ExecutionRunPermissionRequestStoreProvider } from './executionRunPermissionResponseTarget';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { resolveExecutionRunRuntimeSettings } from './runtimeSettings';
 
 type SendAcp = (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
 
@@ -92,6 +104,85 @@ function readScmDiffSummaryCachedOutput(value: unknown): Record<string, unknown>
   return typeof output.success === 'boolean' ? output : null;
 }
 
+function resolveStructuredOutputRecoveryForBackend(backendId: string): ExecutionRunStructuredOutputRecovery | undefined {
+  try {
+    const backendDefinition = getResolvedContributionRegistry().agentRuntimeDefinitionsById.get(backendId) ?? null;
+    return resolveExecutionRunStructuredOutputRecovery(
+      backendDefinition?.capabilities?.executionRun?.structuredOutputRecovery,
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function executionRunNotAllowed(message: string): Error & { code: string } {
+  const error = new Error(message) as Error & { code: string };
+  error.code = 'execution_run_not_allowed';
+  return error;
+}
+
+/**
+ * QA2-F04: backend session PROVISIONING (process spawn + vendor handshake) must be bounded even
+ * when the run itself is unbounded. A backend whose provisionSession never settles otherwise
+ * leaves the run "running" forever with no process, no error, and no stop affordance. Generous
+ * default: a cold backend CLI boot can take minutes.
+ */
+const BACKEND_PROVISION_TIMEOUT_ENV_KEY = 'HAPPIER_EXECUTION_RUN_BACKEND_PROVISION_TIMEOUT_MS';
+const DEFAULT_BACKEND_PROVISION_TIMEOUT_MS = 5 * 60_000;
+
+function readBackendProvisionTimeoutMs(): number {
+  const raw = process.env[BACKEND_PROVISION_TIMEOUT_ENV_KEY];
+  if (typeof raw !== 'string' || raw.trim().length === 0) return DEFAULT_BACKEND_PROVISION_TIMEOUT_MS;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_BACKEND_PROVISION_TIMEOUT_MS;
+  return Math.min(parsed, 30 * 60_000);
+}
+
+export class ExecutionRunBackendProvisionTimeoutError extends Error {
+  readonly code = 'execution_run_backend_provision_timeout' as const;
+
+  constructor(params: Readonly<{ backendId: string; timeoutMs: number }>) {
+    super(`Execution run backend session provisioning timed out after ${params.timeoutMs}ms (${params.backendId})`);
+    this.name = 'ExecutionRunBackendProvisionTimeoutError';
+  }
+}
+
+async function awaitBackendProvisionBounded<T>(
+  provision: Promise<T>,
+  backendId: string,
+): Promise<T> {
+  const timeoutMs = readBackendProvisionTimeoutMs();
+  let timer: NodeJS.Timeout | undefined;
+  const backstop = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new ExecutionRunBackendProvisionTimeoutError({ backendId, timeoutMs })), timeoutMs);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([provision, backstop]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function assertPreparedReviewRunStartAllowed(params: ExecutionRunManagerStartParams): void {
+  if (params.intent !== 'review') return;
+  const intentInput = readRecord(params.intentInput);
+  const parsedScope = ReviewScmScopeV1Schema.safeParse(intentInput?.[REVIEW_SCM_SCOPE_INPUT_KEY]);
+  if (!parsedScope.success || parsedScope.data.status !== 'unsupported') return;
+  if ((params.instructions ?? '').trim().length > 0) return;
+
+  const diagnosticMessage = parsedScope.data.diagnostics.find((diagnostic) => diagnostic.severity === 'error')?.message
+    ?? parsedScope.data.diagnostics[0]?.message
+    ?? 'Review scope is unsupported for this session.';
+  throw executionRunNotAllowed(diagnosticMessage);
+}
+
 type ExecuteBoundedRun = (args: {
   runId: string;
   callId: string;
@@ -112,7 +203,10 @@ export async function startExecutionRun(args: Readonly<{
     backendTarget?: BackendTargetRefV1;
     permissionMode: string;
     modelId?: string;
+    sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     accountSettings?: Readonly<Record<string, unknown>> | null;
+    connectedServices?: ConnectedServiceBindingsV1 | null;
+    connectedServicesDefaultServiceIds?: readonly string[];
     start?: ExecutionRunBackendStartContext;
   }) => ExecutionRunHostRuntime;
   getNowMs: () => number;
@@ -132,6 +226,8 @@ export async function startExecutionRun(args: Readonly<{
   getDepthByCallId: (callId: string) => number | null;
   onPublicStateUpdated?: (runId: string) => void;
 }>): Promise<ExecutionRunStartResult> {
+  assertPreparedReviewRunStartAllowed(args.params);
+
   const profile = args.profileCatalog
     ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, args.params.intent, args.params.profileId)
     : resolveExecutionRunIntentProfile(args.params.intent);
@@ -169,10 +265,33 @@ export async function startExecutionRun(args: Readonly<{
 
   const startedAtMs = args.getNowMs();
   const backendId = resolveExecutionRunRuntimeBackendId(args.params.backendTarget);
+  const structuredOutputRecovery = resolveStructuredOutputRecoveryForBackend(backendId);
+  const startParams: ExecutionRunManagerStartParams = structuredOutputRecovery
+    ? { ...args.params, structuredOutputRecovery }
+    : args.params;
   const profileId =
     typeof args.params.profileId === 'string' && args.params.profileId.trim().length > 0
       ? args.params.profileId.trim()
       : null;
+  const runtimeSettings = resolveExecutionRunRuntimeSettings({
+    accountSettings: args.params.accountSettings,
+  });
+  // Immutable launch record (LC-F2): the re-resolvable launch intent captured once at start so every
+  // backend recreation on resume rebuilds with the SAME model, config overrides, and connected-service
+  // selection instead of a bare, defaulted backend. Only safe re-resolvable inputs — never env/secrets.
+  const launchModelId =
+    typeof args.params.modelId === 'string' && args.params.modelId.trim().length > 0
+      ? args.params.modelId.trim()
+      : undefined;
+  const launch = {
+    ...(launchModelId ? { modelId: launchModelId } : {}),
+    ...(args.params.sessionConfigOptionOverrides
+      ? { sessionConfigOptionOverrides: args.params.sessionConfigOptionOverrides }
+      : {}),
+    ...(args.params.connectedServices !== undefined
+      ? { connectedServicesSelection: args.params.connectedServices }
+      : {}),
+  };
   args.runs.set(runId, {
     runId,
     callId,
@@ -190,6 +309,8 @@ export async function startExecutionRun(args: Readonly<{
     retentionPolicy: args.params.retentionPolicy,
     runClass: args.params.runClass,
     ioMode: args.params.ioMode,
+    ...(runtimeSettings ? { runtimeSettings } : {}),
+    ...(Object.keys(launch).length > 0 ? { launch } : {}),
     status: 'running',
     startedAtMs,
     resumeHandle: null,
@@ -301,6 +422,7 @@ export async function startExecutionRun(args: Readonly<{
         voiceAgentId: runId,
         agentId: builtInAgentId as any,
         ...(profileId ? { profileId } : {}),
+        ...(args.params.connectedServices !== undefined ? { connectedServices: args.params.connectedServices } : {}),
         contextSessionId: args.params.sessionId,
         chatModelId,
         commitModelId,
@@ -361,8 +483,20 @@ export async function startExecutionRun(args: Readonly<{
       backendId,
       backendTarget: args.params.backendTarget,
       permissionMode: args.params.permissionMode,
+      ...(typeof args.params.modelId === 'string' && args.params.modelId.trim().length > 0
+        ? { modelId: args.params.modelId }
+        : {}),
+      ...(args.params.sessionConfigOptionOverrides
+        ? { sessionConfigOptionOverrides: args.params.sessionConfigOptionOverrides }
+        : {}),
       accountSettings: args.params.accountSettings ?? null,
-      start: args.params,
+      ...(args.params.connectedServices !== undefined
+        ? { connectedServices: args.params.connectedServices }
+        : {}),
+      ...(args.params.connectedServicesDefaultServiceIds && args.params.connectedServicesDefaultServiceIds.length > 0
+        ? { connectedServicesDefaultServiceIds: args.params.connectedServicesDefaultServiceIds }
+        : {}),
+      start: startParams,
     });
     backendBeforeControllerRegistration = backend;
     let resolveTerminal!: () => void;
@@ -428,7 +562,9 @@ export async function startExecutionRun(args: Readonly<{
       // the UI draft card immediately after the SubAgentRun tool-call is injected.
       void (async () => {
         try {
-          const childSessionId = await (async () => {
+          // QA2-F04: bound provisioning — a never-settling backend start must fail the run, not
+          // leave it "running" forever with no process and no stop affordance.
+          const childSessionId = await awaitBackendProvisionBounded((async () => {
             const handle = args.params.retentionPolicy === 'resumable' ? (args.params.resumeHandle ?? null) : null;
             const wantsResume =
               handle?.kind === 'provider_session.v1' && areExecutionRunBackendTargetsEqual(handle.backendTarget, args.params.backendTarget)
@@ -445,7 +581,7 @@ export async function startExecutionRun(args: Readonly<{
             }
             const started = await backend.provisionSession();
             return started.sessionId;
-          })();
+          })(), backendId);
           ctrl.childSessionId = childSessionId;
 
           const existing = args.runs.get(runId);
@@ -459,7 +595,7 @@ export async function startExecutionRun(args: Readonly<{
           }
 
           void args
-            .executeBoundedRun({ runId, callId, sidechainId, startedAtMs, params: args.params })
+            .executeBoundedRun({ runId, callId, sidechainId, startedAtMs, params: startParams })
             .finally(() => {
               // Ensure terminal promise resolves even if executeBoundedRun throws unexpectedly.
               const ctrl = args.controllers.get(runId);
@@ -510,8 +646,9 @@ export async function startExecutionRun(args: Readonly<{
     }
 
     // Long-lived runs are expected to be usable immediately after start(); await session provisioning
-    // so follow-up execution.run.send calls don't race the vendor session startup.
-    const childSessionId = await (async () => {
+    // so follow-up execution.run.send calls don't race the vendor session startup. Bounded (QA2-F04):
+    // a hung provisioning must fail the run instead of hanging start() and leaking a running entry.
+    const childSessionId = await awaitBackendProvisionBounded((async () => {
       const handle = args.params.retentionPolicy === 'resumable' ? (args.params.resumeHandle ?? null) : null;
       const wantsResume =
         handle?.kind === 'provider_session.v1' && areExecutionRunBackendTargetsEqual(handle.backendTarget, args.params.backendTarget)
@@ -530,7 +667,7 @@ export async function startExecutionRun(args: Readonly<{
       }
       const started = await backend.provisionSession();
       return started.sessionId;
-    })();
+    })(), backendId);
     ctrl.childSessionId = childSessionId;
 
     const existing = args.runs.get(runId);

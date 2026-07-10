@@ -29,8 +29,8 @@ const STAGE_E_TIER2_AGENTS: readonly StageETier2Agent[] = Object.freeze([
 
 function createContributionRegistry(agent: StageETier2Agent): ResolvedContributionRegistry {
   const builtInContributions = resolveBuiltInContributions();
-  const provider = builtInContributions.providers.find((entry) => entry.id === agent.backendId);
-  const backend = builtInContributions.backends.find((entry) => entry.id === agent.backendId);
+  const provider = builtInContributions.agents.find((entry) => entry.id === agent.backendId);
+  const backend = builtInContributions.agentRuntimes.find((entry) => entry.id === agent.backendId);
   const activationTargets = builtInContributions.activationTargets?.filter((target) => target.pluginId === agent.pluginId) ?? [];
 
   if (!provider || !backend || activationTargets.length !== 1) {
@@ -38,8 +38,8 @@ function createContributionRegistry(agent: StageETier2Agent): ResolvedContributi
   }
 
   return {
-    providers: Object.freeze([provider]),
-    backends: Object.freeze([backend]),
+    agents: Object.freeze([provider]),
+    agentRuntimes: Object.freeze([backend]),
     actions: Object.freeze([]),
     resources: Object.freeze([]),
     uiDescriptors: Object.freeze([]),
@@ -47,7 +47,7 @@ function createContributionRegistry(agent: StageETier2Agent): ResolvedContributi
     notificationChannels: Object.freeze([]),
     events: Object.freeze([]),
     executionRunProfiles: Object.freeze([]),
-    installables: Object.freeze([]),
+    managedDependencies: Object.freeze([]),
     requestInterceptors: Object.freeze([]),
     scmHostingProviders: Object.freeze([]),
     scmBackends: Object.freeze([]),
@@ -56,8 +56,8 @@ function createContributionRegistry(agent: StageETier2Agent): ResolvedContributi
     hookRegistrations: Object.freeze([]),
     surfaceHandlersByBackendId: new Map(),
     catalogEntriesById: Object.freeze(provider.catalogEntry ? { [provider.catalogEntry.id]: provider.catalogEntry } : {}),
-    providerDefinitionsById: new Map([[provider.id, provider]]),
-    backendDefinitionsById: new Map([[backend.id, backend]]),
+    agentDefinitionsById: new Map([[provider.id, provider]]),
+    agentRuntimeDefinitionsById: new Map([[backend.id, backend]]),
     pluginDiagnosticsByPluginId: Object.freeze({}),
   };
 }
@@ -83,7 +83,7 @@ describe('engineRegistry (Kilo/Copilot runtimeCore)', () => {
 
       expect(resolution).toMatchObject({
         backendId: agent.backendId,
-        providerId: agent.backendId,
+        agentId: agent.backendId,
         selectedSource: 'plugin',
         backend: {
           pluginId: agent.pluginId,
@@ -99,7 +99,7 @@ describe('engineRegistry (Kilo/Copilot runtimeCore)', () => {
 
       expect(plan).toMatchObject({
         kind: 'hostSessionRuntimePlan',
-        providerId: agent.backendId,
+        agentId: agent.backendId,
         config: {
           backendDisplayName: agent.displayName,
           providerName: agent.displayName,

@@ -1,4 +1,5 @@
-import type { AgentMessage } from '@/agent/core/AgentBackend';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
+import { isDeepStrictEqual } from 'node:util';
 import {
   readRuntimeDescriptorV1,
   readAgentRuntimeFacetsV1,
@@ -10,6 +11,10 @@ export type NormalizedRuntimeEventPublication = Readonly<{
   runtimeCapabilities: unknown;
   runtimeFacets: unknown;
 }>;
+
+export type NormalizedRuntimeEventPublicationInput =
+  | NormalizedRuntimeEventPublication
+  | (() => NormalizedRuntimeEventPublication);
 
 type RuntimeEventWriterState = Readonly<{
   handleMessage: (message: AgentMessage) => void;
@@ -38,21 +43,32 @@ function isRuntimeFacetsEvent(message: AgentMessage): message is RuntimeEventMes
  */
 export function createNormalizedRuntimeEventWriter(params: Readonly<{
   dispatch: (message: AgentMessage) => void;
-  identity: NormalizedRuntimeEventPublication;
+  identity: NormalizedRuntimeEventPublicationInput;
 }>): RuntimeEventWriterState {
-  let runtimeDescriptorPublished = false;
+  let lastRuntimeDescriptor: RuntimeDescriptorV1 | null = null;
   let runtimeCapabilitiesPublished = false;
   let runtimeFacetsPublished = false;
+
+  const readIdentity = (): NormalizedRuntimeEventPublication =>
+    typeof params.identity === 'function' ? params.identity() : params.identity;
+
+  const publishRuntimeDescriptor = (
+    message: RuntimeEventMessage & Readonly<{ name: 'runtime.descriptor' }>,
+    descriptor: RuntimeDescriptorV1,
+  ): void => {
+    if (lastRuntimeDescriptor && isDeepStrictEqual(lastRuntimeDescriptor, descriptor)) return;
+    lastRuntimeDescriptor = descriptor;
+    params.dispatch({
+      ...message,
+      payload: descriptor,
+    });
+  };
 
   const handleMessage = (message: AgentMessage): void => {
     if (isRuntimeDescriptorEvent(message)) {
       const normalizedDescriptor = readRuntimeDescriptorV1(message.payload);
-      if (!normalizedDescriptor || runtimeDescriptorPublished) return;
-      runtimeDescriptorPublished = true;
-      params.dispatch({
-        ...message,
-        payload: normalizedDescriptor,
-      });
+      if (!normalizedDescriptor) return;
+      publishRuntimeDescriptor(message, normalizedDescriptor);
       return;
     }
     if (isRuntimeCapabilitiesEvent(message)) {
@@ -75,28 +91,28 @@ export function createNormalizedRuntimeEventWriter(params: Readonly<{
   };
 
   const publishFallbackIdentity = (): void => {
-    if (!runtimeDescriptorPublished && params.identity.runtimeDescriptor) {
-      runtimeDescriptorPublished = true;
-      params.dispatch({
+    const identity = readIdentity();
+    if (!lastRuntimeDescriptor && identity.runtimeDescriptor) {
+      publishRuntimeDescriptor({
         type: 'event',
         name: 'runtime.descriptor',
-        payload: params.identity.runtimeDescriptor,
-      });
+        payload: identity.runtimeDescriptor,
+      }, identity.runtimeDescriptor);
     }
-    if (!runtimeCapabilitiesPublished && params.identity.runtimeCapabilities !== null && params.identity.runtimeCapabilities !== undefined) {
+    if (!runtimeCapabilitiesPublished && identity.runtimeCapabilities !== null && identity.runtimeCapabilities !== undefined) {
       runtimeCapabilitiesPublished = true;
       params.dispatch({
         type: 'event',
         name: 'runtime.capabilities',
-        payload: params.identity.runtimeCapabilities,
+        payload: identity.runtimeCapabilities,
       });
     }
-    if (!runtimeFacetsPublished && params.identity.runtimeFacets !== null && params.identity.runtimeFacets !== undefined) {
+    if (!runtimeFacetsPublished && identity.runtimeFacets !== null && identity.runtimeFacets !== undefined) {
       runtimeFacetsPublished = true;
       params.dispatch({
         type: 'event',
         name: 'runtime.facets',
-        payload: params.identity.runtimeFacets,
+        payload: identity.runtimeFacets,
       });
     }
   };

@@ -231,9 +231,8 @@ describe('createDeferredStartupBootstrap', () => {
       sendSessionEvent: (event: unknown) => {
         deliveredEvents.push(event);
       },
-      sendClaudeSessionMessage: vi.fn(),
+      sendProviderMessage: vi.fn(),
       sendAgentMessage: vi.fn(),
-      sendCodexMessage: vi.fn(),
       sendUserTextMessage: vi.fn(),
       updateMetadata: vi.fn(),
       updateAgentState: vi.fn(),

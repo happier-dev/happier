@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCodexAgentRuntimeDescriptorV1 as buildCodexRuntimeIdentityDescriptorV1 } from '@happier-dev/protocol/providers/runtimeDescriptorContributionsV1';
+import { buildCodexAgentRuntimeDescriptorV1 as buildCodexRuntimeIdentityDescriptorV1 } from '@happier-dev/protocol/agents/runtimeDescriptorContributionsV1';
 
 import {
   canonicalizeLinkedExternalSessionSource,
@@ -10,15 +10,15 @@ describe('canonicalizeLinkedExternalSessionSource', () => {
   it('passes runtime descriptors to provider link identity resolvers and preserves returned metadata updates', async () => {
     const runtimeDescriptor = {
       v: 1,
-      providerId: 'opencode',
-      provider: {
+      agentId: 'opencode',
+      agent: {
         backendMode: 'server',
         providerSessionId: 'runtime-session',
       },
     } as const;
     const resolved = await resolveExternalSessionLinkIdentity(
       {
-        providerId: 'opencode',
+        agentId: 'opencode',
         remoteSessionId: 'legacy-session',
         source: { kind: 'opencodeServer', directory: '/repo' },
         runtimeDescriptor,
@@ -39,8 +39,8 @@ describe('canonicalizeLinkedExternalSessionSource', () => {
           resolveTakeoverSpawnOptions: async () => null,
           resolveLinkIdentity: async ({ remoteSessionId, source, runtimeDescriptor: receivedRuntimeDescriptor }) => ({
             remoteSessionId:
-              typeof receivedRuntimeDescriptor?.provider?.providerSessionId === 'string'
-                ? receivedRuntimeDescriptor.provider.providerSessionId
+              typeof receivedRuntimeDescriptor?.agent?.providerSessionId === 'string'
+                ? receivedRuntimeDescriptor.agent.providerSessionId
                 : remoteSessionId,
             source,
             runtimeDescriptor: receivedRuntimeDescriptor ?? null,
@@ -75,11 +75,11 @@ describe('canonicalizeLinkedExternalSessionSource', () => {
   it('falls back to resolveLinkIdentity when canonicalizeLinkedSession is unavailable', async () => {
     const canonicalized = await canonicalizeLinkedExternalSessionSource(
       {
-        providerId: 'codex',
+        agentId: 'codex',
         metadata: {
           externalSessionV1: {
             v: 1,
-            providerId: 'codex',
+            agentId: 'codex',
             machineId: 'machine_1',
             remoteSessionId: 'legacy-thread',
             source: { kind: 'codexHome', home: 'user' },
@@ -111,8 +111,8 @@ describe('canonicalizeLinkedExternalSessionSource', () => {
           resolveTakeoverSpawnOptions: async () => null,
           resolveLinkIdentity: async ({ remoteSessionId, source, runtimeDescriptor }) => ({
             remoteSessionId:
-              typeof runtimeDescriptor?.provider?.providerSessionId === 'string'
-                ? runtimeDescriptor.provider.providerSessionId
+              typeof runtimeDescriptor?.agent?.providerSessionId === 'string'
+                ? runtimeDescriptor.agent.providerSessionId
                 : remoteSessionId,
             source,
             runtimeDescriptor: runtimeDescriptor ?? null,

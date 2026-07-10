@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol';
 
 import {
   initializeRuntimeOverridesSynchronizer,
@@ -10,6 +11,7 @@ describe('initializeRuntimeOverridesSynchronizer', () => {
     const fetchLatestUserPermissionIntentFromTranscript = vi.fn(async () => ({ intent: 'safe-yolo' as any, updatedAt: 20 }));
 
     const sync = await initializeRuntimeOverridesSynchronizer({
+      agentTargetKey: 'backend:codex',
       explicitPermissionMode: undefined,
       sessionKind: 'attach',
       session: {
@@ -35,6 +37,7 @@ describe('initializeRuntimeOverridesSynchronizer', () => {
     const onPermissionModeApplied = vi.fn();
 
     const sync = await initializeRuntimeOverridesSynchronizer({
+      agentTargetKey: 'backend:codex',
       explicitPermissionMode: undefined,
       sessionKind: 'fresh',
       session: {
@@ -58,11 +61,24 @@ describe('initializeRuntimeOverridesSynchronizer', () => {
     const onPermissionModeApplied = vi.fn();
 
     const sync = await initializeRuntimeOverridesSynchronizer({
+      agentTargetKey: 'backend:codex',
       explicitPermissionMode: 'plan' as any,
       sessionKind: 'attach',
       session: {
         getMetadataSnapshot: () =>
-          ({ permissionMode: 'yolo', permissionModeUpdatedAt: 999, modelOverrideV1: { v: 1, updatedAt: 50, modelId: 'gpt-4.1' } } as any),
+          ({
+            permissionMode: 'yolo',
+            permissionModeUpdatedAt: 999,
+            modelSelectionIntentV1: {
+              v: 1,
+              updatedAt: 50,
+              selection: {
+                agentTargetKey: 'backend:codex',
+                providerConnectionId: 'pc_work',
+                modelId: 'gpt-4.1',
+              },
+            },
+          } as any),
         fetchLatestUserPermissionIntentFromTranscript: async () => ({ intent: 'yolo' as any, updatedAt: 1000 }),
       },
       permissionMode: { current: 'default', updatedAt: 0 },
@@ -77,7 +93,11 @@ describe('initializeRuntimeOverridesSynchronizer', () => {
     sync.syncFromMetadata();
     const afterMetadata = sync.getSnapshot().permissionMode;
     expect(afterMetadata.current).toBe('plan');
-    expect(sync.getSnapshot().modelOverride.current).toBe('gpt-4.1');
+    expect(sync.getSnapshot().modelOverride.current).toEqual({
+      agentTargetKey: 'backend:codex',
+      providerConnectionId: 'pc_work',
+      modelId: 'gpt-4.1',
+    });
     expect(onPermissionModeApplied).toHaveBeenCalledTimes(1);
   });
 
@@ -96,6 +116,7 @@ describe('initializeRuntimeOverridesSynchronizer', () => {
     const onModelOverrideApplied = vi.fn();
 
     const sync = await initializeRuntimeOverridesSynchronizer({
+      agentTargetKey: 'backend:codex',
       explicitPermissionMode: undefined,
       sessionKind: 'attach',
       session,
@@ -109,7 +130,11 @@ describe('initializeRuntimeOverridesSynchronizer', () => {
 
     expect(sync.getSnapshot().permissionMode.current).toBe('safe-yolo');
     expect(sync.getSnapshot().permissionMode.updatedAt).toBe(20);
-    expect(sync.getSnapshot().modelOverride.current).toBe('gpt-4.1');
+    expect(sync.getSnapshot().modelOverride.current).toEqual({
+      agentTargetKey: 'backend:codex',
+      providerConnectionId: null,
+      modelId: 'gpt-4.1',
+    });
     expect(sync.getSnapshot().modelOverride.updatedAt).toBe(50);
     expect(onPermissionModeApplied).toHaveBeenCalledTimes(1);
     expect(onModelOverrideApplied).toHaveBeenCalledTimes(1);
@@ -122,9 +147,10 @@ describe('setupRuntimeMetadataDrivenOverridesSync', () => {
     const persistStartupOverridesCache = vi.fn();
 
     const permissionMode = { current: 'default' as any, updatedAt: 0 };
-    const modelOverride = { current: null as string | null, updatedAt: 0 };
+    const modelOverride = { current: null as ProviderBoundModelRef | null, updatedAt: 0 };
 
     await setupRuntimeMetadataDrivenOverridesSync({
+      agentTargetKey: 'backend:codex',
       explicitPermissionMode: undefined,
       sessionKind: 'attach',
       session: {
@@ -148,7 +174,14 @@ describe('setupRuntimeMetadataDrivenOverridesSync', () => {
     });
 
     expect(permissionMode).toEqual({ current: 'safe-yolo', updatedAt: 11 });
-    expect(modelOverride).toEqual({ current: 'gpt-4.1', updatedAt: 12 });
+    expect(modelOverride).toEqual({
+      current: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: null,
+        modelId: 'gpt-4.1',
+      },
+      updatedAt: 12,
+    });
     expect(persistStartupOverridesCache).toHaveBeenCalledTimes(1);
 
     if (resolveTranscriptSeed) {
@@ -167,9 +200,10 @@ describe('setupRuntimeMetadataDrivenOverridesSync', () => {
     let waitCalls = 0;
 
     const permissionMode = { current: 'default' as any, updatedAt: 0 };
-    const modelOverride = { current: null as string | null, updatedAt: 0 };
+    const modelOverride = { current: null as ProviderBoundModelRef | null, updatedAt: 0 };
 
     await setupRuntimeMetadataDrivenOverridesSync({
+      agentTargetKey: 'backend:codex',
       explicitPermissionMode: undefined,
       sessionKind: 'fresh',
       session: {
@@ -197,7 +231,14 @@ describe('setupRuntimeMetadataDrivenOverridesSync', () => {
     await Promise.resolve();
 
     expect(permissionMode).toEqual({ current: 'plan', updatedAt: 20 });
-    expect(modelOverride).toEqual({ current: 'gpt-5', updatedAt: 21 });
+    expect(modelOverride).toEqual({
+      current: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: null,
+        modelId: 'gpt-5',
+      },
+      updatedAt: 21,
+    });
   });
 
   it('retries metadata watching after transient waitForMetadataUpdate failures', async () => {
@@ -207,6 +248,7 @@ describe('setupRuntimeMetadataDrivenOverridesSync', () => {
       let attempts = 0;
 
       await setupRuntimeMetadataDrivenOverridesSync({
+        agentTargetKey: 'backend:codex',
         explicitPermissionMode: undefined,
         sessionKind: 'fresh',
         session: {
@@ -238,6 +280,44 @@ describe('setupRuntimeMetadataDrivenOverridesSync', () => {
     }
   });
 
+  it('backs off after non-aborted metadata waits resolve false', async () => {
+    vi.useFakeTimers();
+    try {
+      let shouldExit = false;
+      let attempts = 0;
+
+      await setupRuntimeMetadataDrivenOverridesSync({
+        agentTargetKey: 'backend:codex',
+        explicitPermissionMode: undefined,
+        sessionKind: 'fresh',
+        session: {
+          getMetadataSnapshot: () => ({ permissionMode: 'default', permissionModeUpdatedAt: 1 } as any),
+          fetchLatestUserPermissionIntentFromTranscript: async () => null,
+          waitForMetadataUpdate: async () => {
+            attempts += 1;
+            if (attempts > 1) {
+              shouldExit = true;
+            }
+            return false;
+          },
+        },
+        permissionMode: { current: 'default' as any, updatedAt: 0 },
+        modelOverride: { current: null, updatedAt: 0 },
+        persistStartupOverridesCache: () => {},
+        shouldExit: () => shouldExit,
+        getAbortSignal: () => undefined,
+      });
+
+      await Promise.resolve();
+      expect(attempts).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(25);
+      expect(attempts).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps watching metadata after update application fails', async () => {
     vi.useFakeTimers();
     try {
@@ -248,6 +328,7 @@ describe('setupRuntimeMetadataDrivenOverridesSync', () => {
       });
 
       await setupRuntimeMetadataDrivenOverridesSync({
+        agentTargetKey: 'backend:codex',
         explicitPermissionMode: undefined,
         sessionKind: 'fresh',
         session: {

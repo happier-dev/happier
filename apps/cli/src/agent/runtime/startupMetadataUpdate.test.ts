@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 
 import type { Metadata } from '@/api/types';
 
@@ -36,10 +37,23 @@ describe('startupMetadataUpdate', () => {
     expect(buildModelOverride({})).toBeNull();
   });
 
-  it('builds a model override when modelId is provided', () => {
-    expect(buildModelOverride({ modelId: 'gpt-5-codex-high', modelUpdatedAt: 123 })).toEqual({
-      modelId: 'gpt-5-codex-high',
+  it('builds a canonical model-selection intent when a selection is provided', () => {
+    expect(buildModelOverride({ modelSelection: {
+      v: 1,
       updatedAt: 123,
+      ref: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
+        modelId: 'gpt-5-codex-high',
+      },
+    } })).toEqual({
+      v: 1,
+      updatedAt: 123,
+      selection: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: 'pc_work',
+        modelId: 'gpt-5-codex-high',
+      },
     });
   });
 
@@ -114,7 +128,7 @@ describe('startupMetadataUpdate', () => {
     expect((updates[0] as any).acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 77, modeId: 'plan' });
   });
 
-  it('passes an explicit model override through to startup metadata merge', () => {
+  it('passes an explicit provider-bound model intent through to startup metadata merge', () => {
     const updates: Metadata[] = [];
     const fakeSession = {
       updateMetadata: (updater: (current: Metadata) => Metadata) => {
@@ -130,10 +144,27 @@ describe('startupMetadataUpdate', () => {
       next: { hostPid: 42 } as any,
       nowMs: 999,
       permissionModeOverride: null,
-      modelOverride: { modelId: 'gpt-5-codex-high', updatedAt: 123 } as any,
-    } as any);
+      modelOverride: {
+        v: 1,
+        updatedAt: 123,
+        selection: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
+          modelId: 'gpt-5-codex-high',
+        },
+      },
+    });
 
-    expect((updates[0] as any).modelOverrideV1).toEqual({ v: 1, updatedAt: 123, modelId: 'gpt-5-codex-high' });
+    expect((updates[0] as any).modelSelectionIntentV1).toEqual({
+      v: 1,
+      updatedAt: 123,
+      selection: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: 'pc_work',
+        modelId: 'gpt-5-codex-high',
+      },
+    });
+    expect((updates[0] as any).modelOverrideV1).toBeUndefined();
   });
 
   it('can remove specific metadata keys during attach startup updates', () => {

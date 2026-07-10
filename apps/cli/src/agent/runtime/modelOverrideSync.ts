@@ -1,8 +1,10 @@
 import type { Metadata } from '@/api/types';
+import type { SessionModelSelectionIntentV1 } from '@happier-dev/protocol';
 
-import { computePendingModelOverrideApplication } from './permissions/modeFromMetadata';
+import { computePendingModelSelectionIntentApplication } from './permissions/modeFromMetadata';
 
 export function createModelOverrideSynchronizer(params: Readonly<{
+  agentTargetKey: string;
   session: { getMetadataSnapshot: () => Metadata | null };
   runtime: { setSessionModel: (modelId: string) => Promise<void> };
   isStarted: () => boolean;
@@ -11,7 +13,7 @@ export function createModelOverrideSynchronizer(params: Readonly<{
   flushPendingAfterStart: () => Promise<void>;
 } {
   let lastAppliedUpdatedAt = 0;
-  let pending: { modelId: string; updatedAt: number } | null = null;
+  let pending: SessionModelSelectionIntentV1 | null = null;
   let applyingPromise: Promise<void> | null = null;
 
   const applyPendingIfPossible = (): Promise<void> => {
@@ -24,12 +26,17 @@ export function createModelOverrideSynchronizer(params: Readonly<{
       pending = null;
       return Promise.resolve();
     }
+    if (next.selection === null) {
+      lastAppliedUpdatedAt = next.updatedAt;
+      pending = null;
+      return Promise.resolve();
+    }
 
     applyingPromise = params.runtime
-      .setSessionModel(next.modelId)
+      .setSessionModel(next.selection.modelId)
       .then(() => {
         // Only mark as applied after a successful runtime update so failures can be retried.
-        lastAppliedUpdatedAt = next.updatedAt;
+        lastAppliedUpdatedAt = Math.max(lastAppliedUpdatedAt, next.updatedAt);
         if (pending && pending.updatedAt <= lastAppliedUpdatedAt) pending = null;
       })
       .catch(() => {
@@ -48,11 +55,18 @@ export function createModelOverrideSynchronizer(params: Readonly<{
 
   const syncFromMetadata = (): void => {
     const snapshot = params.session.getMetadataSnapshot();
-    const next = computePendingModelOverrideApplication({
+    const next = computePendingModelSelectionIntentApplication({
       metadata: snapshot,
+      agentTargetKey: params.agentTargetKey,
       lastAppliedUpdatedAt,
     });
     if (!next) return;
+
+    if (next.selection === null) {
+      lastAppliedUpdatedAt = next.updatedAt;
+      pending = null;
+      return;
+    }
 
     if (!params.isStarted()) {
       pending = next;

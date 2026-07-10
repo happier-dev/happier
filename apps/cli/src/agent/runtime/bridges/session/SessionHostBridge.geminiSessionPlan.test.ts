@@ -21,7 +21,7 @@ describe('SessionHostBridge (gemini session plan)', () => {
   it('returns a host-owned Gemini session plan through runtimeCore', async () => {
     resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
       backendId: 'gemini',
-      providerId: 'gemini',
+      agentId: 'gemini',
       source: 'built_in',
       engineAdapter: {
         runtimeCore: {
@@ -40,7 +40,7 @@ describe('SessionHostBridge (gemini session plan)', () => {
 
     const createdPlan = {
       kind: 'hostSessionRuntimePlan',
-      providerId: 'gemini',
+      agentId: 'gemini',
       opts: {
         credentials: {
           token: 't',
@@ -76,7 +76,7 @@ describe('SessionHostBridge (gemini session plan)', () => {
 
     expect(plan).toEqual(expect.objectContaining({
       kind: 'hostSessionRuntimePlan',
-      providerId: 'gemini',
+      agentId: 'gemini',
       opts: createdPlan.opts,
     }));
     expect(plan.config.createSessionRuntime).toBeTypeOf('function');

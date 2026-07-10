@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 const { dispatchBridgeLifecycleHookEvent } = vi.hoisted(() => ({
   dispatchBridgeLifecycleHookEvent: vi.fn().mockResolvedValue({
-    eventId: 'session.spawn_new',
+    eventId: 'session.spawned',
     matchedHandlerCount: 0,
     outcomes: [],
   }),
@@ -20,7 +20,7 @@ describe('SessionHostBridge lifecycle hook emission', () => {
 
     await bridge.emitLifecycleHookEvent({
       happyHomeDir: '/tmp/happy-home',
-      eventId: 'session.spawn_new',
+      eventId: 'session.spawned',
       happySessionId: 'sess_1',
       machineId: 'machine_1',
       cwd: '/repo',
@@ -34,7 +34,7 @@ describe('SessionHostBridge lifecycle hook emission', () => {
     expect(dispatchBridgeLifecycleHookEvent).toHaveBeenCalledWith({
       happyHomeDir: '/tmp/happy-home',
       event: expect.objectContaining({
-        eventId: 'session.spawn_new',
+        eventId: 'session.spawned',
         happySessionId: 'sess_1',
         machineId: 'machine_1',
         cwd: '/repo',

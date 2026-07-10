@@ -58,6 +58,7 @@ export async function createHappierMcpBridge(
     commandMode?: 'direct-script' | 'current-process'
     credentials?: Credentials | null
     accountSettings?: AccountSettings | null
+    getAccountSettings?: (() => AccountSettings | null) | null
   } = {},
 ): Promise<{
   happierMcpServer: { url: string; stop: () => void }
@@ -72,6 +73,7 @@ export async function createHappierMcpBridgeWithOptions(
     commandMode?: 'direct-script' | 'current-process'
     credentials?: Credentials | null
     accountSettings?: AccountSettings | null
+    getAccountSettings?: (() => AccountSettings | null) | null
   } = {},
 ): Promise<{
   happierMcpServer: { url: string; stop: () => void }
@@ -80,6 +82,7 @@ export async function createHappierMcpBridgeWithOptions(
   const happierMcpServer = await startHappyServer(session, {
     credentials: opts.credentials ?? null,
     accountSettings: opts.accountSettings ?? null,
+    getAccountSettings: opts.getAccountSettings ?? null,
   })
   const commandMode = opts.commandMode ?? 'direct-script'
   const mcpServers: Record<string, McpServerConfig> = {

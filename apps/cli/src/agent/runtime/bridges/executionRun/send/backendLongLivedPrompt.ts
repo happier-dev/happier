@@ -61,7 +61,13 @@ export async function sendBackendLongLivedRun(args: Readonly<{
   runs: Map<string, ExecutionRunState>;
   controllers: Map<string, ExecutionRunController>;
   budgetRegistry: ExecutionBudgetRegistry | null;
-  createRuntime: (opts: { runId?: string; backendId: string; backendTarget?: BackendTargetRefV1; permissionMode: string }) => ExecutionRunHostRuntime;
+  createRuntime: (opts: {
+    runId?: string;
+    backendId: string;
+    backendTarget?: BackendTargetRefV1;
+    permissionMode: string;
+    accountSettings?: Readonly<Record<string, unknown>> | null;
+  }) => ExecutionRunHostRuntime;
   maxTurns: number | null;
   getNowMs: () => number;
   finishRun: FinishExecutionRun;

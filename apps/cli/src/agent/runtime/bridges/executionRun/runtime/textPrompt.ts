@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { AgentMessage } from '@/agent/core/AgentBackend';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
 import { createExecutionRunRuntime } from '@/agent/runtime/bridges/executionRun/runtime/create';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { configuration } from '@/configuration';

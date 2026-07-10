@@ -92,7 +92,7 @@ describe('createPluginExternalSessionsService', () => {
         });
 
         await expect(service.pageTranscript({
-            providerId: 'codex',
+            agentId: 'codex',
             remoteSessionId: 'remote-1',
             source,
             direction: 'older',
@@ -106,7 +106,7 @@ describe('createPluginExternalSessionsService', () => {
         });
 
         await expect(service.readAfterTranscript({
-            providerId: 'codex',
+            agentId: 'codex',
             remoteSessionId: 'remote-1',
             source,
             cursor: 'tail-1',
@@ -154,7 +154,7 @@ describe('createPluginExternalSessionsService', () => {
         });
 
         const subscription = service.followTranscript({
-            providerId: 'codex',
+            agentId: 'codex',
             remoteSessionId: 'remote-1',
             source,
             cursor: 'tail-1',

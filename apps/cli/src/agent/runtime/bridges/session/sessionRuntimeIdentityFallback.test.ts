@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCodexAgentRuntimeDescriptorV1 as buildCodexRuntimeIdentityDescriptorV1 } from '@happier-dev/protocol/providers/runtimeDescriptorContributionsV1';
+import { buildCodexAgentRuntimeDescriptorV1 as buildCodexRuntimeIdentityDescriptorV1 } from '@happier-dev/protocol/agents/runtimeDescriptorContributionsV1';
 
 import { resolveSessionRuntimeIdentityFallback } from '@/agent/runtime/identity';
 
@@ -59,7 +59,7 @@ describe('resolveSessionRuntimeIdentityFallback', () => {
     const result = resolveSessionRuntimeIdentityFallback({
       metadata: {},
       providerDefaults: {
-        providerId: 'opencode',
+        agentId: 'opencode',
         providerSessionId: 'default-runtime-session',
       },
     });

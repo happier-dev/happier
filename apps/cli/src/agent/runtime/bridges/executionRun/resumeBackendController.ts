@@ -23,7 +23,13 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
   runs: Map<string, ExecutionRunState>;
   controllers: Map<string, ExecutionRunController>;
   budgetRegistry: ExecutionBudgetRegistry | null;
-  createRuntime: (opts: { runId?: string; backendId: string; backendTarget?: BackendTargetRefV1; permissionMode: string }) => ExecutionRunHostRuntime;
+  createRuntime: (opts: {
+    runId?: string;
+    backendId: string;
+    backendTarget?: BackendTargetRefV1;
+    permissionMode: string;
+    accountSettings?: Readonly<Record<string, unknown>> | null;
+  }) => ExecutionRunHostRuntime;
   sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
   parentProvider: ACPProvider;
   streamedTranscriptSession: StreamedTranscriptWriterSession | null;
@@ -60,6 +66,7 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
     backendId: args.run.backendId,
     backendTarget: args.run.backendTarget,
     permissionMode: args.run.permissionMode,
+    accountSettings: args.run.runtimeSettings?.accountSettings ?? null,
   });
   const wantsReplayCapture = args.requireReplayCapture === true;
   const canResume = await backend.readResumeSupport({ captureReplay: wantsReplayCapture });

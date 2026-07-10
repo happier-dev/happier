@@ -77,7 +77,6 @@ describe('runPermissionModePromptLoop assistant text snapshots', () => {
         async steerInFlightTurn() {},
         async waitForTurnCompletion() {},
         subscribeRuntimeEvents: () => () => undefined,
-        async respondToPermission() {},
         async cancelTurn() {},
         async updateSessionRuntimeConfig() {},
         async resetOrDisposeRuntime() {},

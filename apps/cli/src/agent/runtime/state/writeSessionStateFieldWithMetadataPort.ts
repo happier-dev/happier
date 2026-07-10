@@ -1,6 +1,7 @@
 import type { Metadata } from '@/api/types';
 import {
   createSessionStateSyncEngine,
+  getSessionStateFieldDescriptor,
   type SessionStateApplyReason,
   type SessionStateFieldWriteValue,
 } from '@happier-dev/agents';
@@ -34,6 +35,10 @@ function isForbiddenMetadataUpdateError(error: unknown): boolean {
 export async function writeSessionStateFieldWithMetadataPort<F extends SessionStateFieldId>(
   params: HostSessionStateMetadataPortParams<F>,
 ): Promise<boolean> {
+  if (getSessionStateFieldDescriptor(params.fieldId).deliveryClass === 'durable_required') {
+    return false;
+  }
+
   const engine = createSessionStateSyncEngine({
     capabilities: HOST_SESSION_STATE_METADATA_CAPABILITIES,
     facet: null,

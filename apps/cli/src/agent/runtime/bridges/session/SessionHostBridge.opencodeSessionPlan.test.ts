@@ -21,7 +21,7 @@ describe('SessionHostBridge (opencode session plan)', () => {
   it('returns a host-owned OpenCode session plan through runtimeCore', async () => {
     resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
       backendId: 'opencode',
-      providerId: 'opencode',
+      agentId: 'opencode',
       source: 'built_in',
       engineAdapter: {
         runtimeCore: {
@@ -40,7 +40,7 @@ describe('SessionHostBridge (opencode session plan)', () => {
 
     const createdPlan = {
       kind: 'hostSessionRuntimePlan',
-      providerId: 'opencode',
+      agentId: 'opencode',
       opts: {
         credentials: {
           token: 't',
@@ -76,7 +76,7 @@ describe('SessionHostBridge (opencode session plan)', () => {
 
     expect(plan).toEqual(expect.objectContaining({
       kind: 'hostSessionRuntimePlan',
-      providerId: 'opencode',
+      agentId: 'opencode',
       opts: createdPlan.opts,
     }));
     expect(plan.config.createSessionRuntime).toBeTypeOf('function');

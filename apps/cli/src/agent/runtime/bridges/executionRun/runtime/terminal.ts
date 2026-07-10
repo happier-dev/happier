@@ -2,17 +2,19 @@ import type { ExecutionRunBackendStartContext } from '@/agent/executionRuns/regi
 import type {
   ExecutionRunHostRuntime,
   ExecutionRunHostRuntimeMessageHandler,
+  ExecutionRunPermissionCapability,
 } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import type { ResolvedBackendContribution } from '@/plugins/projection/registry/types';
-import type { AnyTerminalRuntimeOps } from '@/backends/types';
+import type { ResolvedAgentRuntimeContribution } from '@/plugins/projection/registry/types';
+import type { AnyTerminalRuntimeOps } from '@/agent/catalog/types';
 import { createNormalizedRuntimeEventWriter } from '@/agent/runtime/events/createNormalizedRuntimeEventWriter';
+import { wrapExecutionRunHostRuntime } from '../hostRuntime/wrap';
 
 import { normalizeTerminalRuntimeLaunchResult } from './terminalLaunch';
 
 export type TerminalRuntimeExecutionRunBackendOptions = Readonly<{
   cwd: string;
   backendId: string;
-  backend: ResolvedBackendContribution;
+  backend: ResolvedAgentRuntimeContribution;
   launch: NonNullable<AnyTerminalRuntimeOps['launch']>;
   modelId?: string;
   permissionMode: string;
@@ -20,12 +22,35 @@ export type TerminalRuntimeExecutionRunBackendOptions = Readonly<{
   start?: ExecutionRunBackendStartContext | null;
 }>;
 
+function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Readonly<Record<string, unknown>>
+    : null;
+}
+
+function readPermissionCapability(value: unknown): ExecutionRunPermissionCapability | null {
+  return value === 'responds' || value === 'inline' || value === 'static' ? value : null;
+}
+
+function readRuntimePermissionCapability(value: unknown): ExecutionRunPermissionCapability | null {
+  const record = readRecord(value);
+  if (!record) return null;
+  const permissions = readRecord(record.permissions);
+  return readPermissionCapability(permissions?.capability)
+    ?? readPermissionCapability(record.permissionCapability);
+}
+
 export function createTerminalRuntimeExecutionRunBackend(
   opts: TerminalRuntimeExecutionRunBackendOptions,
 ): ExecutionRunHostRuntime {
   const handlers = new Set<ExecutionRunHostRuntimeMessageHandler>();
   let resolvedBackendPromise: Promise<ReturnType<typeof normalizeTerminalRuntimeLaunchResult>> | null = null;
+  let resolvedBackend: ReturnType<typeof normalizeTerminalRuntimeLaunchResult> | null = null;
+  let sessionProvisionPromise: Promise<string> | null = null;
+  let disposePromise: Promise<void> | null = null;
+  let activeSessionId: string | null = null;
   let runtimeUnsubscribe: (() => void) | null = null;
+  let permissionCapability = readRuntimePermissionCapability(opts.backend.capabilities);
 
   const dispatchMessage = (message: Parameters<ExecutionRunHostRuntimeMessageHandler>[0]): void => {
     for (const handler of handlers) {
@@ -35,6 +60,15 @@ export function createTerminalRuntimeExecutionRunBackend(
         // Best effort: backend event subscribers must not break runtime routing.
       }
     }
+  };
+
+  const refreshPermissionCapability = (
+    runtime: ExecutionRunHostRuntime,
+    runtimeCapabilities?: unknown,
+  ): void => {
+    permissionCapability = runtime.permissionCapability
+      ?? readRuntimePermissionCapability(runtimeCapabilities)
+      ?? permissionCapability;
   };
 
   const resolveBackend = async (
@@ -55,6 +89,7 @@ export function createTerminalRuntimeExecutionRunBackend(
         result: launchResult,
         backend: opts.backend,
       });
+      refreshPermissionCapability(normalized.runtime, normalized.runtimeCapabilities);
       const runtimeEventWriter = createNormalizedRuntimeEventWriter({
         dispatch: dispatchMessage,
         identity: {
@@ -64,39 +99,85 @@ export function createTerminalRuntimeExecutionRunBackend(
         },
       });
       runtimeUnsubscribe = normalized.runtime.subscribeMessages((message) => {
+        if (message.type === 'event' && message.name === 'runtime.capabilities') {
+          permissionCapability = readRuntimePermissionCapability(message.payload) ?? 'static';
+        }
         runtimeEventWriter.handleMessage(message);
       });
       runtimeEventWriter.publishFallbackIdentity();
+      resolvedBackend = normalized;
       return normalized;
     })();
     return await resolvedBackendPromise;
   };
 
-  return {
+  const respondToPermission = async (requestId: string, approved: boolean) => {
+    if (!activeSessionId) {
+      if (!sessionProvisionPromise) {
+        return { delivered: false as const, reason: 'no_active_session' as const };
+      }
+      await sessionProvisionPromise;
+    }
+    const resolved = await resolveBackend();
+    refreshPermissionCapability(resolved.runtime, resolved.runtimeCapabilities);
+    const runtimeResponder = permissionCapability === 'responds'
+      ? resolved.runtime.respondToPermission
+      : undefined;
+    if (!runtimeResponder) {
+      return { delivered: false as const, reason: 'no_active_session' as const };
+    }
+    return await runtimeResponder(requestId, approved);
+  };
+
+  return wrapExecutionRunHostRuntime({
+    readPermissionCapability: () => permissionCapability ?? undefined,
     async readResumeSupport(opts2) {
       const resolved = await resolveBackend();
       return await resolved.runtime.readResumeSupport(opts2);
     },
     async provisionSession(opts2) {
       const initialPrompt = typeof opts2?.initialPrompt === 'string' ? opts2.initialPrompt : undefined;
-      const resolved = await resolveBackend(initialPrompt);
-      if (resolved.startedSessionId) {
-        return { sessionId: resolved.startedSessionId };
+      const provisionPromise = (async () => {
+        const resolved = await resolveBackend(initialPrompt);
+        if (resolved.startedSessionId) {
+          activeSessionId = resolved.startedSessionId;
+          refreshPermissionCapability(resolved.runtime, resolved.runtimeCapabilities);
+          return resolved.startedSessionId;
+        }
+        const started = await resolved.runtime.provisionSession(opts2);
+        activeSessionId = started.sessionId;
+        refreshPermissionCapability(resolved.runtime, resolved.runtimeCapabilities);
+        return started.sessionId;
+      })();
+      sessionProvisionPromise = provisionPromise;
+      try {
+        const sessionId = await provisionPromise;
+        return { sessionId };
+      } finally {
+        if (sessionProvisionPromise === provisionPromise) {
+          sessionProvisionPromise = null;
+        }
       }
-      return await resolved.runtime.provisionSession(opts2);
     },
-    async sendPrompt(sessionId, prompt) {
+    async sendPrompt(sessionId, prompt, meta) {
       const resolved = await resolveBackend();
-      await resolved.runtime.sendPrompt(sessionId, prompt);
+      activeSessionId = sessionId;
+      await resolved.runtime.sendPrompt(sessionId, prompt, meta);
     },
-    async sendSteerPrompt(sessionId, prompt) {
-      const resolved = await resolveBackend();
-      if (typeof resolved.runtime.sendSteerPrompt !== 'function') {
-        throw new Error('Backend does not support steering');
-      }
-      await resolved.runtime.sendSteerPrompt(sessionId, prompt);
-    },
+    readSendSteerPrompt: () => resolvedBackend?.runtime.sendSteerPrompt
+      ? async (sessionId, prompt, meta) => {
+          const resolved = await resolveBackend();
+          if (typeof resolved.runtime.sendSteerPrompt !== 'function') return;
+          activeSessionId = sessionId;
+          await resolved.runtime.sendSteerPrompt(sessionId, prompt, meta);
+        }
+      : undefined,
     async cancel(sessionId) {
+      if (!activeSessionId) {
+        if (!sessionProvisionPromise) return;
+        await sessionProvisionPromise;
+      }
+      if (!activeSessionId || !resolvedBackendPromise) return;
       const resolved = await resolveBackend();
       await resolved.runtime.cancel(sessionId);
     },
@@ -106,22 +187,36 @@ export function createTerminalRuntimeExecutionRunBackend(
         handlers.delete(handler);
       };
     },
-    async respondToPermission(requestId, approved) {
-      const resolved = await resolveBackend();
-      if (typeof resolved.runtime.respondToPermission !== 'function') return;
-      await resolved.runtime.respondToPermission(requestId, approved);
-    },
-    async waitForTurnCompletion(timeoutMs) {
-      const resolved = await resolveBackend();
-      if (typeof resolved.runtime.waitForTurnCompletion !== 'function') return;
-      await resolved.runtime.waitForTurnCompletion(timeoutMs);
-    },
+    readRespondToPermission: () => permissionCapability === 'responds' ? respondToPermission : undefined,
+    readWaitForTurnCompletion: () => resolvedBackend?.runtime.waitForTurnCompletion
+      ? async (timeoutMs) => {
+          const resolved = await resolveBackend();
+          await resolved.runtime.waitForTurnCompletion?.(timeoutMs);
+        }
+      : undefined,
+    readProbeTurnLiveness: () => resolvedBackend?.runtime.probeTurnLiveness
+      ? async (sessionId) => {
+          const resolved = await resolveBackend();
+          const probeTurnLiveness = resolved.runtime.probeTurnLiveness;
+          if (typeof probeTurnLiveness !== 'function') {
+            return { active: false };
+          }
+          return await probeTurnLiveness(sessionId);
+        }
+      : undefined,
     async dispose() {
-      const resolved = await resolvedBackendPromise?.catch(() => null);
-      if (!resolved) return;
-      runtimeUnsubscribe?.();
-      runtimeUnsubscribe = null;
-      await resolved.runtime.dispose();
+      if (disposePromise) {
+        return await disposePromise;
+      }
+      if (!resolvedBackendPromise) return;
+      disposePromise = (async () => {
+        const resolved = await resolvedBackendPromise?.catch(() => null);
+        if (!resolved) return;
+        runtimeUnsubscribe?.();
+        runtimeUnsubscribe = null;
+        await resolved.runtime.dispose();
+      })();
+      return await disposePromise;
     },
-  };
+  });
 }

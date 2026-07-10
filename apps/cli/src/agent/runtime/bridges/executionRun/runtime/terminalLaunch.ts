@@ -5,7 +5,7 @@ import {
 import { createExecutionRunHostRuntimeFromRuntimeTurnOperations } from '@/agent/runtime/bridges/executionRun/hostRuntimeFromTurnOps';
 import { isRuntimeTurnOperations, type RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
 import { normalizePublishedRuntimeFacetsV1 } from '@/agent/runtime/facets/runtimeFacetsPublication';
-import type { ResolvedBackendContribution } from '@/plugins/projection/registry/types';
+import type { ResolvedAgentRuntimeContribution } from '@/plugins/projection/registry/types';
 import type {
   RuntimeDescriptorV1,
   AgentRuntimeFacetsV1,
@@ -41,22 +41,22 @@ function normalizeNonEmptyString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function buildTerminalRuntimeDescriptor(backend: ResolvedBackendContribution): RuntimeDescriptorV1 | null {
+function buildTerminalRuntimeDescriptor(backend: ResolvedAgentRuntimeContribution): RuntimeDescriptorV1 | null {
   const runtimeKind = normalizeNonEmptyString(backend.runtimeKind);
   if (!runtimeKind) return null;
 
   return {
     v: 1,
-    providerId: backend.providerId,
-    provider: {
+    agentId: backend.agentId,
+    agent: {
       backendMode: runtimeKind,
-      providerExtra: {
+      agentExtra: {
         owner: 'happier',
         schemaId: 'happier.pluginRuntimeDescriptorExtra',
         v: 1,
         runtimeHandle: {
           backendId: backend.id,
-          providerId: backend.providerId,
+          agentId: backend.agentId,
           provenance: backend.provenance,
           source: backend.source,
         },
@@ -67,7 +67,7 @@ function buildTerminalRuntimeDescriptor(backend: ResolvedBackendContribution): R
 
 export function normalizeTerminalRuntimeLaunchResult(params: Readonly<{
   result: unknown;
-  backend: ResolvedBackendContribution;
+  backend: ResolvedAgentRuntimeContribution;
 }>): NormalizedTerminalRuntimeLaunchResult {
   if (isTerminalRuntimeExecutionRunInput(params.result)) {
     return {

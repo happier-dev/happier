@@ -1,14 +1,25 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
+import { failureSignal } from '@/agent/executionRuns/controllers/failureSignal';
 import type { ExecutionRunState } from '../executionRunTypes';
 import { createExecutionRunControllerMessageHandler } from './sessionStateEmission';
 
-function createController(): ExecutionRunBackendController {
+function readPermissionDiagnostic(error: Error | null): unknown {
+  return (error as (Error & { executionRunPermissionDiagnostic?: unknown }) | null)
+    ?.executionRunPermissionDiagnostic;
+}
+
+function createController(opts: Readonly<{
+  backend?: Partial<ExecutionRunBackendController['backend']>;
+  withFailureSignal?: boolean;
+}> = {}): ExecutionRunBackendController {
   let resolveTerminal!: () => void;
   const terminalPromise = new Promise<void>((resolve) => {
     resolveTerminal = resolve;
   });
+  const signal = opts.withFailureSignal ? failureSignal() : null;
+  void signal?.promise.catch(() => {});
   return {
     kind: 'backend',
     backend: {
@@ -24,6 +35,7 @@ function createController(): ExecutionRunBackendController {
         return () => {};
       },
       async dispose() {},
+      ...opts.backend,
     },
     backendSupportsResume: true,
     childSessionId: 'child_session_1',
@@ -42,6 +54,7 @@ function createController(): ExecutionRunBackendController {
     lastMarkerWriteAtMs: 0,
     terminalPromise,
     resolveTerminal,
+    ...(signal ? { failureSignal: signal } : {}),
   };
 }
 
@@ -120,6 +133,127 @@ describe('createExecutionRunControllerMessageHandler', () => {
     expect(runs.get('run_1')?.resumeHandle).toMatchObject({
       kind: 'provider_session.v1',
       providerSessionId: 'legacy-provider-session',
+    });
+  });
+
+  it('terminalizes static permission requests with a typed diagnostic instead of recording delivery', () => {
+    const cancel = vi.fn(async () => {});
+    const ctrl = createController({
+      backend: { cancel },
+      withFailureSignal: true,
+    });
+    const runs = new Map([['run_1', createRunningRun()]]);
+    const handler = createExecutionRunControllerMessageHandler({
+      ctrl,
+      runId: 'run_1',
+      sidechainId: 'sidechain_1',
+      ioMode: 'request_response',
+      computeSidechainStreamText: () => null,
+      sendAcp: () => {},
+      parentProvider: 'codex',
+      runs,
+      backendSupportsResume: true,
+      writeActivityMarker: async () => {},
+      getNowMs: () => 123,
+    });
+
+    expect(() => handler({
+      type: 'permission-request',
+      id: 'provider-request-static',
+      reason: 'write',
+      payload: { toolName: 'write' },
+    })).toThrow('Execution-run permission request cannot be surfaced or denied');
+
+    expect(cancel).toHaveBeenCalledWith('child_session_1');
+    expect(ctrl.pendingHostBarrier).toBeUndefined();
+    expect(readPermissionDiagnostic(ctrl.failureSignal?.readError() ?? null)).toEqual({
+      runId: 'run_1',
+      reason: 'static',
+      capability: 'static',
+    });
+  });
+
+  it('terminalizes inline permission requests that reach the out-of-band host path', () => {
+    const ctrl = createController({ withFailureSignal: true });
+    const runs = new Map([['run_1', createRunningRun()]]);
+    const handler = createExecutionRunControllerMessageHandler({
+      ctrl,
+      runId: 'run_1',
+      sidechainId: 'sidechain_1',
+      ioMode: 'request_response',
+      computeSidechainStreamText: () => null,
+      sendAcp: () => {},
+      parentProvider: 'codex',
+      runs,
+      backendSupportsResume: true,
+      writeActivityMarker: async () => {},
+      getNowMs: () => 123,
+    });
+
+    handler({
+      type: 'event',
+      name: 'runtime.capabilities',
+      payload: { permissions: { capability: 'inline' } },
+    });
+
+    expect(() => handler({
+      type: 'permission-request',
+      id: 'provider-request-inline',
+      reason: 'write',
+      payload: { toolName: 'write' },
+    })).toThrow('Execution-run permission request cannot be surfaced or denied');
+
+    expect(ctrl.pendingHostBarrier).toBeUndefined();
+    expect(readPermissionDiagnostic(ctrl.failureSignal?.readError() ?? null)).toEqual({
+      runId: 'run_1',
+      reason: 'inline_no_pending_request',
+      capability: 'inline',
+    });
+  });
+
+  it('terminalizes permission responses that resolve as not delivered', async () => {
+    const respondToPermission = vi.fn(async () => ({
+      delivered: false as const,
+      reason: 'unknown_request' as const,
+    }));
+    const ctrl = createController({
+      backend: { respondToPermission },
+      withFailureSignal: true,
+    });
+    const runs = new Map([['run_1', createRunningRun()]]);
+    const handler = createExecutionRunControllerMessageHandler({
+      ctrl,
+      runId: 'run_1',
+      sidechainId: 'sidechain_1',
+      ioMode: 'request_response',
+      computeSidechainStreamText: () => null,
+      sendAcp: () => {},
+      parentProvider: 'codex',
+      runs,
+      backendSupportsResume: true,
+      writeActivityMarker: async () => {},
+      getNowMs: () => 123,
+    });
+
+    handler({
+      type: 'event',
+      name: 'runtime.capabilities',
+      payload: { permissions: { capability: 'responds' } },
+    });
+    handler({
+      type: 'permission-request',
+      id: 'provider-request-missing',
+      reason: 'write',
+      payload: { toolName: 'write' },
+    });
+
+    await expect(ctrl.pendingHostBarrier).resolves.toBeUndefined();
+
+    expect(respondToPermission).toHaveBeenCalledWith('provider-request-missing', false);
+    expect(readPermissionDiagnostic(ctrl.failureSignal?.readError() ?? null)).toEqual({
+      runId: 'run_1',
+      reason: 'unknown_request',
+      capability: 'responds',
     });
   });
 });

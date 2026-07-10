@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import { buildBackendTargetKey, ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { runHostSessionRuntime, type HostSessionRuntimeConfig, type HostSessionRuntimeRunOptions } from './runHostSessionRuntime';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { resolveForkInheritedOverridesFromMetadata } from '@/session/fork/resolveForkInheritedOverridesFromMetadata';
+import { HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY } from '@/agent/runtime/daemonInitialPrompt';
 
 function createSessionFixture(sessionId: string) {
   const handlers = new Map<string, (payload?: unknown) => unknown>();
@@ -23,6 +24,10 @@ function createSessionFixture(sessionId: string) {
     getMetadataSnapshot: () => ({ path: '/tmp/workspace', permissionMode: 'default' }),
     updateMetadata: vi.fn(),
     enqueueSessionTurnMutation: vi.fn(async () => undefined),
+    deferDeliveredUserMessageWatermarkToProviderAcceptance: vi.fn(),
+    confirmUserMessageDeliveredToProvider: vi.fn(),
+    blockPendingMessageDelivery: vi.fn(async () => true),
+    retryPendingMessageDelivery: vi.fn(async () => true),
     sendSessionDeath: vi.fn(),
     flush: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
@@ -32,6 +37,16 @@ function createSessionFixture(sessionId: string) {
     session,
     handlers,
   };
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 function createHarness() {
@@ -136,7 +151,6 @@ function createHarness() {
         subscriber(message);
       }
     }),
-    respondToPermission: vi.fn(async () => undefined),
     steerInFlightTurn: vi.fn(async function (this: unknown, prompt: string) {
       if (this !== runtime) {
         throw new Error('steerInFlightTurn called with wrong receiver');
@@ -333,6 +347,80 @@ function createTerminalRemoteModeLoopFixture() {
 }
 
 describe('runHostSessionRuntime', () => {
+  it('preserves scoped unset environment keys through host option canonicalization', async () => {
+    const harness = createHarness();
+    harness.opts.unsetEnvironmentVariables = ['OPENAI_API_KEY', 'Gemini_Api_Key'];
+    const beforeInitializeSession = harness.config.beforeInitializeSession;
+    harness.config.beforeInitializeSession = (params) => {
+      expect(params.opts.unsetEnvironmentVariables).toEqual(['OPENAI_API_KEY', 'Gemini_Api_Key']);
+      beforeInitializeSession?.(params);
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('rejects invalid unset environment keys at the host runtime boundary', async () => {
+    const harness = createHarness();
+    harness.opts.unsetEnvironmentVariables = ['OPENAI_API_KEY', 'BAD=NAME'];
+
+    await expect(runHostSessionRuntime(harness.opts, harness.config, harness.deps))
+      .rejects.toThrow('Invalid environment variable unset key');
+  });
+
+  it('defers the delivered watermark before creating the native runtime', async () => {
+    const harness = createHarness();
+    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
+    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
+    setSessionRuntimeFactory(harness.config, (params) => {
+      expect(params.session.sessionId).toBe(harness.session.sessionId);
+      expect(harness.session.deferDeliveredUserMessageWatermarkToProviderAcceptance).toHaveBeenCalledTimes(1);
+      return {
+        operations: harness.runtime as any,
+        nativeRuntime: harness.runtime as any,
+      };
+    });
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('forwards the provider-acceptance pending materialization policy before creating the native runtime', async () => {
+    const harness = createHarness();
+    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
+    harness.config.providerAcceptancePendingMaterialization = 'commitAtMaterialize';
+    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.session.deferDeliveredUserMessageWatermarkToProviderAcceptance).toHaveBeenCalledWith({
+      pendingMaterialization: 'commitAtMaterialize',
+    });
+  });
+
+  it('marks new provider-acceptance sessions in initial metadata before session creation', async () => {
+    const harness = createHarness();
+    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
+    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
+    harness.deps.createSessionMetadataFn = ({ augmentMetadata }: any) => {
+      const metadata = augmentMetadata?.({ path: '/tmp/workspace', permissionMode: 'default', permissionModeUpdatedAt: Date.now() })
+        ?? { path: '/tmp/workspace', permissionMode: 'default', permissionModeUpdatedAt: Date.now() };
+      return {
+        state: { controlledByUser: false },
+        metadata,
+      };
+    };
+    harness.deps.initializeBackendRunSessionFn = async ({ metadata }: any) => {
+      expect(metadata.userMessageDeliveryWatermarkModeV1).toBe('providerAcceptance');
+      return {
+        session: harness.session,
+        reconnectionHandle: null,
+        reportedSessionId: 'session-1',
+        attachedToExistingSession: false,
+      };
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
   it('does not emit idle keepAlive heartbeats at the thinking cadence', async () => {
     vi.useFakeTimers();
     const harness = createHarness();
@@ -460,6 +548,13 @@ describe('runHostSessionRuntime', () => {
       expect(this).toBe(harness.runtime);
       return { ok: true, status: 'waiting', sessionId: request.sessionId };
     });
+    harness.runtime.consumeUsageLimitResetCredit = vi.fn(async function (
+      this: unknown,
+      request: Readonly<{ sessionId: string; issueFingerprint?: string }>,
+    ) {
+      expect(this).toBe(harness.runtime);
+      return { ok: true, status: 'ready', sessionId: request.sessionId, issueFingerprint: request.issueFingerprint };
+    });
 
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
 
@@ -468,6 +563,7 @@ describe('runHostSessionRuntime', () => {
       enableUsageLimitWaitResume: expect.any(Function),
       cancelUsageLimitWaitResume: expect.any(Function),
       checkUsageLimitRecoveryNow: expect.any(Function),
+      consumeUsageLimitResetCredit: expect.any(Function),
     });
 
     await expect(controls.enableUsageLimitWaitResume({ sessionId: 'session-1' })).resolves.toMatchObject({
@@ -483,6 +579,43 @@ describe('runHostSessionRuntime', () => {
       status: 'waiting',
       sessionId: 'session-1',
     });
+    await expect(controls.consumeUsageLimitResetCredit({
+      sessionId: 'session-1',
+      issueFingerprint: 'usage-limit:codex:turn-1',
+    })).resolves.toMatchObject({
+      ok: true,
+      status: 'ready',
+      sessionId: 'session-1',
+      issueFingerprint: 'usage-limit:codex:turn-1',
+    });
+  });
+
+  it('publishes terminal composer clear controls from native runtimes', async () => {
+    const harness = createHarness();
+    harness.runtime.clearTerminalComposer = vi.fn(async function (
+      this: unknown,
+      request: Readonly<{ sessionId: string; expectedStateAtMs?: number }>,
+    ) {
+      expect(this).toBe(harness.runtime);
+      return { ok: true, status: 'cleared', sessionId: request.sessionId };
+    });
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    const controls = harness.session.setSessionRuntimeControls.mock.calls[0]?.[0];
+    expect(controls).toMatchObject({
+      clearTerminalComposer: expect.any(Function),
+    });
+
+    await expect(controls.clearTerminalComposer({
+      sessionId: 'session-1',
+      expectedStateAtMs: 42,
+    })).resolves.toMatchObject({
+      ok: true,
+      status: 'cleared',
+      sessionId: 'session-1',
+    });
+    expect(harness.session.setSessionRuntimeControls).toHaveBeenLastCalledWith(null);
   });
 
   it('routes typed runtime turn events through durable session turn mutations', async () => {
@@ -492,14 +625,14 @@ describe('runHostSessionRuntime', () => {
         kind: 'turn-start',
         sessionId: 'session-1',
         turnId: 'turn-1',
-        providerTurnId: 'provider-turn-1',
+        agentTurnId: 'provider-turn-1',
         emittedAtMs: 123,
       });
       harness.runtime.emitRuntimeMessage({
         kind: 'turn-complete',
         sessionId: 'session-1',
         turnId: 'turn-1',
-        providerTurnId: 'provider-turn-1',
+        agentTurnId: 'provider-turn-1',
         emittedAtMs: 456,
       });
     };
@@ -509,13 +642,13 @@ describe('runHostSessionRuntime', () => {
     expect(harness.session.enqueueSessionTurnMutation).toHaveBeenCalledWith(expect.objectContaining({
       action: 'begin',
       turnId: 'turn-1',
-      providerTurnId: 'provider-turn-1',
+      agentTurnId: 'provider-turn-1',
       observedAt: 123,
     }));
     expect(harness.session.enqueueSessionTurnMutation).toHaveBeenCalledWith(expect.objectContaining({
       action: 'complete',
       turnId: 'turn-1',
-      providerTurnId: 'provider-turn-1',
+      agentTurnId: 'provider-turn-1',
       observedAt: 456,
     }));
   });
@@ -563,12 +696,77 @@ describe('runHostSessionRuntime', () => {
     expect(applied).toEqual(['display.title:Host bridge title']);
   });
 
+  it('seeds initial daemon-prompt sessions with a canonical display.title before provider startup', async () => {
+    const previousInitialPrompt = process.env[HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY];
+    process.env[HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY] = '  Inspect this repo and summarize the modules\nInclude tests.  ';
+    const harness = createHarness();
+    let initializedMetadata: Record<string, any> | null = null;
+    const applied: string[] = [];
+    harness.deps.createSessionMetadataFn = ({ augmentMetadata }: any) => {
+      const metadata = augmentMetadata?.({ path: '/tmp/workspace', permissionMode: 'default' })
+        ?? { path: '/tmp/workspace', permissionMode: 'default' };
+      initializedMetadata = metadata;
+      return {
+        state: { controlledByUser: false },
+        metadata,
+      };
+    };
+    harness.deps.initializeBackendRunSessionFn = async ({ metadata }: any) => {
+      expect(metadata.summary?.text).toBe('Inspect this repo and summarize the modules');
+      expect(JSON.stringify(metadata)).not.toContain('Include tests.');
+      return {
+        session: harness.session,
+        reconnectionHandle: null,
+        reportedSessionId: 'session-1',
+        attachedToExistingSession: false,
+      };
+    };
+    harness.session.getMetadataSnapshot = () => initializedMetadata;
+    harness.config.sessionState = {
+      facet: {
+        capabilities: {
+          display: {
+            title: {
+              supported: true,
+              happierToProvider: { supported: true, transport: 'runtime-hook' },
+              providerToHappier: { supported: true, source: 'snapshot' },
+            },
+          },
+        },
+        applyHappierField: vi.fn(async (_ctx, field, value) => {
+          applied.push(`${field}:${String(value)}`);
+        }),
+        readField: vi.fn(async () => null),
+      },
+    };
+    harness.deps.runSessionLoopLifecycleFn = vi.fn(async (params: {
+      config: { onAfterStart?: () => Promise<void> | void };
+    }) => {
+      await params.config.onAfterStart?.();
+    });
+
+    try {
+      await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    } finally {
+      if (previousInitialPrompt === undefined) {
+        delete process.env[HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY];
+      } else {
+        process.env[HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY] = previousInitialPrompt;
+      }
+    }
+
+    expect(initializedMetadata).toMatchObject({
+      summary: { text: 'Inspect this repo and summarize the modules' },
+    });
+    expect(applied).toEqual(['display.title:Inspect this repo and summarize the modules']);
+  });
+
   it('mirrors a fork-inherited display.title to the provider after the new runtime starts', async () => {
     const harness = createHarness();
     const applied: string[] = [];
     const forkOverrides = resolveForkInheritedOverridesFromMetadata({
       summary: { text: 'Pre-existing title', updatedAt: 123 },
-    });
+    }, null);
     harness.session.getMetadataSnapshot = () => ({
       path: '/tmp/workspace',
       permissionMode: 'default',
@@ -695,8 +893,8 @@ describe('runHostSessionRuntime', () => {
         name: 'runtime.descriptor',
         payload: {
           v: 1,
-          providerId: 'acme.provider',
-          provider: {
+          agentId: 'acme.provider',
+          agent: {
             backendMode: 'native',
           },
         },
@@ -737,8 +935,8 @@ describe('runHostSessionRuntime', () => {
 
     expect(resultingMetadata.runtimeDescriptorV1).toEqual({
       v: 1,
-      providerId: 'acme.provider',
-      provider: {
+      agentId: 'acme.provider',
+      agent: {
         backendMode: 'native',
       },
     });
@@ -810,7 +1008,7 @@ describe('runHostSessionRuntime', () => {
         kind: 'turn-start',
         sessionId: 'session-1',
         turnId: 'turn-1',
-        providerTurnId: 'provider-turn-1',
+        agentTurnId: 'provider-turn-1',
         emittedAtMs: 123,
       });
 
@@ -820,7 +1018,7 @@ describe('runHostSessionRuntime', () => {
         kind: 'turn-complete',
         sessionId: 'session-1',
         turnId: 'turn-1',
-        providerTurnId: 'provider-turn-1',
+        agentTurnId: 'provider-turn-1',
         emittedAtMs: 456,
       });
 
@@ -1109,17 +1307,20 @@ describe('runHostSessionRuntime', () => {
 
   it('applies lifecycle hook initial model resolution before creating session metadata', async () => {
     const harness = createHarness();
-    let capturedModelId: string | undefined;
-    let capturedModelUpdatedAt: number | undefined;
+    let capturedModelSelectionIntent: unknown;
     harness.config.lifecycleHooks = {
       resolveInitialModelSelection: async () => ({
-        modelId: 'gemini-2.5-pro',
-        modelUpdatedAt: 123,
+        v: 1,
+        updatedAt: 123,
+        ref: {
+          agentTargetKey: 'backend:qwen',
+          providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
+          modelId: 'gemini-2.5-pro',
+        },
       }),
     };
-    harness.deps.createSessionMetadataFn = (params: Readonly<{ modelId?: string; modelUpdatedAt?: number }>) => {
-      capturedModelId = params.modelId;
-      capturedModelUpdatedAt = params.modelUpdatedAt;
+    harness.deps.createSessionMetadataFn = (params: Readonly<{ modelSelectionIntent?: unknown }>) => {
+      capturedModelSelectionIntent = params.modelSelectionIntent;
       return {
         state: { controlledByUser: false },
         metadata: { path: '/tmp/workspace', permissionMode: 'default', permissionModeUpdatedAt: Date.now() },
@@ -1128,8 +1329,15 @@ describe('runHostSessionRuntime', () => {
 
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
 
-    expect(capturedModelId).toBe('gemini-2.5-pro');
-    expect(capturedModelUpdatedAt).toBe(123);
+    expect(capturedModelSelectionIntent).toEqual({
+      v: 1,
+      updatedAt: 123,
+      selection: {
+        agentTargetKey: 'backend:qwen',
+        providerConnectionId: 'pc_work',
+        modelId: 'gemini-2.5-pro',
+      },
+    });
   });
 
   it('passes the requested directory into session metadata creation', async () => {
@@ -1213,7 +1421,7 @@ describe('runHostSessionRuntime', () => {
     );
   });
 
-  it('rejects legacy RuntimeForLoop-compatible runtimes on the shared session path', async () => {
+  it('rejects legacy loop-compatible runtimes on the shared session path', async () => {
     const harness = createHarness();
     const legacyRuntime = {
       beginTurn: vi.fn(),
@@ -1230,7 +1438,7 @@ describe('runHostSessionRuntime', () => {
       setSessionConfigOption: vi.fn(async () => undefined),
       setSessionModel: vi.fn(async () => undefined),
     };
-    // Intentional test-only invalid fixture: the shared runtime path must reject legacy RuntimeForLoop-shaped objects.
+    // Intentional test-only invalid fixture: the shared runtime path must reject legacy loop-shaped objects.
     setSessionRuntimeFactory(harness.config, (() => ({
       operations: legacyRuntime as any,
     })) as unknown as NonNullable<HostSessionRuntimeConfig['createSessionRuntime']>);
@@ -1301,6 +1509,50 @@ describe('runHostSessionRuntime', () => {
     );
   });
 
+  it('passes a runtime session client that follows session swaps', async () => {
+    const harness = createHarness();
+    const initialSession = harness.session;
+    initialSession.updateMetadata = vi.fn(async () => undefined);
+
+    const swappedSessionFixture = harness.createSessionFixture('session-2');
+    const swappedSession = swappedSessionFixture.session;
+    swappedSession.updateMetadata = vi.fn(async () => undefined);
+
+    let swapSession: ((nextSession: any) => Promise<void> | void) | null = null;
+    harness.deps.initializeBackendRunSessionFn = async ({ onSessionSwap }: any) => {
+      swapSession = onSessionSwap;
+      return {
+        session: initialSession,
+        reconnectionHandle: null,
+        reportedSessionId: 'session-1',
+        attachedToExistingSession: false,
+      };
+    };
+
+    let runtimeSession: any = null;
+    setSessionRuntimeFactory(harness.config, (params: any) => {
+      runtimeSession = params.session;
+      return {
+        operations: harness.runtime,
+        nativeRuntime: harness.runtime,
+      };
+    });
+
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      await swapSession?.(swappedSession);
+      expect(runtimeSession.sessionId).toBe('session-2');
+      await runtimeSession.updateMetadata((metadata: Record<string, unknown>) => ({
+        ...metadata,
+        fromRuntimeSession: true,
+      }));
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(initialSession.updateMetadata).not.toHaveBeenCalled();
+    expect(swappedSession.updateMetadata).toHaveBeenCalledTimes(1);
+  });
+
   it('registers abort control RPCs on the active swapped session manager', async () => {
     const harness = createHarness();
     const initialSession = harness.session;
@@ -1368,7 +1620,7 @@ describe('runHostSessionRuntime', () => {
     expect(harness.metrics.archiveCalls).toBe(0);
   });
 
-  it('registers rollback control RPCs on the active swapped session manager', async () => {
+  it('registers rollback control RPCs by default on the active swapped session manager', async () => {
     const harness = createHarness();
     const swappedSessionFixture = harness.createSessionFixture('session-2');
     const rollbackConversation = vi.fn(async () => ({
@@ -1383,7 +1635,6 @@ describe('runHostSessionRuntime', () => {
       receipts: [],
     }));
 
-    harness.config.sessionRollbackRpc = {};
     setSessionRuntimeFactory(harness.config, () => ({
       operations: {
         ...harness.runtime,
@@ -1554,7 +1805,7 @@ describe('runHostSessionRuntime', () => {
         v: 1,
         actions: {
           'session.list': {
-            approvalRequiredSurfaces: ['session_agent'],
+            approvalRequiredSurfaces: ['agent'],
           },
         },
       },
@@ -1625,9 +1876,11 @@ describe('runHostSessionRuntime', () => {
 
     let capturedMcpDirectory: string | null = null;
     let capturedSessionMetadata: any = null;
+    let capturedSessionLocation: any = null;
     harness.deps.resolveRunnerMcpServersFn = async (params: any) => {
       capturedMcpDirectory = params.directory;
       capturedSessionMetadata = params.sessionMetadata;
+      capturedSessionLocation = params.session.getCurrentSessionLocation?.();
       return {
         happierMcpServer: { stop: () => undefined },
         mcpServers: {},
@@ -1643,6 +1896,11 @@ describe('runHostSessionRuntime', () => {
     });
     expect(capturedMcpDirectory).toBe('/srv/attached-workspace');
     expect(capturedSessionMetadata).toMatchObject({ path: '/srv/attached-workspace', profileId: 'profile-attached' });
+    expect(capturedSessionLocation).toEqual({
+      path: '/srv/attached-workspace',
+      host: harness.config.machineMetadata.host,
+      machineId: 'machine-1',
+    });
   });
 
   it('does not pass attach metadata cleanup keys through the canonical shared startup contract for existing-session attaches', async () => {
@@ -1671,7 +1929,7 @@ describe('runHostSessionRuntime', () => {
       ...metadata,
       acpTransportV1: {
         v: 1,
-        provider: 'configured-acp',
+        agentId: 'configured-acp',
       },
     });
     const createSessionMetadataFn = vi.fn(() => ({
@@ -1879,7 +2137,54 @@ describe('runHostSessionRuntime', () => {
     expect(runtime.steerPrompt).toHaveBeenCalledWith('hello');
   });
 
-  it('passes a direct native runtime-turn leaf through as both runtime and hook runtime', async () => {
+  it('does not synthesize provider acceptance for native steerPrompt dispatch without an acceptance seam', async () => {
+    const harness = createHarness();
+    const runtime = {
+      ...harness.runtime,
+      steerPrompt: vi.fn(async function (this: unknown) {
+        expect(this).toBe(runtime);
+      }),
+      supportsInFlightSteer: vi.fn(() => true),
+    };
+
+    setSessionRuntimeFactory(harness.config, () => ({
+      operations: runtime,
+      nativeRuntime: runtime,
+    }));
+
+    let inFlightSteer: any = null;
+    harness.deps.createPermissionModeQueueStateFn = (params: any) => {
+      inFlightSteer = params.inFlightSteer;
+      return {
+        messageQueue: {
+          reset: () => undefined,
+          size: () => 0,
+        },
+        rebindSession: () => undefined,
+        getCurrentPermissionMode: () => 'default',
+        setCurrentPermissionMode: () => undefined,
+        getCurrentPermissionModeUpdatedAt: () => 0,
+        setCurrentPermissionModeUpdatedAt: () => undefined,
+      };
+    };
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      expect(inFlightSteer).not.toBeNull();
+      await inFlightSteer.steerText('hello steer', {
+        localId: 'local-steer-prompt',
+        userMessageSeq: 88,
+      });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(runtime.steerPrompt).toHaveBeenCalledWith('hello steer', {
+      localId: 'local-steer-prompt',
+      userMessageSeq: 88,
+    });
+    expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
+  });
+
+  it('passes direct native runtime-turn operations through without adding a synthetic acceptance hook', async () => {
     const harness = createHarness();
     const nativeRuntime = {
       beginTurnLifecycle: vi.fn(),
@@ -1888,7 +2193,6 @@ describe('runHostSessionRuntime', () => {
       steerInFlightTurn: vi.fn(async () => undefined),
       waitForTurnCompletion: vi.fn(async () => undefined),
       subscribeRuntimeEvents: vi.fn(() => () => undefined),
-      respondToPermission: vi.fn(async () => undefined),
       cancelTurn: vi.fn(async () => undefined),
       readSessionIdentity: vi.fn(() => ({ sessionId: null })),
       updateSessionRuntimeConfig: vi.fn(async () => undefined),
@@ -1905,10 +2209,757 @@ describe('runHostSessionRuntime', () => {
 
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
 
-    expect(runSessionLoopLifecycleFn).toHaveBeenCalledWith(expect.objectContaining({
-      runtime: nativeRuntime,
-      hookRuntime: nativeRuntime,
+    const lifecycleParams = (runSessionLoopLifecycleFn.mock.calls as unknown as Array<[unknown]>)[0]?.[0] as {
+      runtime?: unknown;
+      hookRuntime?: { sendTurnPrompt?: unknown; setOnPromptAcceptedByProvider?: unknown };
+    } | undefined;
+    expect(lifecycleParams?.runtime).toBe(nativeRuntime);
+    expect(lifecycleParams?.hookRuntime).toBe(nativeRuntime);
+    expect(typeof lifecycleParams?.hookRuntime?.sendTurnPrompt).toBe('function');
+    expect(typeof lifecycleParams?.hookRuntime?.setOnPromptAcceptedByProvider).toBe('undefined');
+  });
+
+  it('does not infer provider acceptance from successful native prompt dispatch', async () => {
+    const harness = createHarness();
+    let releaseSend!: () => void;
+    const sendCanResolve = new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    const nativeRuntime = {
+      beginTurnLifecycle: vi.fn(),
+      startOrLoadSession: vi.fn(async () => undefined),
+      sendTurnPrompt: vi.fn(async () => {
+        await sendCanResolve;
+      }),
+      steerInFlightTurn: vi.fn(async () => undefined),
+      waitForTurnCompletion: vi.fn(async () => undefined),
+      subscribeRuntimeEvents: vi.fn(() => () => undefined),
+      cancelTurn: vi.fn(async () => undefined),
+      readSessionIdentity: vi.fn(() => ({ sessionId: null })),
+      updateSessionRuntimeConfig: vi.fn(async () => undefined),
+      resetOrDisposeRuntime: vi.fn(async () => undefined),
+    };
+    setSessionRuntimeFactory(harness.config, () => ({
+      operations: nativeRuntime as any,
+      nativeRuntime: nativeRuntime as any,
     }));
+    harness.deps.runPermissionModePromptLoopFn = async (params: Readonly<{
+      runtime: Readonly<{
+        sendTurnPrompt: (
+          prompt: string,
+          meta?: Readonly<{ localId?: string | null; userMessageSeq?: number | null; userMessageSeqs?: readonly number[] }>,
+        ) => Promise<void>;
+      }>;
+    }>) => {
+      expect(harness.session.deferDeliveredUserMessageWatermarkToProviderAcceptance).not.toHaveBeenCalled();
+      const dispatch = params.runtime.sendTurnPrompt('queued prompt', {
+        localId: 'local-99',
+        userMessageSeq: 99,
+        userMessageSeqs: [99],
+      });
+      await Promise.resolve();
+      expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
+      releaseSend();
+      await dispatch;
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(nativeRuntime.sendTurnPrompt).toHaveBeenCalledWith('queued prompt', {
+      localId: 'local-99',
+      userMessageSeq: 99,
+      userMessageSeqs: [99],
+    });
+    expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
+  });
+
+  it('does not infer provider acceptance from native meta and steer dispatch surfaces', async () => {
+    const harness = createHarness();
+    const nativeRuntime = {
+      beginTurnLifecycle: vi.fn(),
+      startOrLoadSession: vi.fn(async () => undefined),
+      sendTurnPrompt: vi.fn(async () => undefined),
+      sendPromptWithMeta: vi.fn(async function (this: unknown) {
+        expect(this).toBe(nativeRuntime);
+      }),
+      steerInFlightTurn: vi.fn(async function (this: unknown) {
+        expect(this).toBe(nativeRuntime);
+      }),
+      waitForTurnCompletion: vi.fn(async () => undefined),
+      subscribeRuntimeEvents: vi.fn(() => () => undefined),
+      cancelTurn: vi.fn(async () => undefined),
+      readSessionIdentity: vi.fn(() => ({ sessionId: null })),
+      updateSessionRuntimeConfig: vi.fn(async () => undefined),
+      resetOrDisposeRuntime: vi.fn(async () => undefined),
+    };
+    setSessionRuntimeFactory(harness.config, () => ({
+      operations: nativeRuntime as any,
+      nativeRuntime: nativeRuntime as any,
+    }));
+    harness.deps.runPermissionModePromptLoopFn = async (params: Readonly<{
+      runtime: Readonly<{
+        sendPromptWithMeta?: (
+          meta: Readonly<{ text: string; localIds?: readonly string[]; userMessageSeq?: number | null }>,
+        ) => Promise<void>;
+        steerInFlightTurn: (
+          prompt: string,
+          meta?: Readonly<{ localId?: string | null; userMessageSeq?: number | null }>,
+        ) => Promise<void>;
+      }>;
+    }>) => {
+      await params.runtime.sendPromptWithMeta?.({
+        text: 'meta prompt',
+        localIds: ['local-meta'],
+        userMessageSeq: 101,
+      });
+      await params.runtime.steerInFlightTurn('steer prompt', {
+        localId: 'local-steer',
+        userMessageSeq: 102,
+      });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.session.deferDeliveredUserMessageWatermarkToProviderAcceptance).not.toHaveBeenCalled();
+    expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when provider-acceptance watermarking is requested without an acceptance seam', async () => {
+    const harness = createHarness();
+    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
+    delete harness.runtime.setOnPromptAcceptedByProvider;
+    delete harness.runtime.setOnPromptTerminallyRejectedBeforeProvider;
+
+    await expect(runHostSessionRuntime(harness.opts, harness.config, harness.deps))
+      .rejects
+      .toThrow(/provider-acceptance delivery watermarking/i);
+  });
+
+  it('fails closed when provider-acceptance watermarking has only a rejection seam', async () => {
+    const harness = createHarness();
+    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
+    delete harness.runtime.setOnPromptAcceptedByProvider;
+    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn();
+
+    await expect(runHostSessionRuntime(harness.opts, harness.config, harness.deps))
+      .rejects
+      .toThrow(/provider-acceptance delivery watermarking/i);
+  });
+
+  it('defers the delivered watermark and confirms it only through provider acceptance from the native runtime', async () => {
+    const harness = createHarness();
+    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
+    let acceptedHandler:
+      | ((info: Readonly<{ localInputIds?: readonly string[]; localIds?: readonly string[]; userMessageSeq?: number | null; userMessageSeqs?: readonly number[] }>) => void)
+      | null = null;
+    harness.runtime.setOnPromptAcceptedByProvider = vi.fn((handler) => {
+      acceptedHandler = handler;
+    });
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      expect(harness.session.deferDeliveredUserMessageWatermarkToProviderAcceptance).toHaveBeenCalledTimes(1);
+      expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
+      acceptedHandler?.({ localIds: ['local-42'], userMessageSeq: 42, userMessageSeqs: [42] });
+      acceptedHandler?.({ userMessageSeq: null });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.runtime.setOnPromptAcceptedByProvider).toHaveBeenCalledTimes(1);
+    expect(harness.session.confirmUserMessageDeliveredToProvider).toHaveBeenCalledTimes(1);
+    expect(harness.session.confirmUserMessageDeliveredToProvider).toHaveBeenCalledWith({
+      localIds: ['local-42'],
+      userMessageSeq: 42,
+      userMessageSeqs: [42],
+    });
+  });
+
+  it('normalizes plugin SDK localInputIds when confirming native-runtime provider acceptance', async () => {
+    const harness = createHarness();
+    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
+    let acceptedHandler:
+      | ((info: Readonly<{ localInputIds?: readonly string[]; userMessageSeq?: number | null; userMessageSeqs?: readonly number[] }>) => void)
+      | null = null;
+    harness.runtime.setOnPromptAcceptedByProvider = vi.fn((handler) => {
+      acceptedHandler = handler;
+    });
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      acceptedHandler?.({ localInputIds: ['local-input-42'], userMessageSeq: null });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.session.confirmUserMessageDeliveredToProvider).toHaveBeenCalledTimes(1);
+    expect(harness.session.confirmUserMessageDeliveredToProvider).toHaveBeenCalledWith({
+      localIds: ['local-input-42'],
+      userMessageSeq: null,
+    });
+  });
+
+  it('blocks canonical pending delivery when the native runtime terminally rejects a prompt before provider custody', async () => {
+    const harness = createHarness();
+    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
+    let terminallyRejectedHandler:
+      | ((info: Readonly<{ localInputIds?: readonly string[]; localIds?: readonly string[]; userMessageSeq?: number | null; userMessageSeqs?: readonly number[] }>) => void)
+      | null = null;
+    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
+    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn((handler) => {
+      terminallyRejectedHandler = handler;
+    });
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      expect(harness.session.deferDeliveredUserMessageWatermarkToProviderAcceptance).toHaveBeenCalledTimes(1);
+      expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
+      terminallyRejectedHandler?.({ localIds: ['local-84'], userMessageSeq: 84, userMessageSeqs: [84] });
+      terminallyRejectedHandler?.({ userMessageSeq: null });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.runtime.setOnPromptTerminallyRejectedBeforeProvider).toHaveBeenCalledTimes(1);
+    expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
+    expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledTimes(1);
+    expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledWith({
+      localIds: ['local-84'],
+      reason: 'provider_rejected_before_acceptance',
+    });
+  });
+
+  it('normalizes plugin SDK localInputIds when blocking terminally rejected native-runtime prompts before provider custody', async () => {
+    const harness = createHarness();
+    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
+    let terminallyRejectedHandler:
+      | ((info: Readonly<{ localInputIds?: readonly string[]; userMessageSeq?: number | null; userMessageSeqs?: readonly number[] }>) => void)
+      | null = null;
+    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
+    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn((handler) => {
+      terminallyRejectedHandler = handler;
+    });
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      terminallyRejectedHandler?.({ localInputIds: ['local-input-84'], userMessageSeq: null });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
+    expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledTimes(1);
+    expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledWith({
+      localIds: ['local-input-84'],
+      reason: 'provider_rejected_before_acceptance',
+    });
+  });
+
+  it('preserves native-runtime provider acceptance timeout reason when blocking canonical pending delivery', async () => {
+    const harness = createHarness();
+    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
+    let terminallyRejectedHandler:
+      | ((info: Readonly<{
+        localIds?: readonly string[];
+        userMessageSeq?: number | null;
+        userMessageSeqs?: readonly number[];
+        deliveryBlockedReason?: 'provider_acceptance_timeout';
+      }>) => void)
+      | null = null;
+    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
+    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn((handler) => {
+      terminallyRejectedHandler = handler as typeof terminallyRejectedHandler;
+    });
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      terminallyRejectedHandler?.({
+        localIds: ['local-timeout-84'],
+        userMessageSeq: null,
+        deliveryBlockedReason: 'provider_acceptance_timeout',
+      });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
+    expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledTimes(1);
+    expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledWith({
+      localIds: ['local-timeout-84'],
+      reason: 'provider_acceptance_timeout',
+    });
+  });
+
+  it('preserves runtime-config blocked reason when blocking canonical pending delivery', async () => {
+    const harness = createHarness();
+    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
+    let terminallyRejectedHandler:
+      | ((info: Readonly<{
+        localIds?: readonly string[];
+        userMessageSeq?: number | null;
+        deliveryBlockedReason?: 'runtime_config_blocked';
+      }>) => void)
+      | null = null;
+    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
+    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn((handler) => {
+      terminallyRejectedHandler = handler as typeof terminallyRejectedHandler;
+    });
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      terminallyRejectedHandler?.({
+        localIds: ['local-runtime-config-blocked'],
+        userMessageSeq: null,
+        deliveryBlockedReason: 'runtime_config_blocked',
+      });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
+    expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledTimes(1);
+    expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledWith({
+      localIds: ['local-runtime-config-blocked'],
+      reason: 'runtime_config_blocked',
+    });
+  });
+
+  it('retries a draft-blocked pending row once when the native runtime reports the blocker cleared', async () => {
+    const harness = createHarness();
+    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
+    let terminallyRejectedHandler:
+      | ((info: Readonly<{
+        localIds?: readonly string[];
+        userMessageSeq?: number | null;
+        deliveryBlockedReason?: 'terminal_composer_draft';
+      }>) => void)
+      | null = null;
+    let blockerClearedHandler: ((info?: Readonly<{ deliveryBlockedReason?: 'terminal_composer_draft' }>) => void) | null = null;
+    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
+    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn((handler) => {
+      terminallyRejectedHandler = handler as typeof terminallyRejectedHandler;
+    });
+    harness.runtime.setOnPromptDeliveryBlockerCleared = vi.fn((handler: typeof blockerClearedHandler) => {
+      blockerClearedHandler = handler;
+    });
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      terminallyRejectedHandler?.({
+        localIds: ['local-draft-blocked'],
+        userMessageSeq: null,
+        deliveryBlockedReason: 'terminal_composer_draft',
+      });
+      await vi.waitFor(() => {
+        expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledTimes(1);
+      });
+      blockerClearedHandler?.({ deliveryBlockedReason: 'terminal_composer_draft' });
+      blockerClearedHandler?.({ deliveryBlockedReason: 'terminal_composer_draft' });
+      await vi.waitFor(() => {
+        expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledTimes(1);
+      });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledWith({
+      localId: 'local-draft-blocked',
+    });
+  });
+
+  it('retries a runtime-config blocked pending row once when the native runtime reports the blocker cleared', async () => {
+    const harness = createHarness();
+    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
+    let terminallyRejectedHandler:
+      | ((info: Readonly<{
+        localIds?: readonly string[];
+        userMessageSeq?: number | null;
+        deliveryBlockedReason?: 'runtime_config_blocked';
+      }>) => void)
+      | null = null;
+    let blockerClearedHandler: ((info?: Readonly<{ deliveryBlockedReason?: 'runtime_config_blocked' }>) => void) | null = null;
+    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
+    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn((handler) => {
+      terminallyRejectedHandler = handler as typeof terminallyRejectedHandler;
+    });
+    harness.runtime.setOnPromptDeliveryBlockerCleared = vi.fn((handler: typeof blockerClearedHandler) => {
+      blockerClearedHandler = handler;
+    });
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      terminallyRejectedHandler?.({
+        localIds: ['local-runtime-config-blocked'],
+        userMessageSeq: null,
+        deliveryBlockedReason: 'runtime_config_blocked',
+      });
+      await vi.waitFor(() => {
+        expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledTimes(1);
+      });
+      blockerClearedHandler?.({ deliveryBlockedReason: 'runtime_config_blocked' });
+      blockerClearedHandler?.({ deliveryBlockedReason: 'runtime_config_blocked' });
+      await vi.waitFor(() => {
+        expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledTimes(1);
+      });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledWith({
+      localId: 'local-runtime-config-blocked',
+    });
+  });
+
+  it('retries a provider-unavailable pending row once when the native runtime reports the blocker cleared', async () => {
+    const harness = createHarness();
+    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
+    let terminallyRejectedHandler:
+      | ((info: Readonly<{
+        localIds?: readonly string[];
+        userMessageSeq?: number | null;
+        deliveryBlockedReason?: 'provider_unavailable_before_acceptance';
+      }>) => void)
+      | null = null;
+    let blockerClearedHandler:
+      | ((info?: Readonly<{ deliveryBlockedReason?: 'provider_unavailable_before_acceptance' }>) => void)
+      | null = null;
+    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
+    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn((handler) => {
+      terminallyRejectedHandler = handler as typeof terminallyRejectedHandler;
+    });
+    harness.runtime.setOnPromptDeliveryBlockerCleared = vi.fn((handler: typeof blockerClearedHandler) => {
+      blockerClearedHandler = handler;
+    });
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      terminallyRejectedHandler?.({
+        localIds: ['local-provider-unavailable'],
+        userMessageSeq: null,
+        deliveryBlockedReason: 'provider_unavailable_before_acceptance',
+      });
+      await vi.waitFor(() => {
+        expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledTimes(1);
+      });
+      blockerClearedHandler?.({ deliveryBlockedReason: 'provider_unavailable_before_acceptance' });
+      blockerClearedHandler?.({ deliveryBlockedReason: 'provider_unavailable_before_acceptance' });
+      await vi.waitFor(() => {
+        expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledTimes(1);
+      });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledWith({
+      localId: 'local-provider-unavailable',
+    });
+  });
+
+  it.each([
+    'terminal_composer_draft',
+    'runtime_config_blocked',
+    'provider_unavailable_before_acceptance',
+  ] as const)('retries %s once when the native runtime clears it before the block write resolves', async (deliveryBlockedReason) => {
+    const harness = createHarness();
+    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
+    const blockWrite = createDeferred<boolean>();
+    harness.session.blockPendingMessageDelivery = vi.fn(() => blockWrite.promise);
+    let terminallyRejectedHandler:
+      | ((info: Readonly<{
+        localIds?: readonly string[];
+        userMessageSeq?: number | null;
+        deliveryBlockedReason?: typeof deliveryBlockedReason;
+      }>) => void)
+      | null = null;
+    let blockerClearedHandler:
+      | ((info?: Readonly<{ deliveryBlockedReason?: typeof deliveryBlockedReason }>) => void)
+      | null = null;
+    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
+    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn((handler) => {
+      terminallyRejectedHandler = handler as typeof terminallyRejectedHandler;
+    });
+    harness.runtime.setOnPromptDeliveryBlockerCleared = vi.fn((handler: typeof blockerClearedHandler) => {
+      blockerClearedHandler = handler;
+    });
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      terminallyRejectedHandler?.({
+        localIds: [`local-${deliveryBlockedReason}`],
+        userMessageSeq: null,
+        deliveryBlockedReason,
+      });
+      await vi.waitFor(() => {
+        expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledTimes(1);
+      });
+
+      blockerClearedHandler?.({ deliveryBlockedReason });
+      blockerClearedHandler?.({ deliveryBlockedReason });
+      expect(harness.session.retryPendingMessageDelivery).not.toHaveBeenCalled();
+
+      blockWrite.resolve(true);
+      await vi.waitFor(() => {
+        expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledTimes(1);
+      });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledWith({
+      localId: `local-${deliveryBlockedReason}`,
+    });
+  });
+
+  it('retries each same-reason pending row whose block write was in flight when the blocker cleared', async () => {
+    const harness = createHarness();
+    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
+    const firstBlockWrite = createDeferred<boolean>();
+    const secondBlockWrite = createDeferred<boolean>();
+    harness.session.blockPendingMessageDelivery = vi.fn()
+      .mockReturnValueOnce(firstBlockWrite.promise)
+      .mockReturnValueOnce(secondBlockWrite.promise);
+    let terminallyRejectedHandler:
+      | ((info: Readonly<{
+        localIds?: readonly string[];
+        userMessageSeq?: number | null;
+        deliveryBlockedReason?: 'terminal_composer_draft';
+      }>) => void)
+      | null = null;
+    let blockerClearedHandler:
+      | ((info?: Readonly<{ deliveryBlockedReason?: 'terminal_composer_draft' }>) => void)
+      | null = null;
+    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
+    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn((handler) => {
+      terminallyRejectedHandler = handler as typeof terminallyRejectedHandler;
+    });
+    harness.runtime.setOnPromptDeliveryBlockerCleared = vi.fn((handler: typeof blockerClearedHandler) => {
+      blockerClearedHandler = handler;
+    });
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      terminallyRejectedHandler?.({
+        localIds: ['local-draft-blocked-a'],
+        userMessageSeq: null,
+        deliveryBlockedReason: 'terminal_composer_draft',
+      });
+      terminallyRejectedHandler?.({
+        localIds: ['local-draft-blocked-b'],
+        userMessageSeq: null,
+        deliveryBlockedReason: 'terminal_composer_draft',
+      });
+      await vi.waitFor(() => {
+        expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledTimes(2);
+      });
+
+      blockerClearedHandler?.({ deliveryBlockedReason: 'terminal_composer_draft' });
+      firstBlockWrite.resolve(true);
+      await vi.waitFor(() => {
+        expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledTimes(1);
+      });
+
+      secondBlockWrite.resolve(true);
+      await vi.waitFor(() => {
+        expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledTimes(2);
+      });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledWith({
+      localId: 'local-draft-blocked-a',
+    });
+    expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledWith({
+      localId: 'local-draft-blocked-b',
+    });
+  });
+
+  it('keeps the deferred watermark policy on session swap and confirms accepted prompts on the active session', async () => {
+    const harness = createHarness();
+    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
+    const initialSession = harness.session;
+    const swappedSessionFixture = harness.createSessionFixture('session-2');
+    const swappedSession = swappedSessionFixture.session;
+    let swapSession: ((nextSession: any) => Promise<void>) | null = null;
+    let acceptedHandler:
+      | ((info: Readonly<{ localIds?: readonly string[]; userMessageSeq?: number | null; userMessageSeqs?: readonly number[] }>) => void)
+      | null = null;
+
+    harness.runtime.setOnPromptAcceptedByProvider = vi.fn((handler) => {
+      acceptedHandler = handler;
+    });
+    harness.deps.initializeBackendRunSessionFn = async ({ onSessionSwap }: any) => {
+      swapSession = onSessionSwap;
+      return {
+        session: initialSession,
+        reconnectionHandle: null,
+        reportedSessionId: 'session-1',
+        attachedToExistingSession: false,
+      };
+    };
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      await swapSession?.(swappedSession);
+      expect(swappedSession.deferDeliveredUserMessageWatermarkToProviderAcceptance).toHaveBeenCalledTimes(1);
+      acceptedHandler?.({ localIds: ['local-64'], userMessageSeq: 64, userMessageSeqs: [64] });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(initialSession.deferDeliveredUserMessageWatermarkToProviderAcceptance).toHaveBeenCalledTimes(1);
+    expect(initialSession.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
+    expect(swappedSession.confirmUserMessageDeliveredToProvider).toHaveBeenCalledTimes(1);
+    expect(swappedSession.confirmUserMessageDeliveredToProvider).toHaveBeenCalledWith({
+      localIds: ['local-64'],
+      userMessageSeq: 64,
+      userMessageSeqs: [64],
+    });
+  });
+
+  it('hands undeliverable native-runtime prompts back to the mode queue with their seq without confirming the watermark', async () => {
+    const harness = createHarness();
+    let undeliverableHandler:
+      | ((prompts: ReadonlyArray<Readonly<{ text: string; localInputIds?: readonly string[]; localIds?: readonly string[]; userMessageSeq: number | null; userMessageSeqs?: readonly number[] }>>) => void)
+      | null = null;
+    const messageQueue = {
+      reset: vi.fn(),
+      size: vi.fn(() => 0),
+      unshift: vi.fn(),
+    };
+
+    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
+    harness.runtime.setOnUndeliverablePrompts = vi.fn((handler) => {
+      undeliverableHandler = handler;
+    });
+    harness.deps.createPermissionModeQueueStateFn = () => ({
+      messageQueue,
+      rebindSession: () => undefined,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => undefined,
+      getCurrentPermissionModeUpdatedAt: () => 0,
+      setCurrentPermissionModeUpdatedAt: () => undefined,
+    });
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      undeliverableHandler?.([{
+        text: 'retry after runtime death',
+        localIds: ['local-77'],
+        userMessageSeq: 77,
+        userMessageSeqs: [77],
+      }]);
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.runtime.setOnUndeliverablePrompts).toHaveBeenCalledTimes(1);
+    expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
+    expect(messageQueue.unshift).toHaveBeenCalledWith(
+      {
+        text: 'retry after runtime death',
+        localId: 'local-77',
+        localIds: ['local-77'],
+        userMessageSeq: 77,
+        userMessageSeqs: [77],
+      },
+      { permissionMode: 'default', suppressUserEcho: true, providerPromptAlreadyResolved: true },
+    );
+  });
+
+  it('does not requeue an undeliverable native-runtime prompt accepted during the same dispatch', async () => {
+    const harness = createHarness();
+    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
+    let acceptedHandler:
+      | ((info: Readonly<{ localInputIds?: readonly string[]; localIds?: readonly string[]; userMessageSeq?: number | null; userMessageSeqs?: readonly number[] }>) => void)
+      | null = null;
+    let undeliverableHandler:
+      | ((prompts: ReadonlyArray<Readonly<{ text: string; localInputIds?: readonly string[]; localIds?: readonly string[]; userMessageSeq: number | null; userMessageSeqs?: readonly number[] }>>) => void)
+      | null = null;
+    const messageQueue = {
+      reset: vi.fn(),
+      size: vi.fn(() => 0),
+      unshift: vi.fn(),
+    };
+    const nativeRuntime = {
+      ...harness.runtime,
+      setOnPromptAcceptedByProvider: vi.fn((handler) => {
+        acceptedHandler = handler;
+      }),
+      setOnUndeliverablePrompts: vi.fn((handler) => {
+        undeliverableHandler = handler;
+      }),
+      sendTurnPrompt: vi.fn(async function (
+        this: unknown,
+        prompt: string,
+        meta?: Readonly<{ localId?: string | null; userMessageSeq?: number | null; userMessageSeqs?: readonly number[] }>,
+      ) {
+        expect(this).toBe(nativeRuntime);
+        undeliverableHandler?.([{
+          text: prompt,
+          localIds: meta?.localId ? [meta.localId] : [],
+          userMessageSeq: meta?.userMessageSeq ?? null,
+          userMessageSeqs: meta?.userMessageSeqs,
+        }]);
+        acceptedHandler?.({
+          localIds: meta?.localId ? [meta.localId] : [],
+          userMessageSeq: meta?.userMessageSeq ?? null,
+          userMessageSeqs: meta?.userMessageSeqs,
+        });
+      }),
+    };
+    setSessionRuntimeFactory(harness.config, () => ({
+      operations: nativeRuntime as any,
+      nativeRuntime: nativeRuntime as any,
+    }));
+    harness.deps.createPermissionModeQueueStateFn = () => ({
+      messageQueue,
+      rebindSession: () => undefined,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => undefined,
+      getCurrentPermissionModeUpdatedAt: () => 0,
+      setCurrentPermissionModeUpdatedAt: () => undefined,
+    });
+    harness.deps.runPermissionModePromptLoopFn = async (params: Readonly<{
+      runtime: Readonly<{
+        sendTurnPrompt: (
+          prompt: string,
+          meta?: Readonly<{ localId?: string | null; userMessageSeq?: number | null; userMessageSeqs?: readonly number[] }>,
+        ) => Promise<void>;
+      }>;
+    }>) => {
+      await params.runtime.sendTurnPrompt('internally retried prompt', {
+        localId: 'local-internal-retry',
+        userMessageSeq: 90,
+        userMessageSeqs: [90],
+      });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.session.confirmUserMessageDeliveredToProvider).toHaveBeenCalledWith({
+      localIds: ['local-internal-retry'],
+      userMessageSeq: 90,
+      userMessageSeqs: [90],
+    });
+    expect(messageQueue.unshift).not.toHaveBeenCalled();
+  });
+
+  it('normalizes plugin SDK localInputIds when handing undeliverable native-runtime prompts back to the queue', async () => {
+    const harness = createHarness();
+    let undeliverableHandler:
+      | ((prompts: ReadonlyArray<Readonly<{ text: string; localInputIds?: readonly string[]; userMessageSeq: number | null; userMessageSeqs?: readonly number[] }>>) => void)
+      | null = null;
+    const messageQueue = {
+      reset: vi.fn(),
+      size: vi.fn(() => 0),
+      unshift: vi.fn(),
+    };
+
+    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
+    harness.runtime.setOnUndeliverablePrompts = vi.fn((handler) => {
+      undeliverableHandler = handler;
+    });
+    harness.deps.createPermissionModeQueueStateFn = () => ({
+      messageQueue,
+      rebindSession: () => undefined,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => undefined,
+      getCurrentPermissionModeUpdatedAt: () => 0,
+      setCurrentPermissionModeUpdatedAt: () => undefined,
+    });
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      undeliverableHandler?.([{
+        text: 'retry local input id after runtime death',
+        localInputIds: ['local-input-77'],
+        userMessageSeq: null,
+      }]);
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(messageQueue.unshift).toHaveBeenCalledWith(
+      {
+        text: 'retry local input id after runtime death',
+        localId: 'local-input-77',
+        localIds: ['local-input-77'],
+      },
+      { permissionMode: 'default', suppressUserEcho: true, providerPromptAlreadyResolved: true },
+    );
   });
 
   it('preserves native runtime restart policy when driving RuntimeTurnOperations', async () => {
@@ -1920,7 +2971,6 @@ describe('runHostSessionRuntime', () => {
       steerInFlightTurn: vi.fn(async () => undefined),
       waitForTurnCompletion: vi.fn(async () => undefined),
       subscribeRuntimeEvents: vi.fn(() => () => undefined),
-      respondToPermission: vi.fn(async () => undefined),
       cancelTurn: vi.fn(async () => undefined),
       readSessionIdentity: vi.fn(() => ({ sessionId: null })),
       updateSessionRuntimeConfig: vi.fn(async () => undefined),
@@ -2596,6 +3646,28 @@ describe('runHostSessionRuntime', () => {
       }),
     );
     expect(observedGetAccountSettingsSecretsReadKeys?.()).toEqual(settingsSecretsReadKeys);
+  });
+
+  it('passes pending queue delivery timing from account settings into the permission prompt loop', async () => {
+    const harness = createHarness();
+    let observedPendingQueueDeliveryTiming: unknown;
+    harness.opts.accountSettingsContext = {
+      source: 'network',
+      settings: {
+        sessionPendingQueueDeliveryTiming: 'after_runtime_idle',
+      } as any,
+      settingsVersion: 1,
+      loadedAtMs: 1,
+      settingsSecretsReadKeys: [],
+      whenRefreshed: null,
+    };
+    harness.deps.runPermissionModePromptLoopFn = async (params: { pendingQueueDeliveryTiming?: unknown }) => {
+      observedPendingQueueDeliveryTiming = params.pendingQueueDeliveryTiming;
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(observedPendingQueueDeliveryTiming).toBe('after_runtime_idle');
   });
 
   it('does not stamp provider-enforced permission traces from the shared host path by default', async () => {

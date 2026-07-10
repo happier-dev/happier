@@ -43,6 +43,7 @@ export async function initializeBackendApiContext(opts: {
     process.exit(1);
   }
   if (await shouldSkipMachineRegistration(opts.skipMachineRegistration)) {
+    api.setLocalMachineId(machineId);
     return { api, machineId };
   }
   const { machineId: registeredMachineId } = await ensureMachineRegistered({
@@ -52,5 +53,6 @@ export async function initializeBackendApiContext(opts: {
     caller: 'initializeBackendApiContext',
     ...(opts.suppressMachineRegistrationRecoveryLogs ? { recoveryLogger: silentRecoveryLogger } : {}),
   });
+  api.setLocalMachineId(registeredMachineId);
   return { api, machineId: registeredMachineId };
 }

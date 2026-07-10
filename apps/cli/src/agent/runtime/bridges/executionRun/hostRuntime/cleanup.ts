@@ -1,46 +1,23 @@
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
+import { wrapExecutionRunHostRuntime } from './wrap';
 
 export function withExecutionRunHostRuntimeCleanup(
     runtime: ExecutionRunHostRuntime,
     cleanup: () => Promise<void> | void,
 ): ExecutionRunHostRuntime {
-    return Object.freeze({
-        async readResumeSupport(opts) {
-            return await runtime.readResumeSupport(opts);
-        },
-        async provisionSession(opts) {
-            return await runtime.provisionSession(opts);
-        },
-        async sendPrompt(sessionId, prompt) {
-            await runtime.sendPrompt(sessionId, prompt);
-        },
-        ...(typeof runtime.sendSteerPrompt === 'function'
-            ? {
-                async sendSteerPrompt(sessionId: string, prompt: string) {
-                    await runtime.sendSteerPrompt!(sessionId, prompt);
-                },
-            }
-            : {}),
-        async cancel(sessionId) {
-            await runtime.cancel(sessionId);
-        },
-        subscribeMessages(handler) {
-            return runtime.subscribeMessages(handler);
-        },
-        ...(typeof runtime.respondToPermission === 'function'
-            ? {
-                async respondToPermission(requestId: string, approved: boolean) {
-                    await runtime.respondToPermission!(requestId, approved);
-                },
-            }
-            : {}),
-        ...(typeof runtime.waitForTurnCompletion === 'function'
-            ? {
-                async waitForTurnCompletion(timeoutMs?: number | null) {
-                    await runtime.waitForTurnCompletion!(timeoutMs);
-                },
-            }
-            : {}),
+    return wrapExecutionRunHostRuntime({
+        readPermissionCapability: () => runtime.permissionCapability,
+        readResumeSupport: (opts) => runtime.readResumeSupport(opts),
+        provisionSession: (opts) => runtime.provisionSession(opts),
+        sendPrompt: (sessionId, prompt, meta) => runtime.sendPrompt(sessionId, prompt, meta),
+        readSendSteerPrompt: () => runtime.sendSteerPrompt,
+        cancel: (sessionId) => runtime.cancel(sessionId),
+        subscribeMessages: (handler) => runtime.subscribeMessages(handler),
+        readRespondToPermission: () => runtime.permissionCapability === 'responds'
+            ? runtime.respondToPermission
+            : undefined,
+        readWaitForTurnCompletion: () => runtime.waitForTurnCompletion,
+        readProbeTurnLiveness: () => runtime.probeTurnLiveness,
         async dispose() {
             try {
                 await runtime.dispose();

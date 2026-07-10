@@ -3,9 +3,9 @@ import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import type { LoadedLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
-import type { ResolvedBackendContribution } from '@/plugins/projection/registry/types';
+import type { ResolvedAgentRuntimeContribution } from '@/plugins/projection/registry/types';
 
-function resolveBackendTargetForContribution(backend: ResolvedBackendContribution): BackendTargetRefV2 {
+function resolveBackendTargetForContribution(backend: ResolvedAgentRuntimeContribution): BackendTargetRefV2 {
     if (backend.provenance === 'first_party' && backend.source.kind === 'bundled') {
         return {
             kind: 'backend',
@@ -23,7 +23,7 @@ function resolveBackendTargetForContribution(backend: ResolvedBackendContributio
 }
 
 export function mapExternalSessionLaunchHintsToSpawnOptions(params: Readonly<{
-    backend: ResolvedBackendContribution;
+    backend: ResolvedAgentRuntimeContribution;
     hints: BackendSessionLaunchHintsV1;
     linked: LoadedLinkedExternalSession;
     sessionId: string;
@@ -36,9 +36,7 @@ export function mapExternalSessionLaunchHintsToSpawnOptions(params: Readonly<{
         resume: params.linked.remoteSessionId,
         approvedNewDirectoryCreation: true,
         transcriptStorage: 'direct',
-        ...(params.linked.providerId === 'codex' && params.linked.codexBackendMode
-            ? { codexBackendMode: params.linked.codexBackendMode }
-            : {}),
+        ...(params.hints.backendModeHint ? { backendMode: params.hints.backendModeHint } : {}),
         ...(params.hints.environmentVariables ? { environmentVariables: { ...params.hints.environmentVariables } } : {}),
     };
 }

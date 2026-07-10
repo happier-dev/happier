@@ -1,6 +1,6 @@
 import type {
   BridgeLifecycleHookEventIdV1,
-  ExternalSessionsProviderId,
+  ExternalSessionsAgentId,
   ExternalSessionsSource,
   BackendTargetRefV2Input,
   HookScopeV1,
@@ -8,6 +8,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistryTypes';
+import type { RuntimeOutboundTranscriptDispatchFacetV1 } from '@happier-dev/agents';
 import type { CliSessionAttachEligibility } from '@/session/attach/evaluateCliSessionAttachEligibility';
 import type {
   SessionForkBackendTargetResolution,
@@ -32,10 +33,17 @@ import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecy
  */
 export interface SessionHostBridgeContract {
   resolveExecutionSurfaces(backendId?: string | null): Promise<BackendExecutionSurfaces>;
+  resolveOutboundTranscriptDispatchFacet(backendId?: string | null): Promise<Readonly<{
+    backendId: string;
+    facet: RuntimeOutboundTranscriptDispatchFacetV1;
+  }> | null>;
   createSessionRuntime(backendId: string, params: unknown): Promise<HostSessionRuntimePlan>;
   runSessionCommand(backendId: string, params: unknown): Promise<void>;
   evaluateAttachEligibility(
-    params: Parameters<(typeof import('@/session/attach/evaluateCliSessionAttachEligibility'))['evaluateCliSessionAttachEligibility']>[0],
+    params: Omit<
+      Parameters<(typeof import('@/session/attach/evaluateCliSessionAttachEligibility'))['evaluateCliSessionAttachEligibility']>[0],
+      'resolveExecutionSurfaces'
+    >,
   ): Promise<CliSessionAttachEligibility>;
   resolveSessionHandoffEligibility(params: Readonly<{
     metadata: unknown;
@@ -49,14 +57,14 @@ export interface SessionHostBridgeContract {
     params: Parameters<(typeof import('@/session/fork/backendTarget'))['resolveSessionForkBackendTarget']>[0],
   ): Promise<SessionForkBackendTargetResolution>;
   resolveExternalSessionLinkIdentity(params: Readonly<{
-    providerId: ExternalSessionsProviderId;
+    agentId: ExternalSessionsAgentId;
     remoteSessionId: string;
     source: ExternalSessionsSource;
     runtimeDescriptor?: RuntimeDescriptorV1 | null;
     metadata?: Record<string, unknown>;
   }>): Promise<ExternalSessionLinkIdentity>;
   canonicalizeLinkedExternalSessionSource(params: Readonly<{
-    providerId: ExternalSessionsProviderId;
+    agentId: ExternalSessionsAgentId;
     metadata: Record<string, unknown>;
     remoteSessionId: string;
     source: ExternalSessionsSource;
@@ -66,8 +74,8 @@ export interface SessionHostBridgeContract {
     eventId: BridgeLifecycleHookEventIdV1;
     scope?: HookScopeV1;
     happySessionId?: string;
-    providerSessionId?: string;
-    providerId?: string;
+    agentSessionId?: string;
+    agentId?: string;
     backendId?: string;
     backendTarget?: string;
     machineId?: string;

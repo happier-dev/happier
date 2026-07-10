@@ -22,8 +22,8 @@ async function writePlugin(params: Readonly<{
             "import { appendFileSync } from 'node:fs';",
             `appendFileSync(${JSON.stringify(params.sentinelPath)}, 'loaded');`,
             'export async function activate(api) {',
-            '  api.registerBackendEngine({',
-            '    backendId: "acme.runtime.backend",',
+            '  api.registerAgentRuntime({',
+            '    agentId: "acme.runtime",',
             '    create: async () => ({',
             '      runtimeCore: {',
             '        createSessionRuntime: async () => ({ kind: "plugin-session-plan" }),',
@@ -50,56 +50,44 @@ async function writePlugin(params: Readonly<{
                 engines: {
                     happier: '^0.2.0',
                 },
-                runtime: {
-                    apiVersion: 1,
-                    capabilities: ['agents', 'backends', 'hooks'],
+                uses: ['agents', 'hooks'],
+                entrypoints: {
+                    main: './daemon.mjs',
                 },
-                targets: {
-                    daemon: {
-                        entry: './daemon.mjs',
-                    },
-                },
-                capabilities: {
-                    permissions: [],
+                permissions: {
+                    required: [],
+                    optional: [],
                 },
                 contributes: {
                     agents: [
                         {
-                        kindVersion: 1,
-                        id: 'acme.runtime',
-                        display: {
-                            name: 'Acme Runtime',
-                            tags: ['plugin'],
-                        },
-                        ownedBackendIds: ['acme.runtime.backend'],
-                        },
-                    ],
-                    backends: [
-                        {
-                        kindVersion: 1,
-                        id: 'acme.runtime.backend',
-                        agentId: 'acme.runtime',
-                        engine: {
-                            kind: 'custom',
-                        },
-                        surfaceHandlers: [
-                            {
-                                surfaceApiVersion: 1,
-                                id: 'acme.runtime.backend.terminal.resolveTranscriptBinding',
-                                kind: 'terminalRuntime',
-                                operation: 'resolveTranscriptBinding',
-                                support: 'supported',
-                                handler: {
-                                    target: 'daemon',
-                                    exportName: 'resolveTranscriptBinding',
+                            kindVersion: 1,
+                            id: 'acme.runtime',
+                            display: {
+                                name: 'Acme Runtime',
+                                tags: ['plugin'],
+                            },
+                            runtime: {
+                                kind: 'custom',
+                            },
+                            surfaceHandlers: [
+                                {
+                                    surfaceApiVersion: 1,
+                                    id: 'acme.runtime.terminal.resolveTranscriptBinding',
+                                    kind: 'terminalRuntime',
+                                    operation: 'resolveTranscriptBinding',
+                                    support: 'supported',
+                                    handler: {
+                                        target: 'daemon',
+                                        exportName: 'resolveTranscriptBinding',
+                                    },
+                                },
+                            ],
+                            capabilities: {
+                                executionRun: {
+                                    supported: false,
                                 },
                             },
-                        ],
-                        capabilities: {
-                            executionRun: {
-                                supported: false,
-                            },
-                        },
                         },
                     ],
                 },
@@ -121,8 +109,8 @@ async function writePluginWithEngineSurface(params: Readonly<{
         join(params.rootDir, 'daemon.mjs'),
         [
             'export async function activate(api) {',
-            '  api.registerBackendEngine({',
-            '    backendId: "acme.runtime.backend",',
+            '  api.registerAgentRuntime({',
+            '    agentId: "acme.runtime",',
             '    create: async () => ({',
             '      runtimeCore: {',
             '        createSessionRuntime: async () => ({ kind: "plugin-session-plan" }),',
@@ -160,17 +148,13 @@ async function writePluginWithEngineSurface(params: Readonly<{
                 engines: {
                     happier: '^0.2.0',
                 },
-                runtime: {
-                    apiVersion: 1,
-                    capabilities: ['agents', 'backends'],
+                uses: ['agents'],
+                entrypoints: {
+                    main: './daemon.mjs',
                 },
-                targets: {
-                    daemon: {
-                        entry: './daemon.mjs',
-                    },
-                },
-                capabilities: {
-                    permissions: [],
+                permissions: {
+                    required: [],
+                    optional: [],
                 },
                 contributes: {
                     agents: [
@@ -181,21 +165,13 @@ async function writePluginWithEngineSurface(params: Readonly<{
                                 name: 'Acme Runtime',
                                 tags: ['plugin'],
                             },
-                            ownedBackendIds: ['acme.runtime.backend'],
-                        },
-                    ],
-                    backends: [
-                        {
-                            kindVersion: 1,
-                            id: 'acme.runtime.backend',
-                            agentId: 'acme.runtime',
-                            engine: {
+                            runtime: {
                                 kind: 'custom',
                             },
                             surfaceHandlers: [
                                 {
                                     surfaceApiVersion: 1,
-                                    id: 'acme.runtime.backend.fork.evaluateAvailability',
+                                    id: 'acme.runtime.fork.evaluateAvailability',
                                     kind: 'fork',
                                     operation: 'evaluateAvailability',
                                     support: 'supported',
@@ -206,7 +182,7 @@ async function writePluginWithEngineSurface(params: Readonly<{
                                 },
                                 {
                                     surfaceApiVersion: 1,
-                                    id: 'acme.runtime.backend.fork.fork',
+                                    id: 'acme.runtime.fork.fork',
                                     kind: 'fork',
                                     operation: 'fork',
                                     support: 'supported',
@@ -301,7 +277,7 @@ describe('resolveCliEngineRegistry', () => {
         });
 
         const initialRegistry = await resolveCliEngineRegistry({ happyHomeDir });
-        expect(await initialRegistry.resolveForBackendId('acme.runtime.backend')).toBeNull();
+        expect(await initialRegistry.resolveForBackendId('acme.runtime')).toBeNull();
 
         await store.write({
             t: 'happier_plugin_state_v1',
@@ -334,9 +310,9 @@ describe('resolveCliEngineRegistry', () => {
         });
 
         const refreshedRegistry = await resolveCliEngineRegistry({ happyHomeDir });
-        const resolution = await refreshedRegistry.resolveForBackendId('acme.runtime.backend');
+        const resolution = await refreshedRegistry.resolveForBackendId('acme.runtime');
 
-        expect(resolution?.backendId).toBe('acme.runtime.backend');
+        expect(resolution?.backendId).toBe('acme.runtime');
         expect(resolution?.engineAdapter.runtimeCore.createSessionRuntime).toEqual(expect.any(Function));
         expect(resolution?.engineAdapter.runtimeCore.createExecutionRunBackend).toEqual(expect.any(Function));
         await expect(access(sentinelPath, fsConstants.F_OK)).resolves.toBeUndefined();
@@ -380,7 +356,7 @@ describe('resolveCliEngineRegistry', () => {
         });
 
         const registry = await resolveCliEngineRegistry({ happyHomeDir });
-        const resolution = await registry.resolveForBackendId('acme.runtime.backend');
+        const resolution = await registry.resolveForBackendId('acme.runtime');
 
         expect(resolution?.diagnostics).toEqual([]);
         const forkSurface = resolution?.executionSurfaces.fork;

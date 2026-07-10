@@ -1,6 +1,7 @@
 import type { Metadata, PermissionMode } from '@/api/types';
+import type { ProviderBoundModelRef, SessionModelSelectionIntentV1 } from '@happier-dev/protocol';
 import { logger } from '@/ui/logger';
-import { delayUnref } from '@/utils/time';
+import { waitForSessionMetadataRetryBackoff } from '@/agent/runtime/session/metadataWaitRetryBackoff';
 import {
   createRuntimeOverrideSynchronizers,
   type RuntimeOverrideSynchronizers,
@@ -8,7 +9,7 @@ import {
 } from './createRuntimeOverrideSynchronizers';
 
 import {
-  resolveModelOverrideFromMetadataSnapshot,
+  resolveModelSelectionIntentFromMetadataSnapshot,
   resolvePermissionIntentFromMetadataSnapshot,
 } from './permissions/modeFromMetadata';
 import { resolveStartupPermissionModeFromSession } from './permissions/startupSeed';
@@ -16,7 +17,7 @@ import { resolveStartupPermissionModeFromSession } from './permissions/startupSe
 export type { RuntimeOverrideSynchronizers, RuntimeOverrideTarget } from './createRuntimeOverrideSynchronizers';
 
 type RuntimePermissionModeRef = { current: PermissionMode; updatedAt: number };
-type RuntimeModelOverrideRef = { current: string | null; updatedAt: number };
+type RuntimeModelOverrideRef = { current: ProviderBoundModelRef | null; updatedAt: number };
 
 type SyncSnapshot = {
   permissionMode: RuntimePermissionModeRef;
@@ -44,13 +45,11 @@ async function runRuntimeMetadataOverridesWatcherLoop(args: Readonly<{
       logger.debug('[RuntimeOverridesSynchronizer] Metadata watcher wait failed; retrying after backoff', {
         error: error instanceof Error ? error.message : String(error ?? 'unknown error'),
       });
-      await delayUnref(abortedBackoffMs);
+      await waitForSessionMetadataRetryBackoff({ backoffMs: abortedBackoffMs, defaultMs: 25, minMs: 1 });
       continue;
     }
     if (!didUpdate) {
-      if (signal?.aborted) {
-        await delayUnref(abortedBackoffMs);
-      }
+      await waitForSessionMetadataRetryBackoff({ backoffMs: abortedBackoffMs, defaultMs: 25, minMs: 1 });
       continue;
     }
     try {
@@ -59,12 +58,13 @@ async function runRuntimeMetadataOverridesWatcherLoop(args: Readonly<{
       logger.debug('[RuntimeOverridesSynchronizer] Metadata watcher update failed; retrying after backoff', {
         error: error instanceof Error ? error.message : String(error ?? 'unknown error'),
       });
-      await delayUnref(abortedBackoffMs);
+      await waitForSessionMetadataRetryBackoff({ backoffMs: abortedBackoffMs, defaultMs: 25, minMs: 1 });
     }
   }
 }
 
 export async function initializeRuntimeOverridesSynchronizer(params: Readonly<{
+  agentTargetKey: string;
   explicitPermissionMode: PermissionMode | undefined;
   sessionKind: 'fresh' | 'attach' | 'resume';
   take?: number;
@@ -98,10 +98,10 @@ export async function initializeRuntimeOverridesSynchronizer(params: Readonly<{
     params.onPermissionModeApplied?.();
   };
 
-  const applyModelOverride = (next: { modelId: string; updatedAt: number } | null): void => {
+  const applyModelOverride = (next: SessionModelSelectionIntentV1 | null): void => {
     if (!next) return;
     if (next.updatedAt <= snapshot.modelOverride.updatedAt) return;
-    snapshot.modelOverride.current = next.modelId;
+    snapshot.modelOverride.current = next.selection;
     snapshot.modelOverride.updatedAt = next.updatedAt;
     params.onModelOverrideApplied?.();
   };
@@ -130,7 +130,10 @@ export async function initializeRuntimeOverridesSynchronizer(params: Readonly<{
     if (!explicitPermissionMode) {
       applyPermissionMode(resolvePermissionIntentFromMetadataSnapshot({ metadata }));
     }
-    applyModelOverride(resolveModelOverrideFromMetadataSnapshot({ metadata }));
+    applyModelOverride(resolveModelSelectionIntentFromMetadataSnapshot({
+      metadata,
+      agentTargetKey: params.agentTargetKey,
+    }));
   };
 
   return {
@@ -141,6 +144,7 @@ export async function initializeRuntimeOverridesSynchronizer(params: Readonly<{
 }
 
 export async function setupRuntimeMetadataDrivenOverridesSync(params: Readonly<{
+  agentTargetKey: string;
   explicitPermissionMode: PermissionMode | undefined;
   sessionKind: 'fresh' | 'attach' | 'resume';
   take?: number;
@@ -168,6 +172,7 @@ export async function setupRuntimeMetadataDrivenOverridesSync(params: Readonly<{
 }> {
   const runtimeControlSync = params.runtime
     ? createRuntimeOverrideSynchronizers({
+        agentTargetKey: params.agentTargetKey,
         session: {
           getMetadataSnapshot: params.session.getMetadataSnapshot,
         },
@@ -177,6 +182,7 @@ export async function setupRuntimeMetadataDrivenOverridesSync(params: Readonly<{
     : null;
 
   const runtimeOverridesSync = await initializeRuntimeOverridesSynchronizer({
+    agentTargetKey: params.agentTargetKey,
     explicitPermissionMode: params.explicitPermissionMode,
     sessionKind: params.sessionKind,
     take: params.take,

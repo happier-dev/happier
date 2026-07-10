@@ -88,4 +88,15 @@ describe('resolveTerminalInputReadiness', () => {
     expect(resolveTerminalInputReadiness({ ...base, awaitingProviderAcceptance: true })).toMatchObject({ status: 'awaiting_provider_acceptance' });
     expect(resolveTerminalInputReadiness({ ...base, hostLiveness: { paneAlive: false, paneDead: true, observedAt: 104 } })).toMatchObject({ status: 'failed_terminal' });
   });
+
+  it('defers uncertain liveness when paneAlive is false without conclusive pane death', () => {
+    expect(resolveTerminalInputReadiness({
+      turnState: { state: 'running', source: 'hook' },
+      hostLiveness: { paneAlive: false, observedAt: 104 },
+      inputState: { stable: true, currentInput: '', observedAt: 105 },
+      observedAt: 106,
+    })).toMatchObject({
+      status: 'defer_liveness_uncertain',
+    });
+  });
 });

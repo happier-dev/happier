@@ -88,6 +88,23 @@ describe('MessageQueue2', () => {
         expect(result?.mode).toBe('local');
     });
 
+    it('rejects a second active waiter without stealing delivery from the first waiter', async () => {
+        const queue = new MessageQueue2<string>(mode => mode);
+
+        const firstWait = queue.waitForMessagesAndGetAsString();
+        const secondWait = expect(queue.waitForMessagesAndGetAsString()).rejects.toThrow(
+            'MessageQueue2 already has an active waiter',
+        );
+
+        queue.push('delivered-to-first-waiter', 'local');
+
+        await secondWait;
+        await expect(firstWait).resolves.toEqual(expect.objectContaining({
+            message: 'delivered-to-first-waiter',
+            mode: 'local',
+        }));
+    });
+
     it('should return null when waiting and queue closes', async () => {
         const queue = new MessageQueue2<string>(mode => mode);
         

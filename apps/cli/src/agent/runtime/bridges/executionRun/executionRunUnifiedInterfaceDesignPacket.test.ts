@@ -22,6 +22,16 @@ describe('executionRunUnifiedInterfaceDesignPacket', () => {
     );
   });
 
+  it('does not expose retired adapter operation sets', () => {
+    expect('runtimeForLoopOperations' in EXECUTION_RUN_UNIFIED_INTERFACE_DESIGN_PACKET).toBe(false);
+    expect('agentBackendOperations' in EXECUTION_RUN_UNIFIED_INTERFACE_DESIGN_PACKET).toBe(false);
+
+    for (const mapping of Object.values(EXECUTION_RUN_UNIFIED_INTERFACE_DESIGN_PACKET.bridgeOperationMappings)) {
+      expect('runtimeForLoop' in mapping).toBe(false);
+      expect('agentBackend' in mapping).toBe(false);
+    }
+  });
+
   it('keeps the required intent policy constraints for long-lived voice and constrained memory_hints intents', () => {
     expect(EXECUTION_RUN_INTENT_POLICY_MATRIX.voice_agent.allowedRunClasses).toEqual(['long_lived']);
     expect(EXECUTION_RUN_INTENT_POLICY_MATRIX.voice_agent.allowedIoModes).toEqual(['streaming']);

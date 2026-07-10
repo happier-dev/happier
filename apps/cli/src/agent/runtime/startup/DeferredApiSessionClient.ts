@@ -7,24 +7,28 @@ import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 import type { RpcHandler, RpcHandlerManagerLike } from '@/api/rpc/types';
 import type { AgentState, Metadata, UserMessage } from '@/api/types';
 import type { MaterializeNextPendingResult } from '@/api/session/sessionClientPort';
+import type { PendingMaterializationActiveTurnPolicy } from '@/api/session/pendingMaterializationActiveTurnPolicy';
+import type { PendingMaterializationDeliveryTiming } from '@/api/session/pendingQueueV2Transport';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
+import type { ProviderTranscriptDispatchRequest } from '@/api/session/client/transcript/providerDispatch';
 
 export type DeferredApiSessionTarget = Readonly<{
   sessionId: string;
   rpcHandlerManager: RpcHandlerManagerLike;
   sendSessionEvent: (event: unknown, id?: string) => void;
-  sendClaudeSessionMessage: (message: unknown, meta?: unknown) => void;
+  sendProviderMessage: (request: ProviderTranscriptDispatchRequest) => void;
   sendAgentMessage: (provider: unknown, body: unknown, opts?: unknown) => void;
   sendAgentMessageEphemeral?: (provider: unknown, body: unknown, opts: unknown) => void | Promise<void>;
+  sendAgentMessageEphemeralDelta?: (provider: unknown, body: unknown, opts: unknown) => void | Promise<void>;
+  getEphemeralStreamConnectionEpoch?: () => number;
   enqueueAgentMessageCommitted?: (
     provider: unknown,
     body: unknown,
     opts: unknown,
   ) => Promise<Readonly<{ persisted: true; delivered: boolean }>>;
   sendAgentMessageCommitted: (provider: unknown, body: unknown, opts: unknown) => Promise<void>;
-  sendCodexMessage: (body: unknown) => void;
   sendUserTextMessage: (text: string, opts?: { localId?: string; meta?: Record<string, unknown> }) => void;
-  onUserMessage?: (callback: (data: UserMessage) => void) => void;
+  onUserMessage?: (callback: (data: UserMessage) => boolean | void) => void;
   updateMetadata: (updater: (metadata: Metadata) => Metadata) => void | Promise<void>;
   updateAgentState: (updater: (state: AgentState) => AgentState) => void | Promise<void>;
   keepAlive: (thinking: boolean, mode: 'local' | 'remote') => void;
@@ -35,10 +39,14 @@ export type DeferredApiSessionTarget = Readonly<{
   refreshSessionSnapshotFromServerBestEffort?: (opts?: { reason?: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
   waitForMetadataUpdate: (abortSignal?: AbortSignal) => Promise<boolean>;
   popPendingMessage: () => Promise<boolean>;
-  shouldAttemptPendingMaterialization?: () => boolean;
+  shouldAttemptPendingMaterialization?: (opts?: {
+    activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
+  }) => boolean;
   reconcilePendingQueueState?: (opts?: { force?: boolean }) => Promise<boolean>;
   materializeNextPendingMessageSafely?: (opts?: {
     reconcileWhenEmpty?: 'force' | 'throttled' | 'skip';
+    activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
+    deliveryTiming?: PendingMaterializationDeliveryTiming;
   }) => Promise<MaterializeNextPendingResult>;
   peekPendingMessageQueueV2Count: () => Promise<number>;
   discardPendingMessageQueueV2All: (opts: { reason: 'switch_to_local' | 'manual' }) => Promise<number>;
@@ -57,7 +65,7 @@ export class DeferredApiSessionClient {
   private readonly limits: DeferredSessionBufferLimits;
   readonly rpcHandlerManager: RpcHandlerManagerLike;
   private readonly registeredHandlers = new Map<string, RpcHandler>();
-  private readonly userMessageHandlers: Array<(data: UserMessage) => void> = [];
+  private readonly userMessageHandlers: Array<(data: UserMessage) => boolean | void> = [];
   private target: DeferredApiSessionTarget | null = null;
   private attachPromise: Promise<void> | null = null;
   private flushInFlight: Promise<void> | null = null;
@@ -108,17 +116,17 @@ export class DeferredApiSessionClient {
     this.pushBufferedCall((t) => t.sendSessionEvent(_event, _id), { hint: 'sendSessionEvent' });
   }
 
-  sendClaudeSessionMessage(_message: unknown, _meta?: unknown): void {
+  sendProviderMessage(_request: ProviderTranscriptDispatchRequest): void {
     const target = this.target;
     if (target && !this.flushInFlight) {
-      target.sendClaudeSessionMessage(_message, _meta);
+      target.sendProviderMessage(_request);
       return;
     }
 
     if (this.cancelled) {
       return;
     }
-    this.pushBufferedCall((t) => t.sendClaudeSessionMessage(_message, _meta), { hint: 'sendClaudeSessionMessage' });
+    this.pushBufferedCall((t) => t.sendProviderMessage(_request), { hint: 'sendProviderMessage' });
   }
 
   sendAgentMessage(_provider: unknown, _body: unknown, _opts?: unknown): void {
@@ -145,6 +153,21 @@ export class DeferredApiSessionClient {
       return;
     }
     this.pushBufferedCall((t) => t.sendAgentMessageEphemeral?.(_provider, _body, _opts), { hint: 'sendAgentMessageEphemeral' });
+  }
+
+  sendAgentMessageEphemeralDelta(_provider: unknown, _body: unknown, _opts: unknown): void {
+    const target = this.target;
+    if (target && !this.flushInFlight) {
+      target.sendAgentMessageEphemeralDelta?.(_provider, _body, _opts);
+      return;
+    }
+
+    // Never buffer deltas: they carry partial appended text chained to live assembly state that no
+    // receiver holds while we are detached. Receivers resync from the next full-snapshot checkpoint.
+  }
+
+  getEphemeralStreamConnectionEpoch(): number {
+    return this.target?.getEphemeralStreamConnectionEpoch?.() ?? 0;
   }
 
   enqueueAgentMessageCommitted(
@@ -206,19 +229,6 @@ export class DeferredApiSessionClient {
     return deferred.promise;
   }
 
-  sendCodexMessage(_body: unknown): void {
-    const target = this.target;
-    if (target && !this.flushInFlight) {
-      target.sendCodexMessage(_body);
-      return;
-    }
-
-    if (this.cancelled) {
-      return;
-    }
-    this.pushBufferedCall((t) => t.sendCodexMessage(_body), { hint: 'sendCodexMessage' });
-  }
-
   sendUserTextMessage(_text: string, _opts?: { localId?: string; meta?: Record<string, unknown> }): void {
     const target = this.target;
     if (target && !this.flushInFlight) {
@@ -232,7 +242,7 @@ export class DeferredApiSessionClient {
     this.pushBufferedCall((t) => t.sendUserTextMessage(_text, _opts), { hint: 'sendUserTextMessage' });
   }
 
-  onUserMessage(callback: (data: UserMessage) => void): void {
+  onUserMessage(callback: (data: UserMessage) => boolean | void): void {
     this.userMessageHandlers.push(callback);
 
     const target = this.target;
@@ -373,8 +383,10 @@ export class DeferredApiSessionClient {
     return await this.withAttachedTarget((t) => t.popPendingMessage(), false);
   }
 
-  shouldAttemptPendingMaterialization(): boolean {
-    return this.target?.shouldAttemptPendingMaterialization?.() ?? true;
+  shouldAttemptPendingMaterialization(opts?: {
+    activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
+  }): boolean {
+    return this.target?.shouldAttemptPendingMaterialization?.(opts) ?? true;
   }
 
   async reconcilePendingQueueState(opts?: { force?: boolean }): Promise<boolean> {
@@ -383,10 +395,14 @@ export class DeferredApiSessionClient {
 
   async materializeNextPendingMessageSafely(opts?: {
     reconcileWhenEmpty?: 'force' | 'throttled' | 'skip';
+    activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
+    deliveryTiming?: PendingMaterializationDeliveryTiming;
   }): Promise<MaterializeNextPendingResult> {
+    const deferred = { type: 'deferred' as const, reason: 'supervisor_offline' as const };
+    if (!this.target && !this.attachPromise) return deferred;
     return await this.withAttachedTarget(
       (t) => t.materializeNextPendingMessageSafely?.(opts) ?? Promise.resolve({ type: 'no_pending' as const }),
-      { type: 'no_pending' },
+      deferred,
     );
   }
 

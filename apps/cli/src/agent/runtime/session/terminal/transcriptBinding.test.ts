@@ -12,7 +12,7 @@ describe('createTerminalRuntimeTranscriptBindingHostService', () => {
 
         const handle = await service.openDirectMirror({
             binding: {
-                providerId: 'codex',
+                agentId: 'codex',
                 source: { kind: 'codexHome', home: 'user' },
                 remoteSessionId: 'codex-session-1',
             },
@@ -21,7 +21,7 @@ describe('createTerminalRuntimeTranscriptBindingHostService', () => {
 
         expect(createMirror).toHaveBeenCalledWith({
             binding: {
-                providerId: 'codex',
+                agentId: 'codex',
                 source: { kind: 'codexHome', home: 'user' },
                 remoteSessionId: 'codex-session-1',
             },

@@ -28,6 +28,7 @@ export async function ensureExecutionRun(args: Readonly<{
     backendTarget?: BackendTargetRefV1;
     permissionMode: string;
     modelId?: string;
+    accountSettings?: Readonly<Record<string, unknown>> | null;
     start?: any;
   }) => ExecutionRunHostRuntime;
   sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
@@ -141,8 +142,8 @@ export async function ensureExecutionRun(args: Readonly<{
     runs: args.runs,
     controllers: args.controllers,
     budgetRegistry: args.budgetRegistry,
-    createRuntime: ({ backendId, backendTarget, permissionMode }) =>
-      args.createRuntime({ runId: args.runId, backendId, backendTarget, permissionMode }),
+    createRuntime: ({ backendId, backendTarget, permissionMode, accountSettings }) =>
+      args.createRuntime({ runId: args.runId, backendId, backendTarget, permissionMode, accountSettings }),
     sendAcp: args.sendAcp,
     parentProvider: args.parentProvider,
     streamedTranscriptSession: args.streamedTranscriptSession,

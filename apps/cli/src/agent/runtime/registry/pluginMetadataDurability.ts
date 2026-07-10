@@ -46,6 +46,18 @@ function areJsonEquivalent(left: unknown, right: unknown): boolean {
     return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function restoreCurrentRegisteredMetadataKey(params: Readonly<{
+    metadata: Record<string, unknown>;
+    current: Record<string, unknown>;
+    metadataKey: string;
+}>): void {
+    if (hasOwn(params.current, params.metadataKey)) {
+        params.metadata[params.metadataKey] = params.current[params.metadataKey];
+    } else {
+        delete params.metadata[params.metadataKey];
+    }
+}
+
 export function splitDurableRegisteredSessionStateMetadata(params: Readonly<{
     sessionId: string;
     current: unknown;
@@ -66,38 +78,39 @@ export function splitDurableRegisteredSessionStateMetadata(params: Readonly<{
         const candidateValue = candidateRecord[spec.metadataKey];
         const currentValue = currentRecord[spec.metadataKey];
         const deliveryClass = resolveRegisteredSessionStateFieldDeliveryClass(spec.fieldId);
-        if (!deliveryClass) continue;
-        if (candidateValue === null) {
-            mutations.push(createRegisteredSessionStateFieldMutation({
-                sessionId: params.sessionId,
-                fieldId: spec.fieldId,
-                deliveryClass,
-                source: params.source,
-                op: { kind: 'clear' },
-            }));
-        } else {
-            const parsedCandidate = spec.parse(candidateValue);
-            if (parsedCandidate === null) continue;
-            const parsedCurrent = currentValue === null || currentValue === undefined
-                ? null
-                : spec.parse(currentValue);
-            if (areJsonEquivalent(parsedCandidate, parsedCurrent)) {
-                continue;
+        if (deliveryClass) {
+            if (candidateValue === null) {
+                mutations.push(createRegisteredSessionStateFieldMutation({
+                    sessionId: params.sessionId,
+                    fieldId: spec.fieldId,
+                    deliveryClass,
+                    source: params.source,
+                    op: { kind: 'clear' },
+                }));
+            } else {
+                const parsedCandidate = spec.parse(candidateValue);
+                if (parsedCandidate !== null) {
+                    const parsedCurrent = currentValue === null || currentValue === undefined
+                        ? null
+                        : spec.parse(currentValue);
+                    if (!areJsonEquivalent(parsedCandidate, parsedCurrent)) {
+                        mutations.push(createRegisteredSessionStateFieldMutation({
+                            sessionId: params.sessionId,
+                            fieldId: spec.fieldId,
+                            deliveryClass,
+                            source: params.source,
+                            op: { kind: 'set', value: parsedCandidate },
+                        }));
+                    }
+                }
             }
-            mutations.push(createRegisteredSessionStateFieldMutation({
-                sessionId: params.sessionId,
-                fieldId: spec.fieldId,
-                deliveryClass,
-                source: params.source,
-                op: { kind: 'set', value: parsedCandidate },
-            }));
         }
 
-        if (hasOwn(currentRecord, spec.metadataKey)) {
-            metadata[spec.metadataKey] = currentRecord[spec.metadataKey];
-        } else {
-            delete metadata[spec.metadataKey];
-        }
+        restoreCurrentRegisteredMetadataKey({
+            metadata,
+            current: currentRecord,
+            metadataKey: spec.metadataKey,
+        });
     }
 
     return { metadata, mutations };

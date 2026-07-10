@@ -13,11 +13,11 @@ import type {
     TerminalRuntimeProcessTerminationV1,
 } from '@happier-dev/agents';
 
-import type { CatalogAgentLookupId } from '@/backends/types';
+import type { CatalogAgentLookupId } from '@/agent/catalog/types';
 import {
-    requireProviderCliLaunchSpec,
-    type ProviderCliLaunchSpec,
-} from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
+    requireAgentCliLaunchSpec,
+    type AgentCliLaunchSpec,
+} from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 import type { PluginExecAgentCliGrantRecord } from '@/plugins/runtime/context/exec/system/tools/definitions';
 import { isDeniedPathOnlyRuntimeName } from '@/plugins/runtime/context/exec/system/tools/runtimeDeny';
 import { killProcessTree as defaultKillProcessTree } from '@/agent/runtime/process/killProcessTree';
@@ -26,6 +26,8 @@ import {
     type ManagedChildProcess,
 } from '@/subprocess/supervision/managedChildProcess';
 import type { TerminationEvent } from '@/subprocess/supervision/types';
+import { finalizeSessionChildEnvironment } from '@/session/runtime/control/finalizeSessionChildEnvironment';
+import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 
 type SpawnLike = (
     command: string,
@@ -45,7 +47,7 @@ export type TerminalRuntimeExecutableGrantRegistrar = (grant: PluginExecAgentCli
 
 export type TerminalRuntimeAgentCliLaunchResolver = (
     request: TerminalRuntimeAgentCliExecutableResolutionRequestV1,
-) => ProviderCliLaunchSpec | Promise<ProviderCliLaunchSpec>;
+) => AgentCliLaunchSpec | Promise<AgentCliLaunchSpec>;
 
 function mapTerminationEvent(event: TerminationEvent): TerminalRuntimeProcessTerminationV1 {
     if (event.type === 'signaled') {
@@ -96,7 +98,7 @@ function bufferChildStderr(child: ChildProcess): () => string {
 }
 
 function createAbortError(): Error {
-    const error = new Error('Terminal runtime process launch was aborted before spawn');
+    const error = new Error('Terminal runtime process launch was aborted');
     error.name = 'AbortError';
     return error;
 }
@@ -121,8 +123,8 @@ function buildAgentCliProcessEnv(
 
 function resolveDefaultAgentCliLaunch(
     request: TerminalRuntimeAgentCliExecutableResolutionRequestV1,
-): ProviderCliLaunchSpec {
-    return requireProviderCliLaunchSpec(request.agentId as CatalogAgentLookupId, {
+): AgentCliLaunchSpec {
+    return requireAgentCliLaunchSpec(request.agentId as CatalogAgentLookupId, {
         processEnv: buildAgentCliProcessEnv(request),
     });
 }
@@ -209,33 +211,29 @@ export function createTerminalRuntimeProcessService(deps?: Readonly<{
             assertHostGrantedExecutable(request.executable, verifyExecutableGrant);
             assertNotAborted(request.signal);
 
+            const childEnvironment = finalizeSessionChildEnvironment({
+                environment: buildScopedProcessEnv({
+                    baseEnv: process.env,
+                    explicitEnv: request.env,
+                    unsetEnvKeys: request.unsetEnvKeys,
+                }),
+                enableCgroupSelfMigration: false,
+                stackProcessKind: null,
+            });
             const child = spawn(request.executable.path, [...(request.args ?? [])], {
                 cwd: request.cwd,
-                env: request.env ? { ...process.env, ...request.env } : process.env,
+                env: childEnvironment,
                 stdio: request.stdio ?? 'pipe',
                 windowsHide: request.windowsHide,
                 windowsVerbatimArguments: request.windowsVerbatimArguments,
             });
-            let managed: ManagedChildProcess;
-            let readBufferedStderr: () => string;
-            try {
-                managed = createManagedChildProcess(child);
-                readBufferedStderr = bufferChildStderr(child);
-            } catch (error) {
-                await killProcessTree(child).catch(() => undefined);
-                throw error;
-            }
             let stopped = false;
-            const removeAbortListener = (): void => {
-                request.signal?.removeEventListener('abort', abortListener);
-            };
-
             const stop = async (options?: Readonly<{ graceMs?: number }>): Promise<void> => {
                 if (stopped) {
                     return;
                 }
                 stopped = true;
-                removeAbortListener();
+                request.signal?.removeEventListener('abort', abortListener);
                 await killProcessTree(child, options);
             };
             const abortListener = (): void => {
@@ -243,13 +241,27 @@ export function createTerminalRuntimeProcessService(deps?: Readonly<{
             };
             request.signal?.addEventListener('abort', abortListener, { once: true });
 
+            let managed: ManagedChildProcess;
+            let readBufferedStderr: () => string;
+            try {
+                managed = createManagedChildProcess(child);
+                readBufferedStderr = bufferChildStderr(child);
+            } catch (error) {
+                await stop().catch(() => undefined);
+                throw error;
+            }
+            if (request.signal?.aborted) {
+                await stop().catch(() => undefined);
+                throw createAbortError();
+            }
+
             return Object.freeze({
                 pid: managed.pid,
                 waitForTermination: async () => {
                     try {
                         return mapTerminationEvent(await managed.waitForTermination());
                     } finally {
-                        removeAbortListener();
+                        request.signal?.removeEventListener('abort', abortListener);
                     }
                 },
                 stop,

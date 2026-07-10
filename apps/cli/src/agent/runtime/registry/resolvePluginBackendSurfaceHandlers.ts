@@ -8,7 +8,7 @@ import type {
     ProviderAttachOps,
     ProviderAttachEligibility,
     ProviderAttachScope,
-} from '../../../backends/types';
+} from '@/agent/catalog/types';
 import {
     parseCheckpointAvailabilityRequestV1,
     parseCreateCheckpointRequestV1,
@@ -31,11 +31,14 @@ import type {
     ForkSurfaceV1,
     HandoffSurfaceV1,
 } from '@happier-dev/agents';
-import type { ExternalSessionExecutionSurface } from '@/session/external/providerOps';
+import {
+    ExternalSessionProviderFailureError,
+    type ExternalSessionExecutionSurface,
+} from '@/session/external/providerOps';
 import type {
-    ResolvedBackendContribution,
+    ResolvedAgentRuntimeContribution,
     ResolvedBackendSurfaceContribution,
-    ResolvedProviderContribution,
+    ResolvedAgentContribution,
 } from '../../../plugins/projection/registry/types';
 import type {
     BackendSurfaceAvailabilityV1,
@@ -53,17 +56,18 @@ import { mapExternalSessionLaunchHintsToSpawnOptions } from './externalSessionLa
 
 function appendPluginDiagnostics(
     diagnostics: EngineResolutionDiagnostic[],
-    backend: ResolvedBackendContribution,
-    provider: ResolvedProviderContribution,
+    backend: ResolvedAgentRuntimeContribution,
+    provider: ResolvedAgentContribution,
     pluginDiagnostics: readonly PluginCompatibilityDiagnostic[],
 ): void {
+    const runtimeOwnerId = provider.id;
     for (const diagnostic of pluginDiagnostics) {
         diagnostics.push({
             code: 'engine_plugin_registry_diagnostic',
             message: diagnostic.message,
             detailCode: diagnostic.code,
             backendId: backend.id,
-            providerId: provider.id,
+            providerId: runtimeOwnerId,
             pluginId: backend.pluginId,
         });
     }
@@ -108,7 +112,7 @@ function resolvePluginBackendSurfaceHandlerExport(
 
 export function resolveBackendExecutionSurfacesFromHandlers(
     handlerBySurfaceOperation: ReadonlyMap<string, PluginHookHandler>,
-    backend: ResolvedBackendContribution,
+    backend: ResolvedAgentRuntimeContribution,
     params?: Readonly<{
         resolveExternalSessionRuntimeContext?: ExternalSessionRuntimeContextResolver;
         grantExternalSessionTranscriptPath?: ExternalSessionTranscriptPathGrantIssuer;
@@ -176,8 +180,20 @@ type ExternalSessionFollowScopeRunner = <T>(
     operation: () => Promise<T>,
 ) => Promise<T>;
 
-function failBackendSurfaceResult(operation: string, result: Readonly<{ code?: string; message?: string }>): never {
+function failBackendSurfaceResult(operation: string, result: Readonly<{
+    code?: string;
+    message?: string;
+    retryable?: boolean;
+}>): never {
     const reason = result.message ?? result.code ?? 'unavailable';
+    if (operation.startsWith('externalSession.')) {
+        throw new ExternalSessionProviderFailureError({
+            operation,
+            code: result.code ?? 'agent_unavailable',
+            message: reason,
+            retryable: result.retryable,
+        });
+    }
     throw new Error(`Backend surface operation '${operation}' failed: ${reason}`);
 }
 
@@ -194,6 +210,7 @@ async function unwrapBackendSurfaceResult<TValue>(
         failBackendSurfaceResult(operation, {
             code: typeof record.code === 'string' ? record.code : undefined,
             message: typeof record.message === 'string' ? record.message : undefined,
+            retryable: record.retryable === true,
         });
     }
     if (!('value' in record)) {
@@ -218,6 +235,7 @@ async function unwrapTakeoverLaunchResult(
         failBackendSurfaceResult(operation, {
             code: typeof record.code === 'string' ? record.code : undefined,
             message: typeof record.message === 'string' ? record.message : undefined,
+            retryable: record.retryable === true,
         });
     }
     if (!('value' in record)) {
@@ -318,7 +336,7 @@ function resolveTerminalRuntimeOps(
 
 function resolveExternalSessionProviderOps(
     handlerBySurfaceOperation: ReadonlyMap<string, PluginHookHandler>,
-    backendContribution: ResolvedBackendContribution,
+    backendContribution: ResolvedAgentRuntimeContribution,
     params?: Readonly<{
         resolveExternalSessionRuntimeContext?: ExternalSessionRuntimeContextResolver;
         grantExternalSessionTranscriptPath?: ExternalSessionTranscriptPathGrantIssuer;
@@ -400,6 +418,7 @@ function resolveExternalSessionProviderOps(
                         'externalSession.resolveSource',
                         validateSource({
                             source: request.source,
+                            ...(request.env ? { env: request.env } : {}),
                             ...(request.runtime ? { runtime: request.runtime } : {}),
                         }),
                     );
@@ -852,8 +871,8 @@ function resolveCheckpointOps(
 }
 
 export async function resolvePluginBackendSurfaceHandlers(params: Readonly<{
-    backend: ResolvedBackendContribution;
-    provider: ResolvedProviderContribution;
+    backend: ResolvedAgentRuntimeContribution;
+    provider: ResolvedAgentContribution;
     runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry;
     engineImplementedBackendSurfaceOperations?: ReadonlySet<string>;
     resolveExternalSessionRuntimeContext?: ExternalSessionRuntimeContextResolver;
@@ -864,6 +883,7 @@ export async function resolvePluginBackendSurfaceHandlers(params: Readonly<{
     diagnostics: readonly EngineResolutionDiagnostic[];
 }>> {
     const { backend, provider, runtimeRegistry } = params;
+    const runtimeOwnerId = provider.id;
     const diagnostics: EngineResolutionDiagnostic[] = [];
     if (backend.pluginId) {
         appendPluginDiagnostics(
@@ -898,7 +918,7 @@ export async function resolvePluginBackendSurfaceHandlers(params: Readonly<{
                 code: 'engine_plugin_daemon_entry_missing',
                 message: `Backend '${backend.id}' has no daemon entry path`,
                 backendId: backend.id,
-                providerId: provider.id,
+                providerId: runtimeOwnerId,
                 pluginId: backend.pluginId,
             });
         } else if (surfaceHandlers.some((surfaceHandler) => resolveSurfaceHandlerDefinition(surfaceHandler).handler.target !== 'daemon')) {
@@ -906,7 +926,7 @@ export async function resolvePluginBackendSurfaceHandlers(params: Readonly<{
                 code: 'engine_plugin_backend_surface_non_daemon_target',
                 message: `Backend '${backend.id}' backend surface handlers must target daemon handlers only`,
                 backendId: backend.id,
-                providerId: provider.id,
+                providerId: runtimeOwnerId,
                 pluginId: backend.pluginId,
             });
         } else {
@@ -933,6 +953,7 @@ export async function resolvePluginBackendSurfaceHandlers(params: Readonly<{
             try {
                 moduleNamespace = await loadPluginDaemonModule({
                     daemonEntryPath: backend.daemonEntryPath,
+                    devDaemonEntryPath: backend.devDaemonEntryPath,
                     cacheKey: backend.manifestDigest,
                     trustPolicy: backend.sourceSpec?.trustPolicy,
                 });
@@ -942,7 +963,7 @@ export async function resolvePluginBackendSurfaceHandlers(params: Readonly<{
                     code: 'engine_plugin_daemon_module_load_failed',
                     message: error instanceof Error ? error.message : `Failed to load daemon module for backend '${backend.id}'`,
                     backendId: backend.id,
-                    providerId: provider.id,
+                    providerId: runtimeOwnerId,
                     pluginId: backend.pluginId,
                     detailCode:
                         errorCode === 'PLUGIN_DAEMON_TRUST_APPROVAL_REQUIRED'
@@ -973,7 +994,7 @@ export async function resolvePluginBackendSurfaceHandlers(params: Readonly<{
                             : 'engine_plugin_backend_surface_handler_invalid',
                         message: `Backend '${backend.id}' backend surface handler '${surfaceHandlerDefinition.id}' (${surfaceHandlerDefinition.kind}:${surfaceHandlerDefinition.operation}) export '${surfaceHandlerDefinition.handler.exportName ?? 'default'}' ${resolvedExport.status}`,
                         backendId: backend.id,
-                        providerId: provider.id,
+                        providerId: runtimeOwnerId,
                         pluginId: backend.pluginId,
                     });
                 }
@@ -991,7 +1012,7 @@ export async function resolvePluginBackendSurfaceHandlers(params: Readonly<{
                 code: 'engine_plugin_backend_surface_missing',
                 message: `Backend '${backend.id}' has no backend surface handlers`,
                 backendId: backend.id,
-                providerId: provider.id,
+                providerId: runtimeOwnerId,
                 pluginId: backend.pluginId,
             });
         }

@@ -13,7 +13,7 @@ import {
   materializeSamplePluginFixture,
 } from '@/plugins/testkit/samplePackage';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
-import type { AgentMessage } from '@/agent/core/AgentBackend';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { Credentials } from '@/persistence';
 
 const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
@@ -55,7 +55,6 @@ describe('SessionHostBridge plugin runtimeCore (integration)', () => {
           '    async steerInFlightTurn() {},',
           '    async waitForTurnCompletion() {},',
           '    subscribeRuntimeEvents() { return () => undefined; },',
-          '    async respondToPermission() {},',
           '    async cancelTurn() {},',
           '    readSessionIdentity() { return { sessionId }; },',
           '    async updateSessionRuntimeConfig() {},',
@@ -351,7 +350,7 @@ describe('SessionHostBridge plugin runtimeCore (integration)', () => {
     }
   });
 
-  it('rejects plugin terminal runtime launch payloads that still use AgentBackend as the native session model', async () => {
+  it('rejects plugin terminal runtime launch payloads that still use a native session adapter model', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-bridge-plugin-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-session-bridge-plugin-root-'));
 
@@ -368,7 +367,6 @@ describe('SessionHostBridge plugin runtimeCore (integration)', () => {
           '    async cancel() {},',
           '    onMessage() {},',
           '    offMessage() {},',
-          '    async respondToPermission() {},',
           '    async waitForResponseComplete() {},',
           '    async dispose() {},',
           '  };',
@@ -452,7 +450,7 @@ describe('SessionHostBridge plugin runtimeCore (integration)', () => {
     }
   });
 
-  it('uses providerAgentId as the built-in policy identity while preserving plugin backend identity in the host plan', async () => {
+  it('uses catalogAgentId as the built-in policy identity while preserving plugin backend identity in the host plan', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-bridge-plugin-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-session-bridge-plugin-root-'));
 
@@ -464,7 +462,7 @@ describe('SessionHostBridge plugin runtimeCore (integration)', () => {
       const providers = Array.isArray(contributions.providers) ? contributions.providers : [];
       providers[0] = {
         ...(providers[0] as Record<string, unknown>),
-        providerAgentId: 'claude',
+        catalogAgentId: 'claude',
       };
       contributions.providers = providers;
       await writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
@@ -515,7 +513,7 @@ describe('SessionHostBridge plugin runtimeCore (integration)', () => {
         happyHomeDir,
       });
 
-      expect(plan.providerId).toBe(SAMPLE_PLUGIN_BACKEND_ID);
+      expect(plan.agentId).toBe(SAMPLE_PLUGIN_BACKEND_ID);
       expect(plan.config.agentMessageType).toBe(SAMPLE_PLUGIN_BACKEND_ID);
       expect(plan.config.policyAgentId).toBe('claude');
     } finally {
@@ -541,7 +539,7 @@ describe('SessionHostBridge plugin runtimeCore (integration)', () => {
         ...(providers[0] as Record<string, unknown>),
         id: 'openai',
         ownedBackendIds: ['openai.backend'],
-        providerAgentId: 'gpt',
+        catalogAgentId: 'gpt',
       };
       backends[0] = {
         ...(backends[0] as Record<string, unknown>),

@@ -92,7 +92,7 @@ export function resolveTerminalInputReadiness(params: ResolveTerminalInputReadin
 
   const liveness = params.hostLiveness;
   if (!liveness) return readiness(params, 'defer_host_not_ready');
-  if (liveness.paneDead === true || liveness.paneAlive === false) return readiness(params, 'failed_terminal', { recoverable: false });
+  if (liveness.paneDead === true) return readiness(params, 'failed_terminal', { recoverable: false });
   if (liveness.paneAlive !== true) return readiness(params, 'defer_liveness_uncertain');
 
   const inputState = params.inputState;

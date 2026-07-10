@@ -96,7 +96,12 @@ export function readExecutionRunSessionStateTarget(value: unknown): ExecutionRun
   const enqueue = rawTarget.enqueueRegisteredSessionStateFieldMutation;
   return Object.freeze({
     sessionId,
-    ...(typeof enqueue === 'function' ? { enqueueRegisteredSessionStateFieldMutation: enqueue as RegisteredSessionStateFieldEnqueuer } : {}),
+    ...(typeof enqueue === 'function'
+      ? {
+        enqueueRegisteredSessionStateFieldMutation: (mutation: Parameters<RegisteredSessionStateFieldEnqueuer>[0]) =>
+          (enqueue as RegisteredSessionStateFieldEnqueuer).call(rawTarget, mutation),
+      }
+      : {}),
   });
 }
 

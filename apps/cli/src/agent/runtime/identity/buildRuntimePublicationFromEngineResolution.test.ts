@@ -9,7 +9,7 @@ function createEngineResolution(
 ): EngineAdapterResolution {
   return {
     backendId: 'acme.backend',
-    providerId: 'acme.provider',
+    agentId: 'acme.provider',
     provenance: 'external',
     runtimeOwner: {
       backendId: 'acme.backend',
@@ -28,13 +28,13 @@ function createEngineResolution(
     },
     backend: {
       id: 'acme.backend',
-      providerId: 'acme.provider',
+      agentId: 'acme.provider',
       provenance: 'external',
       source: { kind: 'path' },
       definition: {
         kindVersion: 1,
         id: 'acme.backend',
-        providerId: 'acme.provider',
+        agentId: 'acme.provider',
       },
       runtimeKind: 'plugin',
       capabilities: backendCapabilities,
@@ -78,6 +78,11 @@ describe('buildRuntimePublicationFromEngineResolution', () => {
       backend: {
         executionRun: { supported: false },
         session: {
+          contextCompaction: {
+            manualTrigger: { supported: false },
+            events: { supported: false },
+            transcriptInference: { supported: false },
+          },
           media: {
             acceptsImageInput: { supported: false },
             emitsSessionMedia: { supported: false },

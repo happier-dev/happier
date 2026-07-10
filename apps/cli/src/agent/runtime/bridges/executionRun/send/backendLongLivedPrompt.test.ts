@@ -1,38 +1,35 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AgentBackend, SessionId, StartSessionResult } from '@/agent/core/AgentBackend';
-import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/runtime/bridges/executionRun/testkit';
+import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
+import {
+  createTestExecutionRunHostRuntime,
+  type TestExecutionRunHostRuntimeActions,
+} from '@/agent/runtime/bridges/executionRun/testkit/runtime';
 import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import { sendBackendLongLivedRun } from '@/agent/runtime/bridges/executionRun/send/backendLongLivedPrompt';
 
 function createResumableBackendHarness(): Readonly<{
-  backend: AgentBackend;
-  emit: (msg: any) => void;
+  runtime: ExecutionRunHostRuntime;
+  setSendPrompt: (
+    sendPrompt: (sessionId: string, prompt: string, actions: TestExecutionRunHostRuntimeActions) => Promise<void> | void,
+  ) => void;
 }> {
-  let handler: ((msg: any) => void) | null = null;
-  const emit = (msg: any) => handler?.(msg);
+  let sendPromptImpl: (sessionId: string, prompt: string, actions: TestExecutionRunHostRuntimeActions) => Promise<void> | void = () => undefined;
+  const harness = createTestExecutionRunHostRuntime({
+    async provisionSession(opts) {
+      return { sessionId: opts?.resumeSessionId ? 'child_session_loaded' : 'child_session_started' };
+    },
+    sendPrompt: async (sessionId, prompt, actions) => {
+      await sendPromptImpl(sessionId, prompt, actions);
+    },
+  });
 
-  const backend: AgentBackend = {
-    async startSession(): Promise<StartSessionResult> {
-      return { sessionId: 'child_session_started' as SessionId };
+  return {
+    runtime: harness.runtime,
+    setSendPrompt(next) {
+      sendPromptImpl = next;
     },
-    async loadSession(_sessionId: SessionId): Promise<StartSessionResult> {
-      return { sessionId: 'child_session_loaded' as SessionId };
-    },
-    async loadSessionWithReplayCapture(_sessionId: SessionId): Promise<StartSessionResult & { replay: unknown[] }> {
-      return { sessionId: 'child_session_loaded' as SessionId, replay: [] };
-    },
-    async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
-      // Default no-op; tests can emit messages via `emit(...)`.
-    },
-    async cancel(_sessionId: SessionId): Promise<void> {},
-    onMessage(nextHandler): void {
-      handler = nextHandler as any;
-    },
-    async dispose(): Promise<void> {},
   };
-
-  return { backend, emit };
 }
 
 function createLongLivedResumableRun(overrides?: Partial<ExecutionRunState>): ExecutionRunState {
@@ -64,10 +61,10 @@ function createLongLivedResumableRun(overrides?: Partial<ExecutionRunState>): Ex
 describe('sendBackendLongLivedRun (resume)', () => {
   it('forwards tool-call events after resuming a long-lived run (no fresh-vs-resume divergence)', async () => {
     const sendAcp = vi.fn();
-    const { backend, emit } = createResumableBackendHarness();
-    backend.sendPrompt = async (_sessionId, _prompt) => {
-      emit({ type: 'tool-call', toolName: 'bash', callId: 'call_123', args: { command: 'ls' } });
-    };
+    const { runtime, setSendPrompt } = createResumableBackendHarness();
+    setSendPrompt((_sessionId, _prompt, actions) => {
+      actions.emit({ type: 'tool-call', toolName: 'bash', callId: 'call_123', args: { command: 'ls' } });
+    });
 
     const run = createLongLivedResumableRun();
     const runs = new Map([[run.runId, run]]);
@@ -79,7 +76,7 @@ describe('sendBackendLongLivedRun (resume)', () => {
       runs,
       controllers,
       budgetRegistry: null,
-      createRuntime: () => createExecutionRunHostRuntimeFromAgentBackend(backend),
+      createRuntime: () => runtime,
       maxTurns: null,
       getNowMs: () => 123,
       finishRun: () => undefined,
@@ -94,7 +91,7 @@ describe('sendBackendLongLivedRun (resume)', () => {
   });
 
   it('does not allow bypassing maxTurns by resuming (turnCount must be cumulative)', async () => {
-    const { backend } = createResumableBackendHarness();
+    const { runtime } = createResumableBackendHarness();
 
     const run = createLongLivedResumableRun({ turnCount: 2 });
     const runs = new Map([[run.runId, run]]);
@@ -106,7 +103,7 @@ describe('sendBackendLongLivedRun (resume)', () => {
       runs,
       controllers,
       budgetRegistry: null,
-      createRuntime: () => createExecutionRunHostRuntimeFromAgentBackend(backend),
+      createRuntime: () => runtime,
       maxTurns: 2,
       getNowMs: () => 123,
       finishRun: () => undefined,

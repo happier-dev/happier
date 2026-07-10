@@ -1,6 +1,6 @@
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
-import type { ResolvedBackendContribution } from '@/plugins/projection/registry/types';
+import type { ResolvedAgentRuntimeContribution } from '@/plugins/projection/registry/types';
 
 import type {
   CliEngineAdapter,
@@ -24,7 +24,7 @@ function createMissingBoundRuntimeCoreError(backendId: string, surface: 'interac
 }
 
 function createUnsupportedCliRuntimeCore(params: Readonly<{
-  backend: ResolvedBackendContribution;
+  backend: ResolvedAgentRuntimeContribution;
 }>): CliRuntimeCore {
   return Object.freeze({
     async createSessionRuntime(_sessionParams: unknown): Promise<HostSessionRuntimePlan> {
@@ -37,7 +37,7 @@ function createUnsupportedCliRuntimeCore(params: Readonly<{
 }
 
 export function createMissingCliEngineAdapter(params: Readonly<{
-  backend: ResolvedBackendContribution;
+  backend: ResolvedAgentRuntimeContribution;
 }>): CliEngineAdapter {
   return Object.freeze({
     runtimeCore: createUnsupportedCliRuntimeCore({

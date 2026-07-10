@@ -2,9 +2,10 @@ import type { Metadata, PermissionMode } from '@/api/types';
 import { isPermissionMode } from '@/api/types';
 import {
   readAcpSessionModeIntentFromMetadata,
-  resolveMetadataStringOverrideV1,
+  resolveModelSelectionIntentFromSessionMetadata,
   resolvePermissionIntentFromSessionMetadata,
 } from '@happier-dev/agents';
+import type { SessionModelSelectionIntentV1 } from '@happier-dev/protocol';
 
 function metadataHasConcreteDefaultSessionMode(metadata: Metadata | null | undefined): boolean {
   const candidate = metadata as {
@@ -61,22 +62,29 @@ export function computePendingSessionModeOverrideApplication(opts: {
 export const resolveAcpSessionModeOverrideFromMetadataSnapshot = resolveSessionModeOverrideFromMetadataSnapshot;
 export const computePendingAcpSessionModeOverrideApplication = computePendingSessionModeOverrideApplication;
 
-export function resolveModelOverrideFromMetadataSnapshot(opts: {
+/**
+ * Resolve the canonical model-selection intent only after the owning session target is known.
+ * The agents package owns canonical-vs-deployed timestamp precedence and target validation.
+ */
+export function resolveModelSelectionIntentFromMetadataSnapshot(opts: {
   metadata: Metadata | null | undefined;
-}): { modelId: string; updatedAt: number } | null {
-  const resolved = resolveMetadataStringOverrideV1(opts.metadata ?? null, 'modelOverrideV1', 'modelId');
-  if (!resolved) return null;
-  // "default" is a UI sentinel meaning "no override" (do not attempt to set a provider model id to "default").
-  if (resolved.value === 'default') return null;
-  return { modelId: resolved.value, updatedAt: resolved.updatedAt };
+  agentTargetKey: string;
+}): SessionModelSelectionIntentV1 | null {
+  return resolveModelSelectionIntentFromSessionMetadata(
+    opts.metadata ?? null,
+    opts.agentTargetKey,
+  );
 }
 
-export function computePendingModelOverrideApplication(opts: {
+export function computePendingModelSelectionIntentApplication(opts: {
   metadata: Metadata | null | undefined;
+  agentTargetKey: string;
   lastAppliedUpdatedAt: number;
-}): { modelId: string; updatedAt: number } | null {
-  const resolved = resolveModelOverrideFromMetadataSnapshot({ metadata: opts.metadata });
-  if (!resolved) return null;
-  if (resolved.updatedAt <= opts.lastAppliedUpdatedAt) return null;
+}): SessionModelSelectionIntentV1 | null {
+  const resolved = resolveModelSelectionIntentFromMetadataSnapshot({
+    metadata: opts.metadata,
+    agentTargetKey: opts.agentTargetKey,
+  });
+  if (!resolved || resolved.updatedAt <= opts.lastAppliedUpdatedAt) return null;
   return resolved;
 }

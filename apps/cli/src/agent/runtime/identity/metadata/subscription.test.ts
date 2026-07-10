@@ -73,7 +73,7 @@ describe('subscribeSessionRuntimePublicationToMetadata', () => {
       name: 'runtime.descriptor',
       payload: {
         v: 1,
-        providerId: 'acme.provider',
+        agentId: 'acme.provider',
         provider: {
           backendMode: 'native',
         },
@@ -117,8 +117,8 @@ describe('subscribeSessionRuntimePublicationToMetadata', () => {
       fieldId: 'identity.runtimeDescriptor',
       value: {
         v: 1,
-        providerId: 'acme.provider',
-        provider: {
+        agentId: 'acme.provider',
+        agent: {
           backendMode: 'native',
         },
       },
@@ -189,7 +189,7 @@ describe('subscribeSessionRuntimePublicationToMetadata', () => {
 
     const descriptor = {
       v: 1,
-      providerId: 'codex',
+      agentId: 'codex',
       provider: {
         backendMode: 'appServer',
         providerSessionId: 'thread-1',
@@ -233,7 +233,7 @@ describe('subscribeSessionRuntimePublicationToMetadata', () => {
       updater(createRuntimePublicationMetadata({
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           provider: {
             backendMode: 'appServer',
           },
@@ -245,7 +245,7 @@ describe('subscribeSessionRuntimePublicationToMetadata', () => {
       createRuntimePublicationMetadata({
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           provider: {
             backendMode: 'appServer',
           },

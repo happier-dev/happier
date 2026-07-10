@@ -64,7 +64,7 @@ describe('createTerminalRuntimeProjectionHostService', () => {
         });
         const request = Object.freeze({
             binding: Object.freeze({
-                providerId: 'codex',
+                agentId: 'codex',
                 source: Object.freeze({ kind: 'codexHome', home: 'user' }),
                 remoteSessionId: 'codex-session-1',
             }),
@@ -148,8 +148,8 @@ describe('createTerminalRuntimeProjectionHostService', () => {
         });
 
         await service.publishSubagentStarted({
-            providerId: 'acme-terminal',
-            providerKind: 'acme-native-subagent',
+            agentId: 'acme-terminal',
+            agentKind: 'acme-native-subagent',
             subagentId: 'thread-1',
             label: 'Review worker',
             metadata: { prompt: 'Review the patch' },
@@ -161,19 +161,19 @@ describe('createTerminalRuntimeProjectionHostService', () => {
         })).resolves.toEqual(expect.objectContaining({
             id: 'thread-1',
             parentSessionId: 'terminal-parent-session',
-            origin: 'provider',
+            origin: 'agent',
             kind: 'native',
             status: 'running',
-            providerRef: {
-                providerId: 'acme-terminal',
-                providerKind: 'acme-native-subagent',
+            agentRef: {
+                agentId: 'acme-terminal',
+                agentKind: 'acme-native-subagent',
             },
             transcript: {
                 parentSessionId: 'terminal-parent-session',
                 sidechainId: 'thread-1',
             },
             label: 'Review worker',
-            providerMetadata: {
+            agentMetadata: {
                 prompt: 'Review the patch',
             },
         }));
@@ -190,10 +190,10 @@ describe('createTerminalRuntimeProjectionHostService', () => {
         });
 
         await service.publishSubagentCompleted({
-            providerId: 'codex',
-            providerKind: 'codex-native-subagent',
+            agentId: 'codex',
+            agentKind: 'codex-native-subagent',
             subagentId: 'thread-1',
-            lifecycleDetail: { providerState: 'completed' },
+            lifecycleDetail: { agentState: 'completed' },
         });
 
         await expect(subagents.get({
@@ -202,7 +202,7 @@ describe('createTerminalRuntimeProjectionHostService', () => {
         })).resolves.toEqual(expect.objectContaining({
             id: 'thread-1',
             status: 'completed',
-            lifecycleDetail: { providerState: 'completed' },
+            lifecycleDetail: { agentState: 'completed' },
         }));
     });
 
@@ -217,15 +217,15 @@ describe('createTerminalRuntimeProjectionHostService', () => {
         });
 
         await service.publishSubagentStarted({
-            providerId: 'acme-terminal',
-            providerKind: 'acme-native-subagent',
+            agentId: 'acme-terminal',
+            agentKind: 'acme-native-subagent',
             subagentId: 'thread-1',
             label: 'Review worker',
             metadata: { prompt: 'Review the patch' },
         });
         await service.publishSubagentCompleted({
             subagentId: 'thread-1',
-            lifecycleDetail: { providerState: 'completed' },
+            lifecycleDetail: { agentState: 'completed' },
         });
 
         await expect(subagents.get({
@@ -236,10 +236,10 @@ describe('createTerminalRuntimeProjectionHostService', () => {
             status: 'completed',
             label: 'Review worker',
             display: { label: 'Review worker' },
-            providerMetadata: {
+            agentMetadata: {
                 prompt: 'Review the patch',
             },
-            lifecycleDetail: { providerState: 'completed' },
+            lifecycleDetail: { agentState: 'completed' },
         }));
     });
 });

@@ -22,23 +22,23 @@ function buildRuntimeDescriptor(
   resolution: EngineAdapterResolution,
   descriptorSchemaId: string,
 ): RuntimeDescriptorV1 | null {
-  const providerId = normalizeNonEmptyString(resolution.providerId ?? resolution.provider?.id);
+  const providerId = normalizeNonEmptyString(resolution.agentId ?? resolution.provider?.id);
   const backendId = normalizeNonEmptyString(resolution.backendId ?? resolution.backend?.id);
   const runtimeKind = normalizeNonEmptyString(resolution.backend?.runtimeKind);
   if (!providerId || !backendId || !runtimeKind) return null;
 
   return {
     v: 1,
-    providerId,
-    provider: {
+    agentId: providerId,
+    agent: {
       backendMode: runtimeKind,
-      providerExtra: {
+      agentExtra: {
         owner: 'happier',
         schemaId: descriptorSchemaId,
         v: 1,
         runtimeHandle: {
           backendId,
-          providerId,
+          agentId: providerId,
           // Prefer the shared provenance model over legacy built_in/plugin source strings.
           provenance: resolution.provenance,
         },

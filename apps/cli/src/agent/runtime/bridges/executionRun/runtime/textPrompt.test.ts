@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentBackend, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
-import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/runtime/bridges/executionRun/testkit';
+import { createTestExecutionRunHostRuntime } from '../testkit/runtime';
+import { runEphemeralExecutionRunTextPrompt } from './textPrompt';
 import type { EphemeralExecutionRunTextPromptRuntimeFactory } from './textPrompt';
 
 const mockedConfiguration = vi.hoisted(() => ({
@@ -27,37 +27,25 @@ vi.mock('@/configuration', async (importOriginal) => {
 describe('runEphemeralExecutionRunTextPrompt', () => {
   afterEach(() => {
     mockedConfiguration.executionRunsBoundedTimeoutMs = null;
-    vi.resetModules();
   });
 
   it('runs a single-turn ephemeral execution run and returns collected model output', async () => {
     mockedConfiguration.executionRunsBoundedTimeoutMs = 9_999;
-    const { runEphemeralExecutionRunTextPrompt } = await import('./textPrompt');
 
-    const handlers = new Set<AgentMessageHandler>();
     let observedIntent: string | null = null;
     let observedRetention: string | null = null;
     let observedBackendTarget: unknown = null;
     const waitTimeouts: Array<number | null | undefined> = [];
 
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId: 'vendor-sess-1' };
+    const runtime = createTestExecutionRunHostRuntime({
+      sessionId: 'vendor-sess-1',
+      sendPrompt: (_sessionId, _prompt, actions) => {
+        actions.emit({ type: 'model-output', fullText: 'OK' });
       },
-      async sendPrompt(_sessionId: string, _prompt: string): Promise<void> {
-        for (const handler of handlers) {
-          handler({ type: 'model-output', fullText: 'OK' });
-        }
-      },
-      async cancel(): Promise<void> {},
-      onMessage(handler: AgentMessageHandler): void {
-        handlers.add(handler);
-      },
-      async waitForResponseComplete(timeoutMs?: number | null): Promise<void> {
+      waitForTurnCompletion: async (timeoutMs?: number | null): Promise<void> => {
         waitTimeouts.push(timeoutMs);
       },
-      async dispose(): Promise<void> {},
-    };
+    }).runtime;
 
     const out = await runEphemeralExecutionRunTextPrompt({
       cwd: '/tmp',
@@ -72,7 +60,7 @@ describe('runEphemeralExecutionRunTextPrompt', () => {
         observedIntent = opts.start.intent;
         observedRetention = opts.start.retentionPolicy;
         observedBackendTarget = opts.backendTarget ?? null;
-        return createExecutionRunHostRuntimeFromAgentBackend(backend);
+        return runtime;
       }) satisfies EphemeralExecutionRunTextPromptRuntimeFactory,
       timeoutMs: 1234,
     });
@@ -85,29 +73,19 @@ describe('runEphemeralExecutionRunTextPrompt', () => {
   });
 
   it('applies session configuration before sending the prompt', async () => {
-    const { runEphemeralExecutionRunTextPrompt } = await import('./textPrompt');
-
-    const handlers = new Set<AgentMessageHandler>();
     const events: string[] = [];
 
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
+    const runtime = createTestExecutionRunHostRuntime({
+      async provisionSession() {
         events.push('start');
         return { sessionId: 'vendor-sess-1' };
       },
-      async sendPrompt(_sessionId: string, _prompt: string): Promise<void> {
+      sendPrompt: (_sessionId, _prompt, actions) => {
         events.push('send');
-        for (const handler of handlers) {
-          handler({ type: 'model-output', fullText: 'OK' });
-        }
+        actions.emit({ type: 'model-output', fullText: 'OK' });
       },
-      async cancel(): Promise<void> {},
-      onMessage(handler: AgentMessageHandler): void {
-        handlers.add(handler);
-      },
-      async waitForResponseComplete(): Promise<void> {},
-      async dispose(): Promise<void> {},
-    };
+      waitForTurnCompletion: async () => {},
+    }).runtime;
 
     const out = await runEphemeralExecutionRunTextPrompt({
       cwd: '/tmp',
@@ -116,7 +94,7 @@ describe('runEphemeralExecutionRunTextPrompt', () => {
       permissionMode: 'no_tools',
       intent: 'replay_summary',
       prompt: 'Return OK',
-      createRuntime: (() => createExecutionRunHostRuntimeFromAgentBackend(backend)) satisfies EphemeralExecutionRunTextPromptRuntimeFactory,
+      createRuntime: (() => runtime) satisfies EphemeralExecutionRunTextPromptRuntimeFactory,
       configureSession: async (sessionId) => {
         events.push(`configure:${sessionId}`);
       },
@@ -128,29 +106,18 @@ describe('runEphemeralExecutionRunTextPrompt', () => {
 
   it('falls back to the configured execution-run timeout when timeoutMs is omitted', async () => {
     mockedConfiguration.executionRunsBoundedTimeoutMs = 4_321;
-    const { runEphemeralExecutionRunTextPrompt } = await import('./textPrompt');
 
-    const handlers = new Set<AgentMessageHandler>();
     const waitTimeouts: Array<number | null | undefined> = [];
 
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId: 'vendor-sess-1' };
+    const runtime = createTestExecutionRunHostRuntime({
+      sessionId: 'vendor-sess-1',
+      sendPrompt: (_sessionId, _prompt, actions) => {
+        actions.emit({ type: 'model-output', fullText: 'OK' });
       },
-      async sendPrompt(): Promise<void> {
-        for (const handler of handlers) {
-          handler({ type: 'model-output', fullText: 'OK' });
-        }
-      },
-      async cancel(): Promise<void> {},
-      onMessage(handler: AgentMessageHandler): void {
-        handlers.add(handler);
-      },
-      async waitForResponseComplete(timeoutMs?: number | null): Promise<void> {
+      waitForTurnCompletion: async (timeoutMs?: number | null): Promise<void> => {
         waitTimeouts.push(timeoutMs);
       },
-      async dispose(): Promise<void> {},
-    };
+    }).runtime;
 
     const out = await runEphemeralExecutionRunTextPrompt({
       cwd: '/tmp',
@@ -159,7 +126,7 @@ describe('runEphemeralExecutionRunTextPrompt', () => {
       permissionMode: 'no_tools',
       intent: 'memory_hints',
       prompt: 'Return OK',
-      createRuntime: (() => createExecutionRunHostRuntimeFromAgentBackend(backend)) satisfies EphemeralExecutionRunTextPromptRuntimeFactory,
+      createRuntime: (() => runtime) satisfies EphemeralExecutionRunTextPromptRuntimeFactory,
     });
 
     expect(out).toBe('OK');

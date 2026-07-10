@@ -29,11 +29,12 @@ import {
     parseResolveCheckpointRestoreTargetRequestV1,
     parseRestoreCheckpointRequestV1,
 } from '@happier-dev/agents';
-import type { BackendEngineV1 } from '@happier-dev/plugin-sdk';
-import type { ProviderAttachEligibility, ProviderAttachScope } from '@/backends/types';
+import type { AgentRuntimeV1 } from '@happier-dev/plugin-sdk';
+import type { ProviderAttachEligibility, ProviderAttachScope } from '@/agent/catalog/types';
+import { ExternalSessionProviderFailureError } from '@/session/external/providerOps';
 
 import { buildBackendSurfaceDispatchKey } from '../../../plugins/manifest/adapters';
-import type { ResolvedBackendContribution } from '../../../plugins/projection/registry/types';
+import type { ResolvedAgentRuntimeContribution } from '../../../plugins/projection/registry/types';
 
 import type {
     BackendExecutionSurfaces,
@@ -83,7 +84,7 @@ type AcpSessionOperationsResolver = (
 ) => AcpSessionOperationsV1 | null | Promise<AcpSessionOperationsV1 | null>;
 
 function collectDeclaredBackendSurfaceOperations(
-    backend: ResolvedBackendContribution,
+    backend: ResolvedAgentRuntimeContribution,
 ): ReadonlySet<string> {
     const declaredOperations = new Set<string>();
     for (const surfaceHandler of backend.surfaceHandlers ?? []) {
@@ -118,7 +119,7 @@ function addImplementedBackendSurfaceOperation(
     operations.add(buildBackendSurfaceDispatchKey({ kind, operation }));
 }
 
-export function collectEngineImplementedBackendSurfaceOperations(engine: BackendEngineV1): ReadonlySet<string> {
+export function collectEngineImplementedBackendSurfaceOperations(engine: AgentRuntimeV1): ReadonlySet<string> {
     const operations = new Set<string>();
     const catalog = BackendSurfaceOperationCatalogV1;
     const terminal = engine.terminalRuntimeSurface;
@@ -164,7 +165,7 @@ export function collectEngineImplementedBackendSurfaceOperations(engine: Backend
 }
 
 function appendUndeclaredEngineSurfaceDiagnostics(params: Readonly<{
-    backend: ResolvedBackendContribution;
+    backend: ResolvedAgentRuntimeContribution;
     declaredOperations: ReadonlySet<string>;
     implementedOperations: ReadonlySet<string>;
     diagnostics: EngineResolutionDiagnostic[];
@@ -173,11 +174,12 @@ function appendUndeclaredEngineSurfaceDiagnostics(params: Readonly<{
         if (params.declaredOperations.has(operationKey)) {
             continue;
         }
+        const runtimeOwnerId = params.backend.agentId;
         params.diagnostics.push({
             code: 'engine_plugin_backend_surface_static_mismatch',
             message: `Backend '${params.backend.id}' returned executable surface operation '${operationKey}' that is not declared in manifest surfaceHandlers`,
             backendId: params.backend.id,
-            providerId: params.backend.providerId,
+            providerId: runtimeOwnerId,
             pluginId: params.backend.pluginId,
         });
     }
@@ -202,8 +204,20 @@ type AttachExecutionSurface = NonNullable<BackendExecutionSurfaces['attach']>;
 type AttachEvaluateAvailability = AttachExecutionSurface['evaluateAvailability'];
 type AttachRun = AttachExecutionSurface['attach'];
 
-function failBackendSurfaceResult(operation: string, result: Readonly<{ code?: string; message?: string }>): never {
+function failBackendSurfaceResult(operation: string, result: Readonly<{
+    code?: string;
+    message?: string;
+    retryable?: boolean;
+}>): never {
     const reason = result.message ?? result.code ?? 'unavailable';
+    if (operation.startsWith('externalSession.')) {
+        throw new ExternalSessionProviderFailureError({
+            operation,
+            code: result.code ?? 'agent_unavailable',
+            message: reason,
+            retryable: result.retryable,
+        });
+    }
     throw new Error(`Backend surface operation '${operation}' failed: ${reason}`);
 }
 
@@ -386,8 +400,8 @@ async function resolveExternalSessionRuntimeContext(params: Readonly<{
 }
 
 export function resolveBackendExecutionSurfacesFromEngine(params: Readonly<{
-    backend: ResolvedBackendContribution;
-    engine: BackendEngineV1;
+    backend: ResolvedAgentRuntimeContribution;
+    engine: AgentRuntimeV1;
     diagnostics: EngineResolutionDiagnostic[];
     resolveTerminalRuntimeLaunchServices?: TerminalRuntimeLaunchServicesResolver;
     resolveTerminalRuntimeLaunchSignal?: TerminalRuntimeLaunchSignalResolver;
@@ -497,6 +511,7 @@ export function resolveBackendExecutionSurfacesFromEngine(params: Readonly<{
                         });
                         const result = await externalValidateSource({
                             source: request.source,
+                            ...(request.env ? { env: request.env } : {}),
                             ...(runtime ? { runtime } : {}),
                         });
                         if (!result.ok) {

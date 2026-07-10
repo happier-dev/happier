@@ -260,6 +260,7 @@ describe('runPermissionModePromptLoop with real ACP runtime idle overrides', () 
       runtime,
       createOverrideSynchronizer: (isStarted) =>
         createRuntimeOverrideSynchronizers({
+          agentTargetKey: 'backend:codex',
           session: session as any,
           runtime,
           isStarted,

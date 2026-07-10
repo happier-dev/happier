@@ -1,7 +1,7 @@
 /**
  * Session Metadata Factory
  *
- * Creates session state and metadata objects for all backends (Claude, Codex, Gemini).
+ * Creates session state and metadata objects for backend agents.
  * This follows DRY principles by providing a single implementation for all backends.
  *
  * @module createSessionMetadata
@@ -12,6 +12,7 @@ import { resolve } from 'node:path';
 
 import {
     parseSessionMcpSelectionV1Json,
+    type SessionModelSelectionIntentV1,
 } from '@happier-dev/protocol';
 import {
     applyAcpConfigOptionIntentSessionMetadata,
@@ -50,7 +51,7 @@ export type BackendFlavor = string;
  * Options for creating session metadata.
  */
 export interface CreateSessionMetadataOptions {
-    /** Backend flavor (claude, codex, gemini) */
+    /** Backend flavor identifier. */
     flavor: BackendFlavor;
     /** Machine ID for server identification */
     machineId: string;
@@ -68,29 +69,71 @@ export interface CreateSessionMetadataOptions {
     sessionModeId?: string;
     /** Timestamp (ms) for sessionModeId, used for arbitration across devices (optional) */
     sessionModeUpdatedAt?: number;
-    /** Model override to publish for the session (optional) */
-    modelId?: string;
-    /** Timestamp (ms) for modelId, used for arbitration across devices (optional) */
-    modelUpdatedAt?: number;
+    /** Canonical provider/native model-selection intent to publish for the session. */
+    modelSelectionIntent?: SessionModelSelectionIntentV1;
     /** Provider-owned metadata augmentation hook applied after shared metadata creation. */
     augmentMetadata?: ((metadata: Metadata) => Metadata) | null;
+    /** Non-secret launch controls captured once at the host/session boundary. */
+    launchControlMetadata: SessionLaunchControlMetadata;
 }
 
-function consumeSessionEnv(
-    name:
-        | 'HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON'
-        | 'HAPPIER_SESSION_MCP_SELECTION_JSON'
-        | typeof HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY
-        | typeof HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY,
-): string | null {
-    const raw = process.env[name];
-    delete process.env[name];
-    return typeof raw === 'string' && raw.trim().length > 0 ? raw : null;
-}
+type LaunchControlEnvKey =
+    | 'HAPPIER_SESSION_PROFILE_ID'
+    | 'HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON'
+    | 'HAPPIER_SESSION_MCP_SELECTION_JSON'
+    | typeof HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY
+    | typeof HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY;
 
-function parseSessionConfigOptionOverridesFromEnvironment(): SessionMetadataConfigOptionOverrides | null {
-    const raw = consumeSessionEnv('HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON');
-    return parseSessionMetadataConfigOptionOverridesJson(raw);
+const ONE_SHOT_LAUNCH_CONTROL_ENV_KEYS = [
+    'HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON',
+    'HAPPIER_SESSION_MCP_SELECTION_JSON',
+    HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY,
+    HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY,
+] as const satisfies readonly LaunchControlEnvKey[];
+
+export type SessionLaunchControlMetadata = Readonly<{
+    profileId?: string | null;
+    mcpSelection: ReturnType<typeof parseSessionMcpSelectionV1Json>;
+    connectedServices: ReturnType<typeof parseSessionConnectedServicesBindingsJson>;
+    connectedServiceMaterializationIdentity: ReturnType<typeof parseSessionConnectedServiceMaterializationIdentityJson>;
+    sessionConfigOptionOverrides: SessionMetadataConfigOptionOverrides | null;
+}>;
+
+export function captureSessionLaunchControlMetadata(params: Readonly<{
+    explicitEnvironment?: Readonly<Record<string, string>> | null;
+    processEnvironment?: NodeJS.ProcessEnv;
+}> = {}): SessionLaunchControlMetadata {
+    const explicitEnvironment = params.explicitEnvironment ?? null;
+    const processEnvironment = params.processEnvironment ?? process.env;
+    const read = (name: LaunchControlEnvKey): string | undefined => {
+        if (explicitEnvironment && Object.prototype.hasOwnProperty.call(explicitEnvironment, name)) {
+            return explicitEnvironment[name];
+        }
+        return processEnvironment[name];
+    };
+    const readNonEmpty = (name: LaunchControlEnvKey): string | null => {
+        const value = read(name);
+        return typeof value === 'string' && value.trim().length > 0 ? value : null;
+    };
+
+    const profileIdRaw = read('HAPPIER_SESSION_PROFILE_ID');
+    const captured: SessionLaunchControlMetadata = Object.freeze({
+        ...(profileIdRaw !== undefined ? { profileId: profileIdRaw.trim() || null } : {}),
+        mcpSelection: parseSessionMcpSelectionV1Json(readNonEmpty('HAPPIER_SESSION_MCP_SELECTION_JSON')),
+        connectedServices: parseSessionConnectedServicesBindingsJson(
+            readNonEmpty(HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY),
+        ),
+        connectedServiceMaterializationIdentity: parseSessionConnectedServiceMaterializationIdentityJson(
+            readNonEmpty(HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY),
+        ),
+        sessionConfigOptionOverrides: parseSessionMetadataConfigOptionOverridesJson(
+            readNonEmpty('HAPPIER_SESSION_CONFIG_OPTION_OVERRIDES_JSON'),
+        ),
+    });
+    for (const key of ONE_SHOT_LAUNCH_CONTROL_ENV_KEYS) {
+        delete processEnvironment[key];
+    }
+    return captured;
 }
 
 function applySessionConfigOptionOverridesToMetadata(
@@ -131,12 +174,8 @@ function applyInitialIntentMetadata(metadata: Metadata, opts: CreateSessionMetad
         }) as Metadata;
     }
 
-    if (typeof opts.modelId === 'string' && opts.modelId.trim()) {
-        nextMetadata = applyModelIntentSessionMetadata(nextMetadata, {
-            v: 1,
-            modelId: opts.modelId.trim(),
-            updatedAt: typeof opts.modelUpdatedAt === 'number' ? opts.modelUpdatedAt : Date.now(),
-        }) as Metadata;
+    if (opts.modelSelectionIntent) {
+        nextMetadata = applyModelIntentSessionMetadata(nextMetadata, opts.modelSelectionIntent) as Metadata;
     }
 
     return nextMetadata;
@@ -155,8 +194,8 @@ export interface SessionMetadataResult {
 /**
  * Creates session state and metadata for backend agents.
  *
- * This utility consolidates the common session metadata creation logic used by
- * Codex and Gemini backends, ensuring consistency across all backend implementations.
+ * This utility consolidates common session metadata creation logic, ensuring
+ * consistency across backend implementations.
  *
  * @param opts - Options specifying flavor, machineId, and startedBy
  * @returns Object containing state and metadata for session creation
@@ -164,7 +203,7 @@ export interface SessionMetadataResult {
  * @example
  * ```typescript
  * const { state, metadata } = createSessionMetadata({
- *     flavor: 'gemini',
+ *     flavor: backendId,
  *     machineId: settings.machineId,
  *     startedBy: opts.startedBy
  * });
@@ -177,23 +216,14 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
         controlledByUser: false,
     };
 
-    const profileIdEnv = process.env.HAPPIER_SESSION_PROFILE_ID;
-    const profileId = profileIdEnv === undefined ? undefined : (profileIdEnv.trim() || null);
-    const mcpSelection = parseSessionMcpSelectionV1Json(consumeSessionEnv('HAPPIER_SESSION_MCP_SELECTION_JSON'));
-    const connectedServices = parseSessionConnectedServicesBindingsJson(
-        consumeSessionEnv(HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY),
-    );
-    const connectedServiceMaterializationIdentity = parseSessionConnectedServiceMaterializationIdentityJson(
-        consumeSessionEnv(HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY),
-    );
-    const sessionConfigOptionOverrides = parseSessionConfigOptionOverridesFromEnvironment();
+    const launchControlMetadata = opts.launchControlMetadata;
     const metadataBase: Metadata = {
         path: resolveRequestedSessionDirectory({ requestedDirectory: opts.directory }),
         host: os.hostname(),
         version: packageJson.version,
         os: os.platform(),
         ...(opts.terminalRuntime ? { terminal: buildTerminalMetadataFromRuntimeFlags(opts.terminalRuntime) } : {}),
-        ...(profileIdEnv !== undefined ? { profileId } : {}),
+        ...('profileId' in launchControlMetadata ? { profileId: launchControlMetadata.profileId } : {}),
         machineId: opts.machineId,
         homeDir: os.homedir(),
         happyHomeDir: configuration.happyHomeDir,
@@ -206,17 +236,17 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
         lifecycleState: 'running',
         lifecycleStateSince: Date.now(),
         flavor: opts.flavor,
-        ...(mcpSelection ? { mcpSelectionV1: mcpSelection } : {}),
-        ...(connectedServices ? { connectedServices } : {}),
-        ...(connectedServiceMaterializationIdentity
-            ? { connectedServiceMaterializationIdentityV1: connectedServiceMaterializationIdentity }
+        ...(launchControlMetadata.mcpSelection ? { mcpSelectionV1: launchControlMetadata.mcpSelection } : {}),
+        ...(launchControlMetadata.connectedServices ? { connectedServices: launchControlMetadata.connectedServices } : {}),
+        ...(launchControlMetadata.connectedServiceMaterializationIdentity
+            ? { connectedServiceMaterializationIdentityV1: launchControlMetadata.connectedServiceMaterializationIdentity }
             : {}),
     };
 
     const metadata = (opts.augmentMetadata ?? ((current) => current))(
         applySessionConfigOptionOverridesToMetadata(
             applyInitialIntentMetadata(metadataBase, opts),
-            sessionConfigOptionOverrides,
+            launchControlMetadata.sessionConfigOptionOverrides,
         ),
     );
 

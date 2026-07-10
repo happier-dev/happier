@@ -34,7 +34,7 @@ describe('sessionNotificationContext', () => {
     expect(getSessionNotificationAgentDisplayName(() => ({
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'claude',
+        agentId: 'claude',
         provider: {},
       },
     }))).toBe('Claude Code CLI');

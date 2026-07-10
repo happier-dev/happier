@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import { createAcpAgentMessageForwarder } from '@/agent/acp/bridge/createAcpAgentMessageForwarder';
-import type { AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
+import type { AgentMessageHandler, SessionId } from '@/agent/core/AgentMessage';
 import type { ExecutionRunParentSessionPermissionRequestEnvelope } from '@/agent/executionRuns/policy/executionRunPermissionInteractionPolicy';
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import { appendExecutionRunControllerHostBarrier } from '@/agent/executionRuns/controllers/failureSignal';
@@ -14,6 +14,7 @@ import {
   resolveExecutionRunPermissionInteractionMode,
 } from '@/agent/executionRuns/policy/executionRunPermissionInteractionPolicy';
 import type { ExecutionRunPermissionRequestStoreProvider } from '../executionRunPermissionResponseTarget';
+import type { ExecutionRunPermissionCapability } from '../executionRunHostRuntime';
 
 function readNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -37,6 +38,21 @@ function readRuntimeKindFromDescriptor(payload: unknown): string | null {
   const provider = readRecord(descriptor.provider);
   if (!provider) return null;
   return readNonEmptyString(provider.backendMode);
+}
+
+function readPermissionCapability(value: unknown): ExecutionRunPermissionCapability | null {
+  return value === 'responds' || value === 'inline' || value === 'static' ? value : null;
+}
+
+function readRuntimePermissionCapability(payload: unknown): ExecutionRunPermissionCapability | null {
+  const capabilities = readRecord(payload);
+  if (!capabilities) return null;
+  const permissions = readRecord(capabilities.permissions);
+  const backend = readRecord(capabilities.backend);
+  const backendPermissions = readRecord(backend?.permissions);
+  return readPermissionCapability(permissions?.capability)
+    ?? readPermissionCapability(capabilities.permissionCapability)
+    ?? readPermissionCapability(backendPermissions?.capability);
 }
 
 function readProviderSessionId(payload: unknown): SessionId | null {
@@ -80,6 +96,13 @@ function mergePermissionRequestOptionsForParentPrompt(
 
 const FAIL_CLOSED_PERMISSION_REQUEST_ERROR = 'Execution-run permission request cannot be surfaced or denied';
 
+type FailClosedPermissionReason =
+  | 'static'
+  | 'inline_no_pending_request'
+  | 'no_active_session'
+  | 'unknown_request'
+  | 'transport_error';
+
 export function createExecutionRunControllerMessageHandler(args: Readonly<{
   ctrl: ExecutionRunBackendController;
   runId: string;
@@ -103,9 +126,22 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
     makeId: () => randomUUID(),
   });
   let runtimeKind: string | null = null;
+  let permissionCapability: ExecutionRunPermissionCapability = args.ctrl.backend.permissionCapability ?? 'static';
 
-  function createFailClosedPermissionRequestError(): Error {
-    return new Error(FAIL_CLOSED_PERMISSION_REQUEST_ERROR);
+  function createFailClosedPermissionRequestError(
+    reason: FailClosedPermissionReason,
+    capability: ExecutionRunPermissionCapability = permissionCapability,
+  ): Error {
+    const error = new Error(FAIL_CLOSED_PERMISSION_REQUEST_ERROR);
+    Object.defineProperty(error, 'executionRunPermissionDiagnostic', {
+      enumerable: true,
+      value: {
+        runId: args.runId,
+        reason,
+        capability,
+      },
+    });
+    return error;
   }
 
   function terminalizeFailClosedPermissionRequest(error: Error): void {
@@ -115,20 +151,48 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
     }
   }
 
+  function readEffectivePermissionCapability(): ExecutionRunPermissionCapability {
+    return args.ctrl.backend.permissionCapability ?? permissionCapability;
+  }
+
   function denyPermissionRequestOrFail(providerRequestId: string | null): void {
-    if (!providerRequestId || typeof args.ctrl.backend.respondToPermission !== 'function') {
-      const error = createFailClosedPermissionRequestError();
+    const declaredCapability = readEffectivePermissionCapability();
+    if (declaredCapability !== 'responds') {
+      const error = createFailClosedPermissionRequestError(
+        declaredCapability === 'inline' ? 'inline_no_pending_request' : 'static',
+        declaredCapability,
+      );
+      terminalizeFailClosedPermissionRequest(error);
+      throw error;
+    }
+    const respondToPermission = declaredCapability === 'responds'
+      ? args.ctrl.backend.respondToPermission
+      : undefined;
+    if (!providerRequestId || !respondToPermission) {
+      const error = createFailClosedPermissionRequestError('no_active_session', declaredCapability);
       terminalizeFailClosedPermissionRequest(error);
       throw error;
     }
 
     try {
-      const denyTransport = args.ctrl.backend.respondToPermission(providerRequestId, false).catch(() => {
-        terminalizeFailClosedPermissionRequest(createFailClosedPermissionRequestError());
-      });
+      const denyTransport = respondToPermission(providerRequestId, false).then(
+        (outcome) => {
+          if (outcome.delivered === true) return;
+          terminalizeFailClosedPermissionRequest(createFailClosedPermissionRequestError(
+            outcome.reason,
+            declaredCapability,
+          ));
+        },
+        () => {
+          terminalizeFailClosedPermissionRequest(createFailClosedPermissionRequestError(
+            'transport_error',
+            declaredCapability,
+          ));
+        },
+      );
       args.ctrl.pendingHostBarrier = appendExecutionRunControllerHostBarrier(args.ctrl.pendingHostBarrier, denyTransport);
     } catch {
-      const error = createFailClosedPermissionRequestError();
+      const error = createFailClosedPermissionRequestError('transport_error', declaredCapability);
       terminalizeFailClosedPermissionRequest(error);
       throw error;
     }
@@ -139,6 +203,12 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
       // runtimeKind is a capability label for permission surfacing; the backend identity is already
       // present on the execution-run state and descriptor payload.
       runtimeKind = readRuntimeKindFromDescriptor(msg.payload);
+      forwarder.forward(msg);
+      return;
+    }
+
+    if (msg.type === 'event' && msg.name === 'runtime.capabilities') {
+      permissionCapability = readRuntimePermissionCapability(msg.payload) ?? 'static';
       forwarder.forward(msg);
       return;
     }
@@ -181,7 +251,7 @@ export function createExecutionRunControllerMessageHandler(args: Readonly<{
         permissionMode: run.permissionMode,
         parentSessionId: run.sessionId,
         backendCapabilities: {
-          canRespondToPermission: typeof args.ctrl.backend.respondToPermission === 'function',
+          canRespondToPermission: readEffectivePermissionCapability() === 'responds',
           canSurfaceParentSessionPrompt: runtimeKind !== null,
           ...(runtimeKind ? { runtimeKind } : {}),
           backendId: run.backendId,

@@ -3,13 +3,16 @@ import { randomUUID } from 'node:crypto';
 import {
   type ExecutionRunHostRuntime,
 } from './executionRunHostRuntime';
+import type { ExecutionRunPermissionResponseBridgeResult } from './executionRunBridgeContract';
 import type { ACPMessageData, ACPProvider } from '../../../../api/session/sessionMessageTypes';
 import type { StreamedTranscriptWriterSession } from '../../../../api/session/streamedTranscriptWriter';
 import type { ExecutionBudgetRegistry } from '../../../../daemon/executionBudget/ExecutionBudgetRegistry';
 import {
   buildBackendTargetKey,
   buildBackendTargetKeyV2,
+  type AcpConfigOptionOverridesV1,
   type BackendTargetRefV1,
+  type ConnectedServiceBindingsV1,
   type ExecutionRunBridgeLifecycleHookEventIdV1,
   type ExecutionRunListRequest,
   ExecutionRunPublicStateSchema,
@@ -37,6 +40,7 @@ import {
   type ExecutionRunProfileContributionCatalog,
 } from '@/agent/executionRuns/profiles/intentRegistry';
 import { createExecutionRunBridgeRuntime } from './createExecutionRunBridgeRuntime';
+import { resolveExecutionRunResumeBackendOptions } from './resolveExecutionRunResumeBackendOptions';
 import { cancelVoiceAgentTurnStream, readVoiceAgentTurnStream, startVoiceAgentTurnStream } from './voiceAgentTurnStreams';
 import { sendBackendLongLivedRun } from './send/backendLongLivedPrompt';
 import { stopExecutionRun } from './executionRunStop';
@@ -169,6 +173,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   private readonly onVoiceAgentWelcomed: ((run: ExecutionRunPublicState, welcomedEpoch: number) => void | Promise<void>) | null;
   private permissionResponseTargetStore: ExecutionRunPermissionRequestStore | null = null;
   private unregisterPermissionResponseTargetHandler: (() => void) | null = null;
+  private disposePromise: Promise<void> | null = null;
 
   private emitPublicStateUpdated(runId: string): void {
     const callback = this.onPublicStateUpdated;
@@ -259,7 +264,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       }>) => await resolveCliVoicePromptStackBlocks({ settings, profileId }));
 
     this.voiceAgentManager = new VoiceAgentManager({
-      createRuntime: ({ agentId, modelId, permissionPolicy, start }) => {
+      createRuntime: ({ agentId, modelId, permissionPolicy, start, connectedServices }) => {
         try {
           return this.createExecutionRunRuntime({
             backendId: agentId,
@@ -267,6 +272,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
             modelId,
             permissionMode: permissionPolicy,
             ...(start ? { start } : {}),
+            ...(connectedServices !== undefined ? { connectedServices } : {}),
           });
         } catch (e) {
           // Backend init failures should surface as "unsupported" so callers can fall back to
@@ -333,7 +339,10 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     backendTarget?: BackendTargetRefV1;
     permissionMode: string;
     modelId?: string;
+    sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     accountSettings?: Readonly<Record<string, unknown>> | null;
+    connectedServices?: ConnectedServiceBindingsV1 | null;
+    connectedServicesDefaultServiceIds?: readonly string[];
     start?: ExecutionRunBackendStartContext;
   }>): ExecutionRunHostRuntime {
     return createExecutionRunBridgeRuntime({
@@ -343,10 +352,50 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       backendTarget: opts.backendTarget,
       permissionMode: opts.permissionMode,
       modelId: opts.modelId,
+      ...(opts.sessionConfigOptionOverrides
+        ? { sessionConfigOptionOverrides: opts.sessionConfigOptionOverrides }
+        : {}),
       accountSettings: opts.accountSettings ?? null,
+      ...(opts.connectedServices !== undefined
+        ? { connectedServices: opts.connectedServices }
+        : {}),
+      ...(opts.connectedServicesDefaultServiceIds && opts.connectedServicesDefaultServiceIds.length > 0
+        ? { connectedServicesDefaultServiceIds: opts.connectedServicesDefaultServiceIds }
+        : {}),
       start: opts.start ?? null,
       happyHomeDir: this.happyHomeDir,
       parentSessionStateTarget: this.parentSessionStateTarget,
+    });
+  }
+
+  /**
+   * ONE resume backend factory (LC-F2): every recreation path rehydrates the run's immutable launch
+   * record so the recreated backend re-applies the SAME model, config overrides, and connected-service
+   * selection (daemon re-materializes it, fail-closed) instead of falling back to a bare backend on
+   * ambient/native auth. Keeps resume symmetric with start.
+   */
+  private createResumeExecutionRunRuntime(opts: Readonly<{
+    runId?: string;
+    backendId: string;
+    backendTarget?: BackendTargetRefV1;
+    permissionMode: string;
+    accountSettings?: Readonly<Record<string, unknown>> | null;
+  }>): ExecutionRunHostRuntime {
+    const run = opts.runId ? this.runs.get(opts.runId) ?? null : null;
+    const resumeOptions = resolveExecutionRunResumeBackendOptions({ run });
+    return this.createExecutionRunRuntime({
+      ...(opts.runId ? { runId: opts.runId } : {}),
+      backendId: opts.backendId,
+      ...(opts.backendTarget ? { backendTarget: opts.backendTarget } : {}),
+      permissionMode: opts.permissionMode,
+      accountSettings: opts.accountSettings ?? null,
+      ...(resumeOptions.modelId ? { modelId: resumeOptions.modelId } : {}),
+      ...(resumeOptions.sessionConfigOptionOverrides
+        ? { sessionConfigOptionOverrides: resumeOptions.sessionConfigOptionOverrides }
+        : {}),
+      ...(resumeOptions.connectedServices !== undefined
+        ? { connectedServices: resumeOptions.connectedServices }
+        : {}),
     });
   }
 
@@ -505,7 +554,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     });
     this.emitPublicStateUpdated(runId);
     void this.emitLifecycleHookEvent({
-      eventId: 'execution_run.terminal',
+      eventId: 'executionRun.completed',
       runId,
       payload: {
         runId,
@@ -532,7 +581,6 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         eventId: params.eventId,
         scope: 'session',
         happySessionId: run.sessionId,
-        backendId: run.backendId,
         backendTarget: buildBackendTargetKey(run.backendTarget),
         payload: params.payload,
       },
@@ -566,7 +614,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     });
     this.emitPublicStateUpdated(started.runId);
     await this.emitLifecycleHookEvent({
-      eventId: 'execution_run.start',
+      eventId: 'executionRun.started',
       runId: started.runId,
       payload: {
         runId: started.runId,
@@ -624,8 +672,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         runs: this.runs,
         controllers: this.controllers,
         budgetRegistry: this.budgetRegistry,
-        createRuntime: ({ runId: resumedRunId, backendId, backendTarget, permissionMode }) =>
-          this.createExecutionRunRuntime({ runId: resumedRunId, backendId, backendTarget, permissionMode }),
+        createRuntime: ({ runId: resumedRunId, backendId, backendTarget, permissionMode, accountSettings }) =>
+          this.createResumeExecutionRunRuntime({ runId: resumedRunId, backendId, backendTarget, permissionMode, accountSettings }),
         maxTurns: this.maxTurns,
         getNowMs: this.getNowMs,
         finishRun: this.finishRun.bind(this),
@@ -639,7 +687,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       });
       if (result.ok) {
         await this.emitLifecycleHookEvent({
-          eventId: 'execution_run.send',
+          eventId: 'executionRun.messageSent',
           runId,
           payload: {
             runId,
@@ -706,7 +754,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       });
       if (result.ok) {
         await this.emitLifecycleHookEvent({
-          eventId: 'execution_run.send',
+          eventId: 'executionRun.messageSent',
           runId,
           payload: {
             runId,
@@ -725,8 +773,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       runs: this.runs,
       controllers: this.controllers,
       budgetRegistry: this.budgetRegistry,
-      createRuntime: ({ runId: resumedRunId, backendId, backendTarget, permissionMode }) =>
-        this.createExecutionRunRuntime({ runId: resumedRunId, backendId, backendTarget, permissionMode }),
+      createRuntime: ({ runId: resumedRunId, backendId, backendTarget, permissionMode, accountSettings }) =>
+        this.createResumeExecutionRunRuntime({ runId: resumedRunId, backendId, backendTarget, permissionMode, accountSettings }),
       maxTurns: this.maxTurns,
       getNowMs: this.getNowMs,
       finishRun: this.finishRun.bind(this),
@@ -740,7 +788,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     });
     if (result.ok) {
       await this.emitLifecycleHookEvent({
-        eventId: 'execution_run.send',
+        eventId: 'executionRun.messageSent',
         runId,
         payload: {
           runId,
@@ -761,8 +809,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       runs: this.runs,
       controllers: this.controllers,
       budgetRegistry: this.budgetRegistry,
-      createRuntime: ({ runId: resumedRunId, backendId, backendTarget, permissionMode }) =>
-        this.createExecutionRunRuntime({ runId: resumedRunId, backendId, backendTarget, permissionMode }),
+      createRuntime: ({ runId: resumedRunId, backendId, backendTarget, permissionMode, accountSettings }) =>
+        this.createResumeExecutionRunRuntime({ runId: resumedRunId, backendId, backendTarget, permissionMode, accountSettings }),
       sendAcp: this.sendAcp,
       parentProvider: this.parentProvider,
       streamedTranscriptSession: this.streamedTranscriptSession,
@@ -873,7 +921,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     });
     if (result.ok) {
       await this.emitLifecycleHookEvent({
-        eventId: 'execution_run.stop',
+        eventId: 'executionRun.stopped',
         runId,
         payload: {
           runId,
@@ -883,6 +931,53 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     return result;
   }
 
+  async dispose(): Promise<void> {
+    if (this.disposePromise) {
+      return await this.disposePromise;
+    }
+
+    this.disposePromise = (async () => {
+      const runningRunIds = [...this.runs.values()]
+        .filter((run) => run.status === 'running')
+        .map((run) => run.runId);
+
+      await Promise.allSettled(runningRunIds.map(async (runId) => {
+        await this.stop(runId);
+      }));
+
+      const remainingControllers = [...this.controllers.entries()];
+      await Promise.allSettled(remainingControllers.map(async ([runId, ctrl]) => {
+        if (ctrl.kind === 'backend') {
+          try {
+            await ctrl.backend.dispose();
+          } catch {
+            // best effort
+          }
+        } else {
+          try {
+            await this.voiceAgentManager.stop({ voiceAgentId: ctrl.voiceAgentId });
+          } catch {
+            // best effort
+          }
+        }
+        ctrl.resolveTerminal();
+        this.controllers.delete(runId);
+      }));
+
+      try {
+        await this.voiceAgentManager.dispose();
+      } catch {
+        // best effort
+      }
+
+      this.unregisterPermissionResponseTargetHandler?.();
+      this.unregisterPermissionResponseTargetHandler = null;
+      this.permissionResponseTargetStore = null;
+    })();
+
+    return await this.disposePromise;
+  }
+
   async respondToPermissionRequest(
     runId: string,
     params: Readonly<{
@@ -890,7 +985,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       approved: boolean;
       responseTarget?: ExecutionRunParentSessionPermissionResponseTarget | null;
     }>,
-  ): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
+  ): Promise<ExecutionRunPermissionResponseBridgeResult> {
     const run = this.runs.get(runId) ?? null;
     if (!run) {
       return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
@@ -928,11 +1023,22 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       }
     }
 
-    if (typeof ctrl.backend.respondToPermission !== 'function') {
+    const respondToPermission = ctrl.backend.permissionCapability === 'responds'
+      ? ctrl.backend.respondToPermission
+      : undefined;
+    if (!respondToPermission) {
       return { ok: false, errorCode: 'execution_run_action_not_supported', error: 'Unsupported action' };
     }
 
-    await ctrl.backend.respondToPermission(params.requestId, params.approved);
+    const delivery = await respondToPermission(params.requestId, params.approved);
+    if (delivery.delivered !== true) {
+      return {
+        ok: false,
+        errorCode: 'execution_run_permission_not_delivered',
+        error: 'Permission response was not delivered',
+        delivery,
+      };
+    }
     this.sendAcp(this.parentProvider, {
       type: 'permission-response',
       permissionId: params.requestId,
@@ -941,7 +1047,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       sidechainId: run.sidechainId,
     });
     await this.writeActivityMarker(runId, this.getNowMs(), { force: true });
-    return { ok: true };
+    return { ok: true, delivery };
   }
 
   async applyAction(runId: string, params: ExecutionRunActionParams): Promise<ExecutionRunActionResult> {

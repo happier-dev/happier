@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
-import type { SessionAttachMetadataIdentityPolicy } from '@happier-dev/protocol';
+import type { SessionAttachMetadataIdentityPolicy, SessionModelSelectionV1 } from '@happier-dev/protocol';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { MachineMetadata, PermissionMode } from '@/api/types';
-import type { BackendFlavor } from '@/agent/runtime/createSessionMetadata';
+import type { BackendFlavor, SessionLaunchControlMetadata } from '@/agent/runtime/createSessionMetadata';
 import { createDeferredStartupBootstrap } from '@/agent/runtime/startup/createDeferredStartupBootstrap';
 import { createDeferredStartupMetadataPlan } from '@/agent/runtime/startup/createDeferredStartupMetadataPlan';
 import type { DeferredStartupPushSender } from '@/agent/runtime/startup/deferredStartupTypes';
@@ -36,9 +36,9 @@ export async function createPreparedDeferredStartupBootstrap(params: Readonly<{
   explicitPermissionModeUpdatedAt?: number;
   sessionModeId?: string | null;
   sessionModeUpdatedAt?: number;
-  modelId?: string;
-  modelUpdatedAt?: number;
+  modelSelection?: SessionModelSelectionV1;
   terminalRuntime?: TerminalRuntimeFlags | null;
+  launchControlMetadata: SessionLaunchControlMetadata;
   existingSessionId?: string;
   attachMetadataIdentityPolicy?: SessionAttachMetadataIdentityPolicy | null;
   sessionTag?: string;
@@ -64,8 +64,8 @@ export async function createPreparedDeferredStartupBootstrap(params: Readonly<{
     explicitPermissionModeUpdatedAt: params.explicitPermissionModeUpdatedAt,
     sessionModeId: params.sessionModeId ?? undefined,
     sessionModeUpdatedAt: params.sessionModeUpdatedAt,
-    modelId: params.modelId,
-    modelUpdatedAt: params.modelUpdatedAt,
+    modelSelection: params.modelSelection,
+    launchControlMetadata: params.launchControlMetadata,
   });
   const timing = createStartupTiming({ enabled: configuration.startupTimingEnabled, nowMs: () => Date.now() });
 

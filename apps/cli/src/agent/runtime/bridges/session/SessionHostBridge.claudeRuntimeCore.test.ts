@@ -22,7 +22,7 @@ vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
   resolveBackendExecutionSurfaces: vi.fn(),
   resolveBackendEngineAdapterResolution: vi.fn(async (backendId: string) => ({
       backendId,
-      providerId: 'claude',
+      agentId: 'claude',
       source: 'built_in',
       engineAdapter: {
         runtimeCore: {
@@ -37,7 +37,7 @@ describe('SessionHostBridge (claude runtimeCore)', () => {
     runSessionRuntimePlanMock.mockResolvedValue(undefined);
     createSessionRuntimeMock.mockResolvedValue({
       kind: 'hostSessionRuntimePlan',
-      providerId: 'claude',
+      agentId: 'claude',
       opts: {
         credentials: {
           token: 't',
@@ -71,7 +71,7 @@ describe('SessionHostBridge (claude runtimeCore)', () => {
 
     expect(runSessionRuntimePlanMock).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'hostSessionRuntimePlan',
-      providerId: 'claude',
+      agentId: 'claude',
       opts: expect.objectContaining({
         credentials,
         existingSessionId: 'sid-1',

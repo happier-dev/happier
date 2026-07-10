@@ -130,20 +130,20 @@ describe('engineRegistry account settings context', () => {
         };
         const backendContribution = {
             id: 'acme.sample.backend',
-            providerId: 'acme.sample.provider',
+            agentId: 'acme.sample.provider',
             provenance: 'external',
             source: { kind: 'path' },
             definition: {
                 kindVersion: 1,
                 id: 'acme.sample.backend',
-                providerId: 'acme.sample.provider',
+                agentId: 'acme.sample.provider',
             },
             richDefinition: {
                 source: 'plugin',
                 definition: {
                     kindVersion: 1,
                     id: 'acme.sample.backend',
-                    providerId: 'acme.sample.provider',
+                    agentId: 'acme.sample.provider',
                     runtimeKind: 'native',
                     capabilities: {},
                     surfaceHandlers: [],
@@ -155,16 +155,16 @@ describe('engineRegistry account settings context', () => {
             daemonEntryPath: '/tmp/acme.sample/daemon.mjs',
         };
         const registry = {
-            providers: [providerContribution],
-            backends: [backendContribution],
+            agents: [providerContribution],
+            agentRuntimes: [backendContribution],
             actions: [],
             hookRegistrations: [],
             surfaceHandlersByBackendId: new Map(),
             catalogEntriesById: {},
-            providerDefinitionsById: new Map([
+            agentDefinitionsById: new Map([
                 ['acme.sample.provider', providerContribution],
             ]),
-            backendDefinitionsById: new Map([
+            agentRuntimeDefinitionsById: new Map([
                 ['acme.sample.backend', backendContribution],
             ]),
             pluginDiagnosticsByPluginId: {},
@@ -175,7 +175,7 @@ describe('engineRegistry account settings context', () => {
             actionHandlersByActionId: new Map(),
             hookHandlersByHookId: new Map(),
             runtimeCoreHandlersByBackendId: new Map(),
-            backendEnginesByBackendId: new Map([
+            agentRuntimesByAgentId: new Map([
                 ['acme.sample.backend', {
                     pluginId: 'acme.sample',
                     registration: {
@@ -201,6 +201,7 @@ describe('engineRegistry account settings context', () => {
                 }],
             ]),
             pluginDiagnosticsByPluginId: {},
+            activatePluginsByEvent: vi.fn(async () => []),
             readHookEventEnvelopeV1: vi.fn(),
             dispose: vi.fn(async () => undefined),
         });

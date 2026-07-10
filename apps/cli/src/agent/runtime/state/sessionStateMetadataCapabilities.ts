@@ -17,6 +17,7 @@ export const HOST_SESSION_STATE_METADATA_CAPABILITIES: SessionStateCapabilitiesV
   runtime: {
     workState: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
     usageLimitRecovery: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+    sessionRunner: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
   },
 };
 

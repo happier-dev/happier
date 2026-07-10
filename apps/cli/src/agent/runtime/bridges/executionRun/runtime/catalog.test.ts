@@ -42,6 +42,38 @@ afterEach(() => {
 });
 
 describe('createCatalogProviderExecutionRunBackend', () => {
+    it('removes late-unset explicit values and forwards unsets to the catalog runtime boundary', async () => {
+        const { createCatalogProviderExecutionRunBackend } = await import('./catalog');
+        const nativeRuntime = createStubRuntime();
+        let capturedOptions: unknown = null;
+        const runtime = createCatalogProviderExecutionRunBackend({
+            agentId: 'codex',
+            createRuntime: (options) => {
+                capturedOptions = options;
+                return nativeRuntime;
+            },
+        }, {
+            cwd: '/tmp/catalog-execution-run',
+            backendId: 'codex',
+            permissionMode: 'read_only',
+            // Boundary fixture exercises the new transport before the owning type is widened.
+            isolation: {
+                env: {
+                    OPENAI_API_KEY: 'must-not-survive',
+                    KEEP: 'visible',
+                },
+                unsetEnvKeys: ['openai_api_key'],
+            } as unknown as NonNullable<Parameters<typeof createCatalogProviderExecutionRunBackend>[1]['isolation']>,
+        });
+
+        await runtime.provisionSession({ initialPrompt: 'boot' });
+
+        expect(capturedOptions).toEqual(expect.objectContaining({
+            env: { KEEP: 'visible' },
+            unsetEnvKeys: ['openai_api_key'],
+        }));
+    });
+
     it('cleans up ephemeral isolation when backend construction throws', async () => {
         const homeDir = await mkdtemp(join(os.tmpdir(), 'happier-catalog-execution-run-home-'));
         try {
@@ -52,11 +84,11 @@ describe('createCatalogProviderExecutionRunBackend', () => {
             const { reloadConfiguration, configuration } = await import('@/configuration');
             reloadConfiguration();
 
-            const { createCatalogProviderExecutionRunBackend } = await import('./catalog');
-            const runtime = createCatalogProviderExecutionRunBackend({
-                providerId: 'pi',
-                createRuntime: () => {
-                    throw new Error('catalog backend failed');
+	            const { createCatalogProviderExecutionRunBackend } = await import('./catalog');
+	            const runtime = createCatalogProviderExecutionRunBackend({
+	                agentId: 'pi',
+	                createRuntime: () => {
+	                    throw new Error('catalog backend failed');
                 },
             }, {
                 cwd: '/tmp/catalog-execution-run',
@@ -77,6 +109,39 @@ describe('createCatalogProviderExecutionRunBackend', () => {
         }
     });
 
+    it('awaits async provider runtime factories before validating the host runtime surface', async () => {
+        const homeDir = await mkdtemp(join(os.tmpdir(), 'happier-catalog-execution-run-home-'));
+        try {
+            process.env.HAPPIER_HOME_DIR = homeDir;
+            process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
+            process.env.HAPPIER_WEBAPP_URL = 'https://app.example.test';
+
+            const { reloadConfiguration } = await import('@/configuration');
+            reloadConfiguration();
+
+	            const { createCatalogProviderExecutionRunBackend } = await import('./catalog');
+	            const nativeRuntime = createStubRuntime();
+	            const runtime = createCatalogProviderExecutionRunBackend({
+	                agentId: 'qwen',
+	                createRuntime: async () => nativeRuntime,
+            }, {
+                cwd: '/tmp/catalog-execution-run',
+                backendId: 'qwen',
+                runId: 'run_catalog_async_runtime',
+                permissionMode: 'read_only',
+                start: {
+                    intent: 'review',
+                    retentionPolicy: 'ephemeral',
+                },
+            });
+
+            await expect(runtime.readResumeSupport()).resolves.toBe(false);
+            await expect(runtime.provisionSession({ initialPrompt: 'boot' })).resolves.toEqual({ sessionId: 'session_1' });
+        } finally {
+            await rm(homeDir, { recursive: true, force: true });
+        }
+    });
+
     it('fails closed and cleans up ephemeral isolation when the provider runtime is not execution-run compatible', async () => {
         const homeDir = await mkdtemp(join(os.tmpdir(), 'happier-catalog-execution-run-home-'));
         try {
@@ -87,10 +152,10 @@ describe('createCatalogProviderExecutionRunBackend', () => {
             const { reloadConfiguration, configuration } = await import('@/configuration');
             reloadConfiguration();
 
-            const { createCatalogProviderExecutionRunBackend } = await import('./catalog');
-            const runtime = createCatalogProviderExecutionRunBackend({
-                providerId: 'qwen',
-                createRuntime: () => ({ dispose: async () => undefined }) as unknown as ExecutionRunHostRuntime,
+	            const { createCatalogProviderExecutionRunBackend } = await import('./catalog');
+	            const runtime = createCatalogProviderExecutionRunBackend({
+	                agentId: 'qwen',
+	                createRuntime: () => ({ dispose: async () => undefined }) as unknown as ExecutionRunHostRuntime,
             }, {
                 cwd: '/tmp/catalog-execution-run',
                 backendId: 'qwen',
@@ -122,11 +187,11 @@ describe('createCatalogProviderExecutionRunBackend', () => {
             const { reloadConfiguration, configuration } = await import('@/configuration');
             reloadConfiguration();
 
-            const { createCatalogProviderExecutionRunBackend } = await import('./catalog');
-            const nativeRuntime = createStubRuntime();
-            const runtime = createCatalogProviderExecutionRunBackend({
-                providerId: 'pi',
-                createRuntime: () => nativeRuntime,
+	            const { createCatalogProviderExecutionRunBackend } = await import('./catalog');
+	            const nativeRuntime = createStubRuntime();
+	            const runtime = createCatalogProviderExecutionRunBackend({
+	                agentId: 'pi',
+	                createRuntime: () => nativeRuntime,
             }, {
                 cwd: '/tmp/catalog-execution-run',
                 backendId: 'pi',
@@ -165,9 +230,9 @@ describe('createCatalogProviderExecutionRunBackend', () => {
             let capturedHandler: any = null;
             const nativeRuntime = createStubRuntime();
 
-            const runtime = createCatalogProviderExecutionRunBackend({
-                providerId: 'pi',
-                createRuntime: (opts) => {
+	            const runtime = createCatalogProviderExecutionRunBackend({
+	                agentId: 'pi',
+	                createRuntime: (opts) => {
                     capturedHandler = opts.permissionHandler;
                     return nativeRuntime;
                 },
@@ -184,11 +249,11 @@ describe('createCatalogProviderExecutionRunBackend', () => {
 
             await expect(runtime.provisionSession({ initialPrompt: 'boot' })).resolves.toEqual({ sessionId: 'session_1' });
             expect(capturedHandler).toBeTruthy();
-            expect(typeof runtime.respondToPermission).toBe('function');
+            expect(runtime.permissionCapability).toBe('responds');
 
             // Safe-yolo write-like tools should block until a response is provided via respondToPermission.
             const pending = capturedHandler.handleToolCall('perm-1', 'bash', { command: 'bash -lc \"echo hi\"' });
-            await runtime.respondToPermission?.('perm-1', true);
+            await expect(runtime.respondToPermission?.('perm-1', true)).resolves.toEqual({ delivered: true });
             await expect(pending).resolves.toEqual({ decision: 'approved' });
         } finally {
             await rm(homeDir, { recursive: true, force: true });

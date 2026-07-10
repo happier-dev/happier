@@ -38,9 +38,10 @@ function readExternalSessionRemoteSessionId(externalSessionRecord: Record<string
   return normalizeString(externalSessionRecord.remoteSessionId);
 }
 
-function readExternalSessionProviderId(externalSessionRecord: Record<string, unknown> | null): string | null {
+function readExternalSessionAgentId(externalSessionRecord: Record<string, unknown> | null): string | null {
   if (!externalSessionRecord) return null;
-  return normalizeString(externalSessionRecord.providerId);
+  // legacy `providerId` external-link read-compat (pre-rename persisted metadata)
+  return normalizeString(externalSessionRecord.agentId) ?? normalizeString(externalSessionRecord.providerId);
 }
 
 export type SessionRuntimeIdentitySourceTier =
@@ -61,7 +62,7 @@ export type SessionRuntimeIdentityFallbackResult = Readonly<{
 export function resolveSessionRuntimeIdentityFallback(params: Readonly<{
   metadata: unknown;
   providerDefaults?: Readonly<{
-    providerId?: string | null;
+    agentId?: string | null;
     providerSessionId?: string | null;
     runtimeDescriptorV1?: RuntimeDescriptorV1 | null;
     externalSessionSource?: ExternalSessionsSource | null;
@@ -92,14 +93,14 @@ export function resolveSessionRuntimeIdentityFallback(params: Readonly<{
   const externalSessionSource = readExternalSessionSource(externalSessionRecord)
     ?? params.providerDefaults?.externalSessionSource
     ?? null;
-  const externalSessionProviderId = readExternalSessionProviderId(externalSessionRecord);
+  const externalSessionProviderId = readExternalSessionAgentId(externalSessionRecord);
 
   const providerId = normalizedRuntimeDescriptor?.providerId
-    ?? normalizeString(descriptorFromExternalSession?.providerId)
-    ?? normalizeString(descriptorFromMetadata?.providerId)
+    ?? normalizeString(descriptorFromExternalSession?.agentId)
+    ?? normalizeString(descriptorFromMetadata?.agentId)
     ?? providerIdFromLegacy
     ?? externalSessionProviderId
-    ?? normalizeString(params.providerDefaults?.providerId)
+    ?? normalizeString(params.providerDefaults?.agentId)
     ?? null;
   const providerSessionId = normalizedRuntimeDescriptor?.providerSessionId
     ?? providerSessionIdFromLegacy

@@ -59,7 +59,7 @@ function readCheckpointMeta(messages: readonly ACPMessageData[]): Record<string,
 }
 
 describe('createRepositoryCheckpointPromptLifecycle', () => {
-    it('projects non-Git unavailable checkpoint metadata through persisted Diff messages', async () => {
+    it('does not persist unavailable checkpoint metadata without file evidence', async () => {
         const runtimeDirectory = await mkdtemp(join(tmpdir(), 'happier-checkpoint-nongit-'));
         try {
             const { session, messages } = createMessageCapturingSession('session-nongit');
@@ -74,20 +74,13 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
             await lifecycle.onTurnStarted?.({ messageId: 'message-1', turnId: 'turn-1' });
             await lifecycle.onTurnFinal?.({ messageId: 'message-1', turnId: 'turn-1', status: 'completed' });
 
-            expect(messages.map((message) => message.type)).toEqual(['tool-call', 'tool-result']);
-            expect(readCheckpointMeta(messages)).toMatchObject({
-                contentConfidence: 'unavailable',
-                attributionScope: 'unknown',
-                baseRefSource: 'unavailable',
-                unavailableReason: 'not_repo',
-                receipts: [],
-            });
+            expect(messages).toEqual([]);
         } finally {
             await rm(runtimeDirectory, { recursive: true, force: true });
         }
     });
 
-    it('projects zero-file checkpoint diffs with diff_computed receipts', async () => {
+    it('does not persist zero-file checkpoint diffs as user-visible Diff messages', async () => {
         const repoRoot = await createGitRepo();
         try {
             const { session, messages } = createMessageCapturingSession('session-zero');
@@ -102,12 +95,43 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
             await lifecycle.onTurnStarted?.({ messageId: 'message-1', turnId: 'turn-1' });
             await lifecycle.onTurnFinal?.({ messageId: 'message-1', turnId: 'turn-1', status: 'completed' });
 
+            expect(messages).toEqual([]);
+        } finally {
+            await rm(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('projects changed checkpoint diffs with diff_computed receipts', async () => {
+        const repoRoot = await createGitRepo();
+        try {
+            const { session, messages } = createMessageCapturingSession('session-changed');
+            const lifecycle = createRepositoryCheckpointPromptLifecycle({
+                session,
+                runtimeDirectory: repoRoot,
+                provider: 'codex',
+                protocol: 'codex',
+            });
+
+            await lifecycle.onBeforePromptDispatch?.({ messageId: 'message-1', prompt: 'change tracked.txt' });
+            await lifecycle.onTurnStarted?.({ messageId: 'message-1', turnId: 'turn-1' });
+            await writeFile(join(repoRoot, 'tracked.txt'), 'changed\n', 'utf8');
+            await lifecycle.onTurnFinal?.({ messageId: 'message-1', turnId: 'turn-1', status: 'completed' });
+
             const toolCall = messages.find((message) => message.type === 'tool-call');
             const input = toolCall && 'input' in toolCall && toolCall.input && typeof toolCall.input === 'object'
                 ? toolCall.input as Record<string, unknown>
                 : null;
 
-            expect(input?.files).toEqual([]);
+            expect(messages.map((message) => message.type)).toEqual(['tool-call', 'tool-result']);
+            expect(input?.files).toEqual([
+                expect.objectContaining({
+                    file_path: 'tracked.txt',
+                    source: 'scm_checkpoint',
+                    confidence: 'exact',
+                    provider: 'scm:git',
+                    unified_diff: expect.stringContaining('+changed'),
+                }),
+            ]);
             expect(readCheckpointMeta(messages)).toMatchObject({
                 contentConfidence: 'exact',
                 baseRefSource: 'turn_start',
@@ -137,18 +161,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
             await lifecycle.onBeforePromptDispatch?.({ messageId: 'message-1', prompt: 'change nothing' });
             await lifecycle.onTurnFinal?.({ messageId: 'message-1', turnId: 'turn-1', status: 'completed' });
 
-            expect(readCheckpointMeta(messages)).toMatchObject({
-                contentConfidence: 'exact',
-                baseRefSource: 'message_start',
-                receipts: expect.arrayContaining([
-                    expect.objectContaining({ id: 'checkpoint.captured', phase: 'message-start' }),
-                    expect.objectContaining({ id: 'checkpoint.finalized', phase: 'turn-final' }),
-                    expect.objectContaining({ id: 'checkpoint.diff_computed' }),
-                ]),
-            });
-            expect(readCheckpointMeta(messages)?.receipts).not.toEqual(expect.arrayContaining([
-                expect.objectContaining({ id: 'checkpoint.aliased', phase: 'turn-start' }),
-            ]));
+            expect(messages).toEqual([]);
         } finally {
             await rm(repoRoot, { recursive: true, force: true });
         }
@@ -175,14 +188,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
             await lifecycle.onTurnStarted?.({ messageId: 'message-1', turnId: 'turn-1' });
             await lifecycle.onTurnFinal?.({ messageId: 'message-1', turnId: 'turn-1', status: 'completed' });
 
-            expect(readCheckpointMeta(messages)).toMatchObject({
-                contentConfidence: 'unavailable',
-                baseRefSource: 'unavailable',
-                unavailableReason: 'missing_source',
-                receipts: expect.arrayContaining([
-                    expect.objectContaining({ id: 'checkpoint.captured', phase: 'message-start' }),
-                ]),
-            });
+            expect(messages).toEqual([]);
         } finally {
             await rm(repoRoot, { recursive: true, force: true });
         }
@@ -204,15 +210,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
             await rename(join(repoRoot, '.git'), join(repoRoot, '.git.removed'));
             await lifecycle.onTurnFinal?.({ messageId: 'message-1', turnId: 'turn-1', status: 'completed' });
 
-            expect(readCheckpointMeta(messages)).toMatchObject({
-                contentConfidence: 'unavailable',
-                baseRefSource: 'turn_start',
-                unavailableReason: 'command_failed',
-                receipts: expect.arrayContaining([
-                    expect.objectContaining({ id: 'checkpoint.captured', phase: 'message-start' }),
-                    expect.objectContaining({ id: 'checkpoint.aliased', phase: 'turn-start' }),
-                ]),
-            });
+            expect(messages).toEqual([]);
         } finally {
             await rm(repoRoot, { recursive: true, force: true });
         }
@@ -239,16 +237,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
             await runGit(repoRoot, ['update-ref', '-d', refs.turnStart!.ref]);
             await lifecycle.onTurnFinal?.({ messageId: 'message-1', turnId: 'turn-1', status: 'completed' });
 
-            expect(readCheckpointMeta(messages)).toMatchObject({
-                contentConfidence: 'unavailable',
-                baseRefSource: 'turn_start',
-                unavailableReason: 'missing_base',
-                receipts: expect.arrayContaining([
-                    expect.objectContaining({ id: 'checkpoint.captured', phase: 'message-start' }),
-                    expect.objectContaining({ id: 'checkpoint.aliased', phase: 'turn-start' }),
-                    expect.objectContaining({ id: 'checkpoint.finalized', phase: 'turn-final' }),
-                ]),
-            });
+            expect(messages).toEqual([]);
         } finally {
             await rm(repoRoot, { recursive: true, force: true });
         }

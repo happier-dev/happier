@@ -41,7 +41,7 @@ describe('SessionHostBridge message-meta injection', () => {
   it('injects the engineAdapter messageMeta enricher into the session runtime params', async () => {
     const createSessionRuntime = vi.fn(async () => ({
       kind: 'hostSessionRuntimePlan',
-      providerId: 'claude',
+      agentId: 'claude',
       opts: { startedBy: 'terminal' },
       config: {},
     }));
@@ -69,7 +69,7 @@ describe('SessionHostBridge message-meta injection', () => {
   it('injects the engineAdapter sessionState facet into the host session runtime config', async () => {
     const createSessionRuntime = vi.fn(async () => ({
       kind: 'hostSessionRuntimePlan',
-      providerId: 'codex',
+      agentId: 'codex',
       opts: { startedBy: 'terminal' },
       config: {},
     }));
@@ -107,7 +107,7 @@ describe('SessionHostBridge message-meta injection', () => {
   it('uses backend capabilities.session.state as the provider session-state gate when the facet has no inline capabilities', async () => {
     const createSessionRuntime = vi.fn(async () => ({
       kind: 'hostSessionRuntimePlan',
-      providerId: 'codex',
+      agentId: 'codex',
       opts: { startedBy: 'terminal' },
       config: {},
     }));
@@ -159,7 +159,7 @@ describe('SessionHostBridge message-meta injection', () => {
   it('rejects facet inline capabilities that do not satisfy the closed session-state schema', async () => {
     const createSessionRuntime = vi.fn(async () => ({
       kind: 'hostSessionRuntimePlan',
-      providerId: 'codex',
+      agentId: 'codex',
       opts: { startedBy: 'terminal' },
       config: {},
     }));

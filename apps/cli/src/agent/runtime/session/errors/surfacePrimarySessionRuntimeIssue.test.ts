@@ -19,7 +19,7 @@ describe('surfacePrimarySessionRuntimeIssue', () => {
       v: 1,
       scope: 'primary_session',
       status: 'failed',
-      source: 'provider_status_error',
+      source: 'agent_status_error',
       provider: 'gemini',
       occurredAt: 100,
     });
@@ -40,15 +40,15 @@ describe('surfacePrimarySessionRuntimeIssue', () => {
     });
 
     expect(issue).toMatchObject({
-      source: 'provider_session_error',
+      source: 'agent_session_error',
       sanitizedPreview: 'Model not found: anthropic/claude-sonnet-4-6',
     });
     expect(JSON.stringify(issue)).not.toContain('OpenCode session failed');
   });
 
   it.each([
-    ['process_exit', 'provider_process_exit'],
-    ['session_error', 'provider_session_error'],
+    ['process_exit', 'agent_process_exit'],
+    ['session_error', 'agent_session_error'],
     ['usage_limit', 'usage_limit'],
     ['auth_error', 'auth_error'],
     ['stream_error', 'stream_error'],
@@ -77,7 +77,7 @@ describe('surfacePrimarySessionRuntimeIssue', () => {
       error: '401 Unauthorized raw details',
       occurredAt: 300,
       sessionTurnId: 'session-turn-1',
-      providerTurnId: 'provider-turn-1',
+      agentTurnId: 'provider-turn-1',
       session: {
         sessionId: 'happy-session-1',
         sendAgentMessage,
@@ -96,13 +96,13 @@ describe('surfacePrimarySessionRuntimeIssue', () => {
       sessionId: 'happy-session-1',
       emittedAtMs: 300,
       turnId: 'session-turn-1',
-      providerTurnId: 'provider-turn-1',
+      agentTurnId: 'provider-turn-1',
       issue,
     }));
-    expect(event.turnId).not.toBe(event.providerTurnId);
+    expect(event.turnId).not.toBe(event.agentTurnId);
     expect(recordIssue).toHaveBeenCalledWith({
       provider: 'claude',
-      providerTurnId: 'provider-turn-1',
+      agentTurnId: 'provider-turn-1',
       latestTurnStatus: 'failed',
       lastRuntimeIssue: issue,
     });
@@ -161,7 +161,7 @@ describe('surfacePrimarySessionRuntimeIssue', () => {
     const issue = await surfacePrimarySessionRuntimeIssue({
       provider: 'pi',
       sessionTurnId: 'session-turn-cancelled-1',
-      providerTurnId: 'provider-turn-cancelled-1',
+      agentTurnId: 'provider-turn-cancelled-1',
       cause: 'cancelled',
       error: 'user cancelled',
       occurredAt: 400,
@@ -180,7 +180,7 @@ describe('surfacePrimarySessionRuntimeIssue', () => {
       sessionId: 'happy-session-1',
       emittedAtMs: 400,
       turnId: 'session-turn-cancelled-1',
-      providerTurnId: 'provider-turn-cancelled-1',
+      agentTurnId: 'provider-turn-cancelled-1',
       reason: 'cancelled',
     }));
     expect(recordIssue).not.toHaveBeenCalled();
@@ -237,6 +237,7 @@ describe('surfacePrimarySessionRuntimeIssue', () => {
             quotaScope: 'workspace',
             action: { kind: 'open_url', url: 'https://chatgpt.com/codex/settings/usage' },
           },
+          source: 'structured_provider_error',
         },
       },
       occurredAt: 600,

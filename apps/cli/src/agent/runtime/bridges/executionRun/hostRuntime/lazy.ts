@@ -1,7 +1,27 @@
 import type {
   ExecutionRunHostRuntime,
   ExecutionRunHostRuntimeMessageHandler,
+  ExecutionRunPermissionCapability,
 } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
+import { wrapExecutionRunHostRuntime } from './wrap';
+
+function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Readonly<Record<string, unknown>>
+    : null;
+}
+
+function readPermissionCapability(value: unknown): ExecutionRunPermissionCapability | null {
+  return value === 'responds' || value === 'inline' || value === 'static' ? value : null;
+}
+
+function readRuntimePermissionCapability(value: unknown): ExecutionRunPermissionCapability | null {
+  const record = readRecord(value);
+  if (!record) return null;
+  const permissions = readRecord(record.permissions);
+  return readPermissionCapability(permissions?.capability)
+    ?? readPermissionCapability(record.permissionCapability);
+}
 
 export function createLazyExecutionRunHostRuntime(params: Readonly<{
   resolveRuntime: () => Promise<ExecutionRunHostRuntime>;
@@ -13,12 +33,20 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
   const handlers = new Set<ExecutionRunHostRuntimeMessageHandler>();
   const unsubscribeByHandler = new Map<ExecutionRunHostRuntimeMessageHandler, () => void>();
   let resolvedRuntimePromise: Promise<ExecutionRunHostRuntime> | null = null;
+  let resolvedRuntime: ExecutionRunHostRuntime | null = null;
+  let sessionProvisionPromise: Promise<string> | null = null;
+  let disposePromise: Promise<void> | null = null;
+  let activeSessionId: string | null = null;
   let emittedRuntimeDescriptor = false;
   let emittedRuntimeCapabilities = false;
   let emittedRuntimeFacets = false;
+  let permissionCapability = readRuntimePermissionCapability(params.runtimeCapabilities);
 
   const emitRuntimeEvent = (name: string, payload: unknown): void => {
     if (payload === null || payload === undefined) return;
+    if (name === 'runtime.capabilities') {
+      permissionCapability = readRuntimePermissionCapability(payload) ?? 'static';
+    }
     for (const handler of handlers) {
       try {
         handler({ type: 'event', name, payload });
@@ -31,7 +59,12 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
   const attachQueuedHandlers = (runtime: ExecutionRunHostRuntime): void => {
     for (const handler of handlers) {
       if (!handlers.has(handler) || unsubscribeByHandler.has(handler)) continue;
-      unsubscribeByHandler.set(handler, runtime.subscribeMessages(handler));
+      unsubscribeByHandler.set(handler, runtime.subscribeMessages((message) => {
+        if (message.type === 'event' && message.name === 'runtime.capabilities') {
+          permissionCapability = readRuntimePermissionCapability(message.payload) ?? 'static';
+        }
+        handler(message);
+      }));
     }
   };
 
@@ -42,6 +75,8 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
 
     resolvedRuntimePromise = (async () => {
       const runtime = await params.resolveRuntime();
+      resolvedRuntime = runtime;
+      permissionCapability = runtime.permissionCapability ?? permissionCapability;
       attachQueuedHandlers(runtime);
       if (!emittedRuntimeDescriptor) {
         emitRuntimeEvent('runtime.descriptor', params.runtimeDescriptor ?? null);
@@ -61,31 +96,71 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
     return await resolvedRuntimePromise;
   };
 
-  return {
+  const refreshPermissionCapability = (runtime: ExecutionRunHostRuntime): void => {
+    permissionCapability = runtime.permissionCapability ?? permissionCapability;
+  };
+
+  const respondToPermission = async (requestId: string, approved: boolean) => {
+    if (!activeSessionId) {
+      if (!sessionProvisionPromise) {
+        return { delivered: false as const, reason: 'no_active_session' as const };
+      }
+      await sessionProvisionPromise;
+    }
+    const runtime = await resolveRuntime();
+    const runtimeResponder = permissionCapability === 'responds'
+      ? runtime.respondToPermission
+      : undefined;
+    if (!runtimeResponder) {
+      return { delivered: false as const, reason: 'no_active_session' as const };
+    }
+    return await runtimeResponder(requestId, approved);
+  };
+
+  return wrapExecutionRunHostRuntime({
+    readPermissionCapability: () => permissionCapability ?? undefined,
     async readResumeSupport(opts) {
       const runtime = await resolveRuntime();
       return await runtime.readResumeSupport(opts);
     },
     async provisionSession(opts) {
-      const runtime = await resolveRuntime();
-      const started = await runtime.provisionSession(opts);
-      if (started.sessionId) {
+      const provisionPromise = (async () => {
+        const runtime = await resolveRuntime();
+        const started = await runtime.provisionSession(opts);
+        activeSessionId = started.sessionId;
+        refreshPermissionCapability(runtime);
         await params.onProvisionSession?.(started.sessionId);
+        return started.sessionId;
+      })();
+      sessionProvisionPromise = provisionPromise;
+      try {
+        const sessionId = await provisionPromise;
+        return { sessionId };
+      } finally {
+        if (sessionProvisionPromise === provisionPromise) {
+          sessionProvisionPromise = null;
+        }
       }
-      return started;
     },
-    async sendPrompt(sessionId, prompt) {
+    async sendPrompt(sessionId, prompt, meta) {
       const runtime = await resolveRuntime();
-      await runtime.sendPrompt(sessionId, prompt);
+      activeSessionId = sessionId;
+      await runtime.sendPrompt(sessionId, prompt, meta);
     },
-    async sendSteerPrompt(sessionId, prompt) {
-      const runtime = await resolveRuntime();
-      if (typeof runtime.sendSteerPrompt !== 'function') {
-        throw new Error('Backend does not support steering');
-      }
-      await runtime.sendSteerPrompt(sessionId, prompt);
-    },
+    readSendSteerPrompt: () => resolvedRuntime?.sendSteerPrompt
+      ? async (sessionId, prompt, meta) => {
+          const runtime = await resolveRuntime();
+          if (typeof runtime.sendSteerPrompt !== 'function') return;
+          activeSessionId = sessionId;
+          await runtime.sendSteerPrompt(sessionId, prompt, meta);
+        }
+      : undefined,
     async cancel(sessionId) {
+      if (!activeSessionId) {
+        if (!sessionProvisionPromise) return;
+        await sessionProvisionPromise;
+      }
+      if (!activeSessionId || !resolvedRuntimePromise) return;
       const runtime = await resolveRuntime();
       await runtime.cancel(sessionId);
     },
@@ -101,24 +176,38 @@ export function createLazyExecutionRunHostRuntime(params: Readonly<{
         unsubscribeByHandler.delete(handler);
       };
     },
-    async respondToPermission(requestId, approved) {
-      const runtime = await resolveRuntime();
-      if (typeof runtime.respondToPermission !== 'function') return;
-      await runtime.respondToPermission(requestId, approved);
-    },
-    async waitForTurnCompletion(timeoutMs) {
-      const runtime = await resolveRuntime();
-      if (typeof runtime.waitForTurnCompletion !== 'function') return;
-      await runtime.waitForTurnCompletion(timeoutMs);
-    },
+    readRespondToPermission: () => permissionCapability === 'responds' ? respondToPermission : undefined,
+    readWaitForTurnCompletion: () => resolvedRuntime?.waitForTurnCompletion
+      ? async (timeoutMs) => {
+          const runtime = await resolveRuntime();
+          await runtime.waitForTurnCompletion?.(timeoutMs);
+        }
+      : undefined,
+    readProbeTurnLiveness: () => resolvedRuntime?.probeTurnLiveness
+      ? async (sessionId) => {
+          const runtime = await resolveRuntime();
+          const probeTurnLiveness = runtime.probeTurnLiveness;
+          if (typeof probeTurnLiveness !== 'function') {
+            return { active: false };
+          }
+          return await probeTurnLiveness(sessionId);
+        }
+      : undefined,
     async dispose() {
-      const runtime = await resolvedRuntimePromise?.catch(() => null);
-      if (!runtime) return;
-      for (const unsubscribe of unsubscribeByHandler.values()) {
-        unsubscribe();
+      if (disposePromise) {
+        return await disposePromise;
       }
-      unsubscribeByHandler.clear();
-      await runtime.dispose();
+      if (!resolvedRuntimePromise) return;
+      disposePromise = (async () => {
+        const runtime = await resolvedRuntimePromise?.catch(() => null);
+        if (!runtime) return;
+        for (const unsubscribe of unsubscribeByHandler.values()) {
+          unsubscribe();
+        }
+        unsubscribeByHandler.clear();
+        await runtime.dispose();
+      })();
+      return await disposePromise;
     },
-  };
+  });
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
-import type { SessionId } from '@/agent/core';
+import type { SessionId } from '@/agent/core/AgentMessage';
 import type { FinishExecutionRun } from '../executionRunFinishRun';
 import type { ExecutionRunHostRuntime } from '../executionRunHostRuntime';
 import { executeBoundedBackendRun } from './loop';

@@ -168,8 +168,8 @@ describe('publishSessionRuntimeDescriptor', () => {
     };
     const runtimeDescriptor = {
       v: 1,
-      providerId: 'opencode',
-      provider: {
+      agentId: 'opencode',
+      agent: {
         backendMode: 'server',
         providerSessionId: 'opencode-session-1',
       },

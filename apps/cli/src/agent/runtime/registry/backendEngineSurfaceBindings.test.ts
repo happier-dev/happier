@@ -1,16 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BackendSurfaceOperationCatalogV1, type BackendSurfaceDeclarationV1 } from '@happier-dev/protocol';
-import type { BackendEngineV1, ExternalSessionRuntimeContextV1 } from '@happier-dev/plugin-sdk';
+import type { AgentRuntimeV1, ExternalSessionRuntimeContextV1 } from '@happier-dev/plugin-sdk';
 
 import {
   createEmptyBackendExecutionSurfaces,
   type BackendExecutionSurfaces,
 } from './engineRegistryTypes';
-import type { ResolvedBackendContribution } from '../../../plugins/projection/registry/types';
+import type { ResolvedAgentRuntimeContribution } from '../../../plugins/projection/registry/types';
 import {
   mergeBackendExecutionSurfaces,
   resolveBackendExecutionSurfacesFromEngine,
 } from './backendEngineSurfaceBindings';
+import { ExternalSessionProviderFailureError } from '@/session/external/providerOps';
 
 function createSurfaceHandler(
   kind: BackendSurfaceDeclarationV1['kind'],
@@ -29,16 +30,16 @@ function createSurfaceHandler(
   };
 }
 
-function createBackend(surfaceHandlers: readonly BackendSurfaceDeclarationV1[]): ResolvedBackendContribution {
+function createBackend(surfaceHandlers: readonly BackendSurfaceDeclarationV1[]): ResolvedAgentRuntimeContribution {
   return {
     id: 'acme.runtime.backend',
-    providerId: 'acme.runtime.provider',
+    agentId: 'acme.runtime.provider',
     provenance: 'external',
     source: { kind: 'path' },
     definition: {
       kindVersion: 1,
       id: 'acme.runtime.backend',
-      providerId: 'acme.runtime.provider',
+      agentId: 'acme.runtime.provider',
     },
     runtimeKind: 'custom',
     capabilities: {
@@ -66,7 +67,7 @@ function createBackend(surfaceHandlers: readonly BackendSurfaceDeclarationV1[]):
 
 const source = { kind: 'codexHome', home: 'user' } as const;
 const rawSession = Object.freeze({}) as Parameters<NonNullable<NonNullable<BackendExecutionSurfaces['externalSession']>['resolveTakeoverSpawnOptions']>>[0]['linked']['rawSession'];
-type EngineExternalSessionSurface = NonNullable<BackendEngineV1['externalSessionSurface']>;
+type EngineExternalSessionSurface = NonNullable<AgentRuntimeV1['externalSessionSurface']>;
 
 function createLinkedSession(
   overrides: Partial<Parameters<NonNullable<NonNullable<BackendExecutionSurfaces['externalSession']>['resolveTakeoverSpawnOptions']>>[0]['linked']> = {},
@@ -75,7 +76,7 @@ function createLinkedSession(
     rawSession,
     metadata: { path: '/repo/from-metadata' },
     sessionPath: '/repo/from-session-path',
-    providerId: 'claude',
+    agentId: 'claude',
     machineId: 'machine-1',
     remoteSessionId: 'provider-session-1',
     source: { kind: 'claudeConfig', configDir: '/tmp/.claude', projectId: 'project-1' },
@@ -204,7 +205,7 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
           restoredScopes: ['conversation'],
         }),
       },
-    } satisfies BackendEngineV1;
+    } satisfies AgentRuntimeV1;
     const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
 
     const surfaces = resolveBackendExecutionSurfacesFromEngine({ backend, engine, diagnostics });
@@ -262,6 +263,32 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
     });
   });
 
+  it('passes explicit validation env through engine external-session source resolution', async () => {
+    const catalog = BackendSurfaceOperationCatalogV1;
+    const backend = createBackend([
+      createSurfaceHandler('externalSession', catalog.externalSession.resolveSource),
+    ]);
+    const resolveSource = vi.fn(async (request) => ({
+      ok: true as const,
+      value: { source: request.source },
+    }));
+    const engine = {
+      externalSessionSurface: createExternalSessionSurfaceFixture({
+        resolveSource,
+      }),
+    } satisfies AgentRuntimeV1;
+    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
+    const env = { PI_CODING_AGENT_DIR: '/tmp/omp-agent' } as NodeJS.ProcessEnv;
+
+    const surfaces = resolveBackendExecutionSurfacesFromEngine({ backend, engine, diagnostics });
+
+    await expect(surfaces.externalSession?.validateSource?.({ source, env })).resolves.toEqual({
+      ok: true,
+      source,
+    });
+    expect((resolveSource.mock.calls[0]?.[0] as { env?: NodeJS.ProcessEnv }).env).toBe(env);
+  });
+
   it('injects resolved session services into engine terminal launch requests', async () => {
     const catalog = BackendSurfaceOperationCatalogV1;
     const backend = createBackend([
@@ -277,7 +304,7 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
       terminalRuntimeSurface: {
         launch,
       },
-    } satisfies BackendEngineV1;
+    } satisfies AgentRuntimeV1;
     const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
 
     const surfaces = resolveBackendExecutionSurfacesFromEngine({
@@ -333,7 +360,7 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
       terminalRuntimeSurface: {
         launch,
       },
-    } satisfies BackendEngineV1;
+    } satisfies AgentRuntimeV1;
     const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
 
     const surfaces = resolveBackendExecutionSurfacesFromEngine({
@@ -380,7 +407,7 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
       terminalRuntimeSurface: {
         launch,
       },
-    } satisfies BackendEngineV1;
+    } satisfies AgentRuntimeV1;
     const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
 
     const surfaces = resolveBackendExecutionSurfacesFromEngine({
@@ -423,7 +450,7 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
       terminalRuntimeSurface: {
         launch,
       },
-    } satisfies BackendEngineV1;
+    } satisfies AgentRuntimeV1;
     const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
 
     const surfaces = resolveBackendExecutionSurfacesFromEngine({
@@ -492,7 +519,7 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
       externalSessionSurface: createExternalSessionSurfaceFixture({
         listCandidates,
       }),
-    } satisfies BackendEngineV1;
+    } satisfies AgentRuntimeV1;
     const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
 
     const surfaces = resolveBackendExecutionSurfacesFromEngine({
@@ -537,6 +564,42 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
     });
     expect(listCandidates.mock.calls[0]?.[0]?.runtime?.session)
       .not.toHaveProperty('services');
+  });
+
+  it('preserves typed provider failures from engine external-session candidate surfaces', async () => {
+    const catalog = BackendSurfaceOperationCatalogV1;
+    const backend = createBackend([
+      createSurfaceHandler('externalSession', catalog.externalSession.listCandidates),
+    ]);
+    const listCandidates = vi.fn(async () => ({
+      ok: false as const,
+      code: 'agent_unavailable' as const,
+      message: 'external_session_candidate_service_unavailable',
+      retryable: true,
+    }));
+    const engine = {
+      externalSessionSurface: createExternalSessionSurfaceFixture({
+        listCandidates,
+      }),
+    } satisfies AgentRuntimeV1;
+    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
+
+    const surfaces = resolveBackendExecutionSurfacesFromEngine({
+      backend,
+      engine,
+      diagnostics,
+    } as never);
+
+    await expect(surfaces.externalSession?.listCandidates?.({
+      source,
+      limit: 5,
+    })).rejects.toMatchObject({
+      name: 'ExternalSessionProviderFailureError',
+      code: 'agent_unavailable',
+      operation: 'externalSession.listCandidates',
+      message: 'external_session_candidate_service_unavailable',
+      retryable: true,
+    } satisfies Partial<ExternalSessionProviderFailureError>);
   });
 
   it('grants a resolved external-session transcript path before acquiring a follow lease', async () => {
@@ -584,7 +647,7 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
         resolveFollowTranscriptPath,
         acquireFollowLease,
       } as EngineExternalSessionSurface,
-    } satisfies BackendEngineV1;
+    } satisfies AgentRuntimeV1;
     const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
 
     const surfaces = resolveBackendExecutionSurfacesFromEngine({
@@ -643,7 +706,7 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
       externalSessionSurface: createExternalSessionSurfaceFixture({
         acquireFollowLease,
       }),
-    } satisfies BackendEngineV1;
+    } satisfies AgentRuntimeV1;
     const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
 
     const surfaces = resolveBackendExecutionSurfacesFromEngine({
@@ -684,7 +747,7 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
       forkSurface: {
         fork,
       },
-    } satisfies BackendEngineV1;
+    } satisfies AgentRuntimeV1;
     const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
 
     const surfaces = resolveBackendExecutionSurfacesFromEngine({
@@ -725,7 +788,7 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
       terminalRuntimeSurface: {
         launch,
       },
-    } satisfies BackendEngineV1;
+    } satisfies AgentRuntimeV1;
     const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
 
     const surfaces = resolveBackendExecutionSurfacesFromEngine({
@@ -757,7 +820,7 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
       terminalRuntimeSurface: {
         launch,
       },
-    } satisfies BackendEngineV1;
+    } satisfies AgentRuntimeV1;
     const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
 
     const surfaces = resolveBackendExecutionSurfacesFromEngine({
@@ -784,7 +847,7 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
           launch: { directory: '/tmp/fork-child' },
         }),
       },
-    } satisfies BackendEngineV1;
+    } satisfies AgentRuntimeV1;
     const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
 
     const surfaces = resolveBackendExecutionSurfacesFromEngine({ backend, engine, diagnostics });
@@ -835,7 +898,7 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
       checkpointSurface: {
         evaluateAvailability: throwAvailability,
       },
-    } satisfies BackendEngineV1;
+    } satisfies AgentRuntimeV1;
     const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
 
     const surfaces = resolveBackendExecutionSurfacesFromEngine({ backend, engine, diagnostics });
@@ -875,10 +938,10 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
         createSurfaceHandler('externalSession', catalog.externalSession.resolveTakeoverLaunch),
       ]),
       id: 'claude',
-      providerId: 'claude',
+      agentId: 'claude',
       provenance: 'first_party',
       source: { kind: 'bundled' },
-    } satisfies ResolvedBackendContribution;
+    } satisfies ResolvedAgentRuntimeContribution;
     const resolveTakeoverLaunch = vi.fn(async (_request: Parameters<NonNullable<EngineExternalSessionSurface['resolveTakeoverLaunch']>>[0]) => ({
       ok: true as const,
       value: {
@@ -894,7 +957,7 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
       externalSessionSurface: createExternalSessionSurfaceFixture({
         resolveTakeoverLaunch,
       }),
-    } satisfies BackendEngineV1;
+    } satisfies AgentRuntimeV1;
     const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
 
     const surfaces = resolveBackendExecutionSurfacesFromEngine({ backend, engine, diagnostics });
@@ -938,7 +1001,7 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
       externalSessionSurface: createExternalSessionSurfaceFixture({
         resolveTakeoverLaunch,
       }),
-    } satisfies BackendEngineV1;
+    } satisfies AgentRuntimeV1;
     const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
     const serviceBag = Object.freeze({
       send: vi.fn(),
@@ -1036,7 +1099,7 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
           message: 'provider has no resumable cwd',
         }),
       }),
-    } satisfies BackendEngineV1;
+    } satisfies AgentRuntimeV1;
     const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
 
     const surfaces = resolveBackendExecutionSurfacesFromEngine({ backend, engine, diagnostics });
@@ -1063,7 +1126,7 @@ describe('resolveBackendExecutionSurfacesFromEngine', () => {
       checkpointSurface: {
         checkpoint,
       },
-    } satisfies BackendEngineV1;
+    } satisfies AgentRuntimeV1;
     const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
 
     const surfaces = resolveBackendExecutionSurfacesFromEngine({ backend, engine, diagnostics });

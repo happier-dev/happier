@@ -68,6 +68,82 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
     });
   });
 
+  it('sanitizes runtime auth classification metadata before surfacing session-visible usage-limit details', () => {
+    const error = new Error('provider limit reached') as Error & {
+      runtimeAuthClassification: {
+        kind: 'usage_limit';
+        serviceId: string;
+        profileId: string | null;
+        groupId: string | null;
+        resetsAtMs: number | null;
+        retryAfterMs?: number | null;
+        limitCategory?: 'usage_limit';
+        quotaScope?: 'account';
+        providerLimitId?: string | null;
+        planType: string | null;
+        rateLimits: unknown | null;
+        action?: { kind: 'open_url'; url: string } | null;
+        source: string;
+      };
+      accessToken?: string;
+    };
+    error.runtimeAuthClassification = {
+      kind: 'usage_limit',
+      serviceId: 'openai-codex',
+      profileId: 'primary',
+      groupId: 'codex-main',
+      resetsAtMs: 2_000,
+      retryAfterMs: 30_000,
+      limitCategory: 'usage_limit',
+      quotaScope: 'account',
+      providerLimitId: 'Bearer secret-provider-limit-token',
+      planType: 'enterprise secret plan',
+      rateLimits: {
+        primary: { usedPercent: 100 },
+        refreshToken: 'secret-refresh-token',
+      },
+      action: {
+        kind: 'open_url',
+        url: 'https://provider.example/recover?access_token=secret-access-token#secret-fragment',
+      },
+      source: 'structured_provider_error',
+    };
+    error.accessToken = 'secret-access-token';
+
+    const issue = classifyPrimarySessionRuntimeIssue({
+      provider: 'codex',
+      cause: 'status_error',
+      error,
+      occurredAt: 1_000,
+    });
+
+    expect(issue).toMatchObject({
+      source: 'usage_limit',
+      usageLimit: {
+        v: 1,
+        resetAtMs: 2_000,
+        retryAfterMs: 30_000,
+        quotaScope: 'account',
+        recoverability: 'switch_account',
+        limitCategory: 'usage_limit',
+        planType: null,
+        connectedService: {
+          serviceId: 'openai-codex',
+          profileId: 'primary',
+          groupId: 'codex-main',
+        },
+      },
+    });
+    expect(issue.usageLimit?.providerLimitId).toBeUndefined();
+    expect(issue.usageLimit?.action).toBeUndefined();
+
+    const issueText = JSON.stringify(issue);
+    expect(issueText).not.toContain('secret-provider-limit-token');
+    expect(issueText).not.toContain('enterprise secret plan');
+    expect(issueText).not.toContain('secret-access-token');
+    expect(issueText).not.toContain('secret-refresh-token');
+  });
+
   it('surfaces native provider usage limits without connected-service recovery metadata', () => {
     const error = new Error('native provider limit reached') as Error & {
       runtimeAuthClassification: {
@@ -118,6 +194,49 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
         limitCategory: 'usage_limit',
         planType: 'pro',
       },
+    });
+    expect(issue.usageLimit?.connectedService).toBeUndefined();
+  });
+
+  it('treats missing connected-service recovery context as native provider metadata', () => {
+    const error = new Error('native provider limit reached') as Error & {
+      runtimeAuthClassification: {
+        kind: 'usage_limit';
+        serviceId: string;
+        profileId: string | null;
+        groupId: string | null;
+        resetsAtMs: number | null;
+        retryAfterMs?: number | null;
+        limitCategory?: 'usage_limit';
+        quotaScope?: 'account';
+        planType: string | null;
+        rateLimits: unknown | null;
+        source: string;
+      };
+    };
+    error.runtimeAuthClassification = {
+      kind: 'usage_limit',
+      serviceId: 'claude-subscription',
+      profileId: null,
+      groupId: null,
+      resetsAtMs: 2_000,
+      retryAfterMs: 30_000,
+      limitCategory: 'usage_limit',
+      quotaScope: 'account',
+      planType: 'pro',
+      rateLimits: null,
+      source: 'structured_provider_error',
+    };
+
+    const issue = classifyPrimarySessionRuntimeIssue({
+      provider: 'claude',
+      cause: 'status_error',
+      error,
+      occurredAt: 1_000,
+    });
+
+    expect(issue.usageLimit).toMatchObject({
+      recoverability: 'wait',
     });
     expect(issue.usageLimit?.connectedService).toBeUndefined();
   });
@@ -189,7 +308,7 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
       error,
       occurredAt: 1_000,
     })).toMatchObject({
-      source: 'provider_status_error',
+      source: 'agent_status_error',
       usageLimit: {
         v: 1,
         retryAfterMs: 45_000,
@@ -216,7 +335,7 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
     });
 
     expect(issue).toMatchObject({
-      source: 'provider_status_error',
+      source: 'agent_status_error',
       code: 'provider_temporary_throttle',
       sanitizedPreview: 'Provider is temporarily limiting requests',
       temporaryThrottle: {
@@ -296,8 +415,8 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
   it('keeps auth, plan, and validation runtime auth classifications structured', () => {
     for (const [kind, expectedSource, expectedCategory] of [
       ['auth_expired', 'auth_error', 'auth_invalid'],
-      ['plan', 'provider_status_error', 'plan_invalid'],
-      ['validation', 'provider_status_error', 'validation_failed'],
+      ['plan', 'agent_status_error', 'plan_invalid'],
+      ['validation', 'agent_status_error', 'validation_failed'],
     ] as const) {
       const error = new Error(kind) as Error & {
         runtimeAuthClassification: {
@@ -347,7 +466,7 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
       cause: 'process_exit',
       occurredAt: 2_000,
       error: {
-        providerProcessExitAfterSwitch: {
+        agentProcessExitAfterSwitch: {
           exitCode: 1,
           signal: null,
           lastStderrLine: 'session file 019e... not found',
@@ -359,10 +478,10 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
     });
 
     expect(issue).toMatchObject({
-      source: 'provider_process_exit_after_switch',
-      code: 'provider_process_exit_after_switch',
+      source: 'agent_process_exit_after_switch',
+      code: 'agent_process_exit_after_switch',
       sanitizedPreview: 'Provider process exited after connected-service switch',
-      providerProcessExitAfterSwitch: {
+      agentProcessExitAfterSwitch: {
         exitCode: 1,
         signal: null,
         lastStderrLine: 'session file 019e... not found',
@@ -380,7 +499,7 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
       occurredAt: 2_000,
       error: {
         message: 'API Error: Server is temporarily limiting requests (not your usage limit)',
-        providerProcessExitAfterSwitch: {
+        agentProcessExitAfterSwitch: {
           exitCode: 1,
           signal: null,
           lastStderrLine: 'session file missing',
@@ -392,8 +511,8 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
     });
 
     expect(issue).toMatchObject({
-      source: 'provider_process_exit_after_switch',
-      code: 'provider_process_exit_after_switch',
+      source: 'agent_process_exit_after_switch',
+      code: 'agent_process_exit_after_switch',
     });
     expect(issue.temporaryThrottle).toBeUndefined();
   });

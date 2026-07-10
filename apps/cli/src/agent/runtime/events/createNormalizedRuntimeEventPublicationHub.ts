@@ -1,10 +1,10 @@
-import type { AgentMessage } from '@/agent/core';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
 import { publishRuntimePluginEvent } from '@/plugins/runtime/context/events';
 import { RuntimeEventV1Schema } from '@happier-dev/protocol';
 
 import {
   createNormalizedRuntimeEventWriter,
-  type NormalizedRuntimeEventPublication,
+  type NormalizedRuntimeEventPublicationInput,
 } from '@/agent/runtime/events/createNormalizedRuntimeEventWriter';
 
 export type NormalizedRuntimeEventPublicationHub<TMessage> = Readonly<{
@@ -26,7 +26,7 @@ export type NormalizedRuntimeEventPublicationHub<TMessage> = Readonly<{
  */
 export function createNormalizedRuntimeEventPublicationHub<TMessage>(params: Readonly<{
   subscribeUpstream: (handler: (message: TMessage) => void) => () => void;
-  identity: NormalizedRuntimeEventPublication;
+  identity: NormalizedRuntimeEventPublicationInput;
 }>): NormalizedRuntimeEventPublicationHub<TMessage> {
   const handlers = new Set<(message: TMessage) => void>();
   let unsubscribeUpstream: (() => void) | null = null;
@@ -46,17 +46,22 @@ export function createNormalizedRuntimeEventPublicationHub<TMessage>(params: Rea
     identity: params.identity,
   });
 
-  const publishRuntimeEventToPluginBus = (message: unknown): void => {
-    const parsed = RuntimeEventV1Schema.safeParse(message);
-    if (!parsed.success) return;
-    void publishRuntimePluginEvent(parsed.data).catch(() => undefined);
-  };
-
   const ensureUpstreamRegistered = (): void => {
     if (unsubscribeUpstream) return;
     unsubscribeUpstream = params.subscribeUpstream((message) => {
-      runtimeEventWriter.handleMessage(message as unknown as AgentMessage);
-      publishRuntimeEventToPluginBus(message);
+      const parsedRuntimeEvent = RuntimeEventV1Schema.safeParse(message);
+      if (parsedRuntimeEvent.success && parsedRuntimeEvent.data.kind === 'descriptor-update') {
+        runtimeEventWriter.handleMessage({
+          type: 'event',
+          name: 'runtime.descriptor',
+          payload: parsedRuntimeEvent.data.descriptor,
+        });
+      } else {
+        runtimeEventWriter.handleMessage(message as unknown as AgentMessage);
+      }
+      if (parsedRuntimeEvent.success) {
+        void publishRuntimePluginEvent(parsedRuntimeEvent.data).catch(() => undefined);
+      }
     });
   };
 

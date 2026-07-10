@@ -1,4 +1,5 @@
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
+import { wrapExecutionRunHostRuntime } from './wrap';
 
 type PermissionHandlerResponder = Readonly<{
   respondToPermissionRequest?: (requestId: string, approved: boolean) => void;
@@ -23,41 +24,20 @@ export function withExecutionRunPermissionResponder(
     return runtime;
   }
 
-  return Object.freeze({
-    async readResumeSupport(opts) {
-      return await runtime.readResumeSupport(opts);
-    },
-    async provisionSession(opts) {
-      return await runtime.provisionSession(opts);
-    },
-    async sendPrompt(sessionId, prompt) {
-      await runtime.sendPrompt(sessionId, prompt);
-    },
-    ...(typeof runtime.sendSteerPrompt === 'function'
-      ? {
-          async sendSteerPrompt(sessionId: string, prompt: string) {
-            await runtime.sendSteerPrompt!(sessionId, prompt);
-          },
-        }
-      : {}),
-    async cancel(sessionId) {
-      await runtime.cancel(sessionId);
-    },
-    subscribeMessages(handler) {
-      return runtime.subscribeMessages(handler);
-    },
-    async respondToPermission(requestId: string, approved: boolean) {
+  return wrapExecutionRunHostRuntime({
+    readPermissionCapability: () => 'responds',
+    readResumeSupport: (opts) => runtime.readResumeSupport(opts),
+    provisionSession: (opts) => runtime.provisionSession(opts),
+    sendPrompt: (sessionId, prompt, meta) => runtime.sendPrompt(sessionId, prompt, meta),
+    readSendSteerPrompt: () => runtime.sendSteerPrompt,
+    cancel: (sessionId) => runtime.cancel(sessionId),
+    subscribeMessages: (handler) => runtime.subscribeMessages(handler),
+    readRespondToPermission: () => async (requestId: string, approved: boolean) => {
       responder(requestId, approved);
+      return { delivered: true as const };
     },
-    ...(typeof runtime.waitForTurnCompletion === 'function'
-      ? {
-          async waitForTurnCompletion(timeoutMs?: number | null) {
-            await runtime.waitForTurnCompletion!(timeoutMs);
-          },
-        }
-      : {}),
-    async dispose() {
-      await runtime.dispose();
-    },
+    readWaitForTurnCompletion: () => runtime.waitForTurnCompletion,
+    readProbeTurnLiveness: () => runtime.probeTurnLiveness,
+    dispose: () => runtime.dispose(),
   });
 }

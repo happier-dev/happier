@@ -1,9 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentBackend, AgentMessage, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/runtime/bridges/executionRun/testkit';
+import {
+  createTestExecutionRunHostRuntime,
+  type TestExecutionRunHostRuntime,
+  type TestExecutionRunHostRuntimeOptions,
+} from '@/agent/runtime/bridges/executionRun/testkit';
 
 type TestRuntimeFactoryInput = Readonly<{
   cwd: string;
@@ -69,10 +73,6 @@ beforeEach(() => {
   createExecutionRunRuntimeMock.mockClear();
 });
 
-function asExecutionRunHostRuntime(backend: AgentBackend) {
-  return createExecutionRunHostRuntimeFromAgentBackend(backend);
-}
-
 function createExecutionRunManager(
   opts: ConstructorParameters<typeof ExecutionRunManager>[0] & Readonly<{ createRuntime: TestRuntimeFactory }>,
 ): ExecutionRunManager {
@@ -107,76 +107,68 @@ async function readExecutionRunTurnStreamUntilDone(args: Readonly<{
   return lastEvents;
 }
 
-function createStaticJsonBackend(responseText: string): AgentBackend {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = 'child_session_1' as SessionId;
-  return {
-    async startSession(): Promise<{ sessionId: SessionId }> {
-      return { sessionId };
+type PromptRuntimeHandler = (
+  runtime: TestExecutionRunHostRuntime,
+  sessionId: string,
+  prompt: string,
+) => void | Promise<void>;
+
+function createPromptRuntime(
+  onSendPrompt: PromptRuntimeHandler,
+  opts: Omit<TestExecutionRunHostRuntimeOptions, 'onSendPrompt'> = {},
+): TestExecutionRunHostRuntime {
+  let runtime: TestExecutionRunHostRuntime;
+  runtime = createTestExecutionRunHostRuntime({
+    onWaitForTurnCompletion: async () => {},
+    ...opts,
+    onSendPrompt: async (sessionId, prompt) => {
+      await onSendPrompt(runtime, sessionId, prompt);
     },
-    async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
-      handler?.({ type: 'model-output', fullText: responseText } as AgentMessage);
-    },
-    async cancel(_sessionId: SessionId): Promise<void> {},
-    onMessage(next: AgentMessageHandler): void {
-      handler = next;
-    },
-    async dispose(): Promise<void> {},
-    async waitForResponseComplete(): Promise<void> {},
-  };
+  });
+  return runtime;
 }
 
-function createDelayedJsonBackend(responseText: string, delayMs: number): AgentBackend {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = 'child_session_1' as SessionId;
+function createStaticJsonRuntime(responseText: string): TestExecutionRunHostRuntime {
+  return createPromptRuntime((runtime) => {
+    runtime.emitMessage({ type: 'model-output', fullText: responseText });
+  });
+}
+
+function createDelayedJsonRuntime(responseText: string, delayMs: number): TestExecutionRunHostRuntime {
   let done: Promise<void> | null = null;
-  return {
-    async startSession(): Promise<{ sessionId: SessionId }> {
-      return { sessionId };
-    },
-    async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
+  return createPromptRuntime(
+    (runtime) => {
       done = new Promise((resolve) => {
         setTimeout(() => {
-          handler?.({ type: 'model-output', fullText: responseText } as AgentMessage);
+          runtime.emitMessage({ type: 'model-output', fullText: responseText });
           resolve();
         }, delayMs);
       });
     },
-    async cancel(_sessionId: SessionId): Promise<void> {},
-    onMessage(next: AgentMessageHandler): void {
-      handler = next;
+    {
+      onWaitForTurnCompletion: async () => {
+        await (done ?? Promise.resolve());
+      },
     },
-    async dispose(): Promise<void> {},
-    async waitForResponseComplete(): Promise<void> {
-      await (done ?? Promise.resolve());
-    },
-  };
+  );
 }
 
-function createReviewResumeBackend(): Readonly<{
-  backend: AgentBackend;
+function createReviewResumeRuntime(): Readonly<{
+  runtime: TestExecutionRunHostRuntime;
   prompts: string[];
   loadSessionCalls: string[];
   providerSessionId: string;
 }> {
-  let handler: AgentMessageHandler | null = null;
   const prompts: string[] = [];
   const loadSessionCalls: string[] = [];
   const providerSessionId = 'vendor_review_1';
 
-  const backend: AgentBackend = {
-    async startSession(): Promise<{ sessionId: SessionId }> {
-      return { sessionId: 'child_session_1' as SessionId };
-    },
-    async loadSession(sessionId: string): Promise<{ sessionId: SessionId }> {
-      loadSessionCalls.push(sessionId);
-      return { sessionId: 'child_session_resumed' as SessionId };
-    },
-    async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
+  const runtime = createPromptRuntime(
+    (promptRuntime, _sessionId, prompt) => {
       prompts.push(prompt);
       if (prompts.length === 1) {
-        handler?.({ type: 'event', name: 'provider_session_id', payload: { sessionId: providerSessionId } } as AgentMessage);
-        handler?.({
+        promptRuntime.emitMessage({ type: 'event', name: 'provider_session_id', payload: { sessionId: providerSessionId } } as AgentMessage);
+        promptRuntime.emitMessage({
           type: 'model-output',
           fullText: JSON.stringify({
             summary: 'Initial summary.',
@@ -193,11 +185,11 @@ function createReviewResumeBackend(): Readonly<{
             questions: [],
             assumptions: [],
           }),
-        } as AgentMessage);
+        });
         return;
       }
 
-      handler?.({
+      promptRuntime.emitMessage({
         type: 'model-output',
         fullText: JSON.stringify({
           answerMarkdown: 'Clarified answer.',
@@ -216,17 +208,20 @@ function createReviewResumeBackend(): Readonly<{
           questions: [],
           assumptions: [],
         }),
-      } as AgentMessage);
+      });
     },
-    async cancel(_sessionId: SessionId): Promise<void> {},
-    onMessage(next: AgentMessageHandler): void {
-      handler = next;
+    {
+      resumeSupported: true,
+      resumeSessionId: 'child_session_resumed',
+      onProvisionSession: async (opts) => {
+        if (opts?.resumeSessionId) {
+          loadSessionCalls.push(opts.resumeSessionId);
+        }
+      },
     },
-    async dispose(): Promise<void> {},
-    async waitForResponseComplete(): Promise<void> {},
-  };
+  );
 
-  return { backend, prompts, loadSessionCalls, providerSessionId };
+  return { runtime, prompts, loadSessionCalls, providerSessionId };
 }
 
 describe('ExecutionRunManager (review intent)', () => {
@@ -237,49 +232,38 @@ describe('ExecutionRunManager (review intent)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: (_opts: { backendId: string; permissionMode: string }) =>
-        asExecutionRunHostRuntime({
-          async startSession() {
-            return { sessionId: 'child_session_1' as SessionId };
-          },
-          async sendPrompt(_sessionId: SessionId, prompt: string) {
-            lastPrompt = prompt;
-            // Defer to keep the completion async (closer to real backends).
-            await new Promise((r) => setTimeout(r, 5));
-            (this as any)._handler?.({
-              type: 'tool-call',
-              toolName: 'read_file',
-              callId: 't1',
-              args: { path: 'README.md' },
-            } satisfies any);
-            (this as any)._handler?.({
-              type: 'tool-result',
-              toolName: 'read_file',
-              callId: 't1',
-              result: 'OK',
-            } satisfies any);
-            (this as any)._handler?.({
-              type: 'model-output',
-              fullText: JSON.stringify({
-                findings: [
-                  {
-                    id: 'f1',
-                    title: 'Example',
-                    severity: 'low',
-                    category: 'style',
-                    summary: 'One paragraph.',
-                  },
-                ],
-                summary: 'Summary.',
-              }),
-            } satisfies any);
-          },
-          async cancel(_sessionId: SessionId) {},
-          onMessage(next: AgentMessageHandler) {
-            (this as any)._handler = next;
-          },
-          async dispose() {},
-          async waitForResponseComplete() {},
-        } as AgentBackend),
+        createPromptRuntime(async (runtime, _sessionId, prompt) => {
+          lastPrompt = prompt;
+          // Defer to keep the completion async (closer to real backends).
+          await new Promise((r) => setTimeout(r, 5));
+          runtime.emitMessage({
+            type: 'tool-call',
+            toolName: 'read_file',
+            callId: 't1',
+            args: { path: 'README.md' },
+          } as AgentMessage);
+          runtime.emitMessage({
+            type: 'tool-result',
+            toolName: 'read_file',
+            callId: 't1',
+            result: 'OK',
+          } as AgentMessage);
+          runtime.emitMessage({
+            type: 'model-output',
+            fullText: JSON.stringify({
+              findings: [
+                {
+                  id: 'f1',
+                  title: 'Example',
+                  severity: 'low',
+                  category: 'style',
+                  summary: 'One paragraph.',
+                },
+              ],
+              summary: 'Summary.',
+            }),
+          });
+        }),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -336,7 +320,7 @@ describe('ExecutionRunManager (review intent)', () => {
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createRuntime: () => asExecutionRunHostRuntime(createDelayedJsonBackend(JSON.stringify({ findings: [], summary: 'late' }), 30)),
+      createRuntime: () => createDelayedJsonRuntime(JSON.stringify({ findings: [], summary: 'late' }), 30),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
       boundedTimeoutMs: 10,
@@ -363,40 +347,35 @@ describe('ExecutionRunManager (review intent)', () => {
   it('returns start() before backend session provisioning completes (UI can dismiss draft immediately)', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
 
-    let handler: AgentMessageHandler | null = null;
     let startSessionCalled = false;
     let startSessionResolved = false;
-    let resolveStartSession!: (value: { sessionId: SessionId }) => void;
-    const startSessionPromise: Promise<{ sessionId: SessionId }> = new Promise((resolve) => {
-      resolveStartSession = (value) => {
+    let resolveStartSession!: () => void;
+    const startSessionPromise = new Promise<void>((resolve) => {
+      resolveStartSession = () => {
         startSessionResolved = true;
-        resolve(value);
+        resolve();
       };
     });
 
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        startSessionCalled = true;
-        return await startSessionPromise;
-      },
-      async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
-        handler?.({
+    const runtime = createPromptRuntime(
+      (promptRuntime) => {
+        promptRuntime.emitMessage({
           type: 'model-output',
           fullText: JSON.stringify({ summary: 'Ok', findings: [] }),
-        } as any);
+        });
       },
-      async cancel(_sessionId: SessionId): Promise<void> {},
-      onMessage(next: AgentMessageHandler): void {
-        handler = next;
+      {
+        onProvisionSession: async () => {
+          startSessionCalled = true;
+          await startSessionPromise;
+        },
       },
-      async dispose(): Promise<void> {},
-      async waitForResponseComplete(): Promise<void> {},
-    };
+    );
 
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createRuntime: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => runtime,
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -417,7 +396,7 @@ describe('ExecutionRunManager (review intent)', () => {
     // Prevent deadlocks if start() ever regresses to awaiting backend.startSession().
     // The assertion below (startSessionResolved === false) proves start() returned before provisioning completed.
     const autoResolveStartSession = setTimeout(() => {
-      resolveStartSession({ sessionId: 'child_session_1' as SessionId });
+      resolveStartSession();
     }, 2_000);
 
     const started = await startPromise;
@@ -428,7 +407,7 @@ describe('ExecutionRunManager (review intent)', () => {
 
     // Now allow the run to proceed and complete so the test doesn't leak background work.
     if (!startSessionResolved) {
-      resolveStartSession({ sessionId: 'child_session_1' as SessionId });
+      resolveStartSession();
     }
     await manager.waitForTerminal(started.runId);
     expect(manager.get(started.runId)?.status).toBe('succeeded');
@@ -437,36 +416,24 @@ describe('ExecutionRunManager (review intent)', () => {
   it('forwards terminal output + file edits into the run sidechain transcript', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
 
-    let handler: AgentMessageHandler | null = null;
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId: 'child_session_1' as SessionId };
-      },
-      async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
-        handler?.({ type: 'terminal-output', data: 'hello from terminal' } as any);
-        handler?.({
+    const runtime = createPromptRuntime((promptRuntime) => {
+        promptRuntime.emitMessage({ type: 'terminal-output', data: 'hello from terminal' } as AgentMessage);
+        promptRuntime.emitMessage({
           type: 'fs-edit',
           description: 'Edited README',
           path: 'README.md',
           diff: 'diff --git a/README.md b/README.md',
-        } as any);
-        handler?.({
+        } as AgentMessage);
+        promptRuntime.emitMessage({
           type: 'model-output',
           fullText: JSON.stringify({ summary: 'Ok', findings: [] }),
-        } as any);
-      },
-      async cancel(_sessionId: SessionId): Promise<void> {},
-      onMessage(next: AgentMessageHandler): void {
-        handler = next;
-      },
-      async dispose(): Promise<void> {},
-      async waitForResponseComplete(): Promise<void> {},
-    };
+        });
+      });
 
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createRuntime: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => runtime,
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -510,36 +477,24 @@ describe('ExecutionRunManager (review intent)', () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
     const prompts: string[] = [];
 
-    let handler: AgentMessageHandler | null = null;
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId: 'child_session_1' as SessionId };
-      },
-      async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
+    const runtime = createPromptRuntime((promptRuntime, _sessionId, prompt) => {
         prompts.push(prompt);
         // First attempt: model violates contract (no JSON).
         if (prompts.length === 1) {
-          handler?.({ type: 'model-output', fullText: 'Not JSON, sorry.' } as any);
+          promptRuntime.emitMessage({ type: 'model-output', fullText: 'Not JSON, sorry.' });
           return;
         }
         // Second attempt: obey strict JSON.
-        handler?.({
+        promptRuntime.emitMessage({
           type: 'model-output',
           fullText: JSON.stringify({ summary: 'Ok', findings: [] }),
-        } as any);
-      },
-      async cancel(_sessionId: SessionId): Promise<void> {},
-      onMessage(next: AgentMessageHandler): void {
-        handler = next;
-      },
-      async dispose(): Promise<void> {},
-      async waitForResponseComplete(): Promise<void> {},
-    };
+        });
+      });
 
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createRuntime: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => runtime,
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -572,7 +527,7 @@ describe('ExecutionRunManager (review intent)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: (_opts: { backendId: string; permissionMode: string }) =>
-        asExecutionRunHostRuntime(createStaticJsonBackend(
+        createStaticJsonRuntime(
           JSON.stringify({
             findings: [
               {
@@ -585,7 +540,7 @@ describe('ExecutionRunManager (review intent)', () => {
             ],
             summary: 'Summary.',
           }),
-        )),
+        ),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -626,7 +581,7 @@ describe('ExecutionRunManager (review intent)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: (_opts: { backendId: string; permissionMode: string }) =>
-        asExecutionRunHostRuntime(createStaticJsonBackend(
+        createStaticJsonRuntime(
           JSON.stringify({
             findings: [
               {
@@ -639,7 +594,7 @@ describe('ExecutionRunManager (review intent)', () => {
             ],
             summary: 'Summary.',
           }),
-        )),
+        ),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -696,7 +651,7 @@ describe('ExecutionRunManager (review intent)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: (_opts: { backendId: string; permissionMode: string }) =>
-        asExecutionRunHostRuntime(createStaticJsonBackend(
+        createStaticJsonRuntime(
           JSON.stringify({
             findings: [
               {
@@ -709,7 +664,7 @@ describe('ExecutionRunManager (review intent)', () => {
             ],
             summary: 'Summary.',
           }),
-        )),
+        ),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -757,11 +712,11 @@ describe('ExecutionRunManager (review intent)', () => {
 
   it('starts a resumable review follow-up child run that reuses the original vendor session', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
-    const { backend, prompts, loadSessionCalls, providerSessionId } = createReviewResumeBackend();
+    const { runtime, prompts, loadSessionCalls, providerSessionId } = createReviewResumeRuntime();
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createRuntime: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => runtime,
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -803,19 +758,15 @@ describe('ExecutionRunManager (review intent)', () => {
 
   it('falls back to a linked child review run without resume support and reconstructs follow-up context', async () => {
     const prompts: string[] = [];
-    let handler: AgentMessageHandler | null = null;
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: () =>
-        asExecutionRunHostRuntime({
-          async startSession() {
-            return { sessionId: `child_session_${prompts.length + 1}` as SessionId };
-          },
-          async sendPrompt(_sessionId: SessionId, prompt: string) {
+        createPromptRuntime(
+          (runtime, _sessionId, prompt) => {
             prompts.push(prompt);
             if (prompts.length === 1) {
-              handler?.({
+              runtime.emitMessage({
                 type: 'model-output',
                 fullText: JSON.stringify({
                   summary: 'Initial summary.',
@@ -832,26 +783,21 @@ describe('ExecutionRunManager (review intent)', () => {
                   questions: [],
                   assumptions: [],
                 }),
-              } as AgentMessage);
+              });
               return;
             }
 
-            handler?.({
+            runtime.emitMessage({
               type: 'model-output',
               fullText: JSON.stringify({
                 answerMarkdown: 'Fallback answer.',
                 questions: [],
                 assumptions: [],
               }),
-            } as AgentMessage);
+            });
           },
-          async cancel(_sessionId: SessionId) {},
-          onMessage(next: AgentMessageHandler) {
-            handler = next;
-          },
-          async dispose() {},
-          async waitForResponseComplete() {},
-        } as AgentBackend),
+          { sessionId: `child_session_${prompts.length + 1}` },
+        ),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
     });
@@ -888,19 +834,15 @@ describe('ExecutionRunManager (review intent)', () => {
 
   it('falls back to a linked child review run for provider-specific backends without resume support', async () => {
     const prompts: string[] = [];
-    let handler: AgentMessageHandler | null = null;
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: () =>
-        asExecutionRunHostRuntime({
-          async startSession() {
-            return { sessionId: `child_session_${prompts.length + 1}` as SessionId };
-          },
-          async sendPrompt(_sessionId: SessionId, prompt: string) {
+        createPromptRuntime(
+          (runtime, _sessionId, prompt) => {
             prompts.push(prompt);
             if (prompts.length === 1) {
-              handler?.({
+              runtime.emitMessage({
                 type: 'model-output',
                 fullText: JSON.stringify({
                   summary: 'Initial summary.',
@@ -917,26 +859,21 @@ describe('ExecutionRunManager (review intent)', () => {
                   questions: [],
                   assumptions: [],
                 }),
-              } as AgentMessage);
+              });
               return;
             }
 
-            handler?.({
+            runtime.emitMessage({
               type: 'model-output',
               fullText: JSON.stringify({
                 answerMarkdown: 'Fallback answer.',
                 questions: [],
                 assumptions: [],
               }),
-            } as AgentMessage);
+            });
           },
-          async cancel(_sessionId: SessionId) {},
-          onMessage(next: AgentMessageHandler) {
-            handler = next;
-          },
-          async dispose() {},
-          async waitForResponseComplete() {},
-        } as AgentBackend),
+          { sessionId: `child_session_${prompts.length + 1}` },
+        ),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
     });
@@ -971,7 +908,7 @@ describe('ExecutionRunManager (review intent)', () => {
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
       createRuntime: (_opts: { backendId: string; permissionMode: string }) =>
-        asExecutionRunHostRuntime(createDelayedJsonBackend(JSON.stringify({ summary: 'late', findings: [] }), 50_000)),
+        createDelayedJsonRuntime(JSON.stringify({ summary: 'late', findings: [] }), 50_000),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -999,29 +936,16 @@ describe('ExecutionRunManager (review intent)', () => {
   });
 
   it('does not synthesize a resumable resumeHandle from provider_session_id events when the backend cannot resume', async () => {
-    const providerSessionId: SessionId = '1433467f-ff14-4292-b5b2-2aac77a808f0' as SessionId;
-
-    let handler: AgentMessageHandler | null = null;
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId: 'placeholder_session' as SessionId };
-      },
-      async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
-        handler?.({ type: 'event', name: 'provider_session_id', payload: { sessionId: providerSessionId } } as AgentMessage);
-        handler?.({ type: 'model-output', fullText: JSON.stringify({ findings: [], summary: 'ok' }) } as AgentMessage);
-      },
-      async cancel(_sessionId: SessionId): Promise<void> {},
-      onMessage(next: AgentMessageHandler): void {
-        handler = next;
-      },
-      async dispose(): Promise<void> {},
-      async waitForResponseComplete(): Promise<void> {},
-    };
+    const providerSessionId = '1433467f-ff14-4292-b5b2-2aac77a808f0';
+    const runtime = createPromptRuntime((promptRuntime) => {
+      promptRuntime.emitMessage({ type: 'event', name: 'provider_session_id', payload: { sessionId: providerSessionId } } as AgentMessage);
+      promptRuntime.emitMessage({ type: 'model-output', fullText: JSON.stringify({ findings: [], summary: 'ok' }) });
+    }, { sessionId: 'placeholder_session' });
 
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createRuntime: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => runtime,
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
     });
@@ -1051,7 +975,7 @@ describe('ExecutionRunManager (memory_hints intent)', () => {
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createRuntime: () => asExecutionRunHostRuntime(createStaticJsonBackend('{"ok":true}')),
+      createRuntime: () => createStaticJsonRuntime('{"ok":true}'),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1086,14 +1010,9 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
       meta?: Record<string, unknown>;
     }> = [];
 
-    let handler: AgentMessageHandler | null = null;
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId: 'child_session_1' as SessionId };
-      },
-      async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
-        handler?.({ type: 'model-output', fullText: 'Plan in progress.\n' } as any);
-        handler?.({
+    const runtime = createPromptRuntime((promptRuntime) => {
+        promptRuntime.emitMessage({ type: 'model-output', fullText: 'Plan in progress.\n' });
+        promptRuntime.emitMessage({
           type: 'model-output',
           fullText:
             'Plan in progress.\n' +
@@ -1103,20 +1022,13 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
               risks: [],
               milestones: [],
             }),
-        } as any);
-      },
-      async cancel(_sessionId: SessionId): Promise<void> {},
-      onMessage(next: AgentMessageHandler): void {
-        handler = next;
-      },
-      async dispose(): Promise<void> {},
-      async waitForResponseComplete(): Promise<void> {},
-    };
+        });
+      });
 
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createRuntime: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => runtime,
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1167,17 +1079,12 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
       meta?: Record<string, unknown>;
     }> = [];
 
-    let handler: AgentMessageHandler | null = null;
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId: 'child_session_1' as SessionId };
-      },
-      async sendPrompt(_sessionId: SessionId, _prompt: string): Promise<void> {
-        handler?.({
+    const runtime = createPromptRuntime((promptRuntime) => {
+        promptRuntime.emitMessage({
           type: 'model-output',
           fullText: 'Working...\n\n{ "summary": "Ok", ',
-        } as any);
-        handler?.({
+        });
+        promptRuntime.emitMessage({
           type: 'model-output',
           fullText:
             'Working...\n\n' +
@@ -1185,20 +1092,13 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
               summary: 'Ok',
               findings: [],
             }),
-        } as any);
-      },
-      async cancel(_sessionId: SessionId): Promise<void> {},
-      onMessage(next: AgentMessageHandler): void {
-        handler = next;
-      },
-      async dispose(): Promise<void> {},
-      async waitForResponseComplete(): Promise<void> {},
-    };
+        });
+      });
 
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createRuntime: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => runtime,
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1243,68 +1143,95 @@ describe('ExecutionRunManager (streaming sidechain)', () => {
 });
 
 describe('ExecutionRunManager (long-lived runs)', () => {
-  function createPromptEchoBackend(): AgentBackend {
-    let handler: AgentMessageHandler | null = null;
-    const sessionId: SessionId = 'child_session_1' as SessionId;
-    return {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId };
-      },
-      async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
-        handler?.({ type: 'model-output', fullText: `reply:${prompt}` } as AgentMessage);
-      },
-      async cancel(_sessionId: SessionId): Promise<void> {},
-      onMessage(next: AgentMessageHandler): void {
-        handler = next;
-      },
-      async dispose(): Promise<void> {},
-      async waitForResponseComplete(): Promise<void> {},
-    };
+  function createPromptEchoRuntime(): TestExecutionRunHostRuntime {
+    return createPromptRuntime((runtime, _sessionId, prompt) => {
+      runtime.emitMessage({ type: 'model-output', fullText: `reply:${prompt}` });
+    });
   }
 
-  function createPromptEchoResumeBackend(): AgentBackend {
-    let handler: AgentMessageHandler | null = null;
-    return {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId: 'child_session_1' as SessionId };
-      },
-      async loadSession(sessionId: string): Promise<{ sessionId: SessionId }> {
-        return { sessionId: sessionId as SessionId };
-      },
-      async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
-        handler?.({ type: 'model-output', fullText: `reply:${prompt}` } as AgentMessage);
-      },
-      async cancel(_sessionId: SessionId): Promise<void> {},
-      onMessage(next: AgentMessageHandler): void {
-        handler = next;
-      },
-      async dispose(): Promise<void> {},
-      async waitForResponseComplete(): Promise<void> {},
+  it('disposes running backend resources and unregisters permission response handling idempotently', async () => {
+    const unregisterPermissionHandler = vi.fn();
+    const permissionStore = {
+      registerResponseTargetHandler: vi.fn(() => unregisterPermissionHandler),
     };
+    const disposeCalls: string[] = [];
+    let runtimeIndex = 0;
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
+      cwd: process.cwd(),
+      createRuntime: () => {
+        runtimeIndex += 1;
+        const index = runtimeIndex;
+        return createPromptRuntime(
+          (runtime, _sessionId, prompt) => {
+            runtime.emitMessage({ type: 'model-output', fullText: `reply:${prompt}` });
+          },
+          {
+            sessionId: `child_session_${index}`,
+            onDispose: async () => {
+              disposeCalls.push(`runtime_${index}`);
+            },
+          },
+        );
+      },
+      sendAcp: () => {},
+      getPermissionRequestStore: () => permissionStore as never,
+      getNowMs: () => 1_700_000_000_000,
+    });
+
+    await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID },
+      instructions: 'first',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'request_response',
+    });
+    await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: TEST_SECONDARY_BACKEND_ID },
+      instructions: 'second',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'long_lived',
+      ioMode: 'request_response',
+    });
+
+    expect(manager.getRunningCount()).toBe(2);
+
+    await manager.dispose();
+    await manager.dispose();
+
+    expect(manager.getRunningCount()).toBe(0);
+    expect(disposeCalls).toEqual(['runtime_1', 'runtime_2']);
+    expect(permissionStore.registerResponseTargetHandler).toHaveBeenCalledTimes(1);
+    expect(unregisterPermissionHandler).toHaveBeenCalledTimes(1);
+  });
+
+  function createPromptEchoResumeRuntime(): TestExecutionRunHostRuntime {
+    return createPromptRuntime(
+      (runtime, _sessionId, prompt) => {
+        runtime.emitMessage({ type: 'model-output', fullText: `reply:${prompt}` });
+      },
+      { resumeSupported: true },
+    );
   }
 
-  function createReadyHandshakePromptEchoBackend(): AgentBackend {
-    let handler: AgentMessageHandler | null = null;
-    const sessionId: SessionId = 'child_session_ready' as SessionId;
+  function createReadyHandshakePromptEchoRuntime(): TestExecutionRunHostRuntime {
     let sendCount = 0;
-    return {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId };
-      },
-      async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
+    return createPromptRuntime(
+      (runtime, _sessionId, prompt) => {
         sendCount += 1;
-        handler?.({
+        runtime.emitMessage({
           type: 'model-output',
           fullText: sendCount === 1 ? 'READY' : `reply:${prompt}`,
-        } as AgentMessage);
+        });
       },
-      async cancel(_sessionId: SessionId): Promise<void> {},
-      onMessage(next: AgentMessageHandler): void {
-        handler = next;
-      },
-      async dispose(): Promise<void> {},
-      async waitForResponseComplete(): Promise<void> {},
-    };
+      { sessionId: 'child_session_ready' },
+    );
   }
 
   it('passes the parent session state target through to the execution-run runtime factory', async () => {
@@ -1319,7 +1246,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       },
       createRuntime: (opts) => {
         seen.push(opts);
-        return asExecutionRunHostRuntime(createPromptEchoBackend());
+        return createPromptEchoRuntime();
       },
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
@@ -1351,32 +1278,25 @@ describe('ExecutionRunManager (long-lived runs)', () => {
   it('ACKs send() for long-lived runs without awaiting waitForResponseComplete (prevents UI timeouts)', async () => {
     const sent: Array<{ provider: string; body: unknown; meta?: Record<string, unknown> }> = [];
 
-    let handler: AgentMessageHandler | null = null;
     let turn = 0;
     let wait: Promise<void> = Promise.resolve();
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId: 'child_session_1' as SessionId };
-      },
-      async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
+    const runtime = createPromptRuntime(
+      (promptRuntime, _sessionId, prompt) => {
         turn += 1;
-        handler?.({ type: 'model-output', fullText: `reply:${prompt}` } as AgentMessage);
+        promptRuntime.emitMessage({ type: 'model-output', fullText: `reply:${prompt}` });
         wait = turn === 1 ? Promise.resolve() : new Promise(() => {});
       },
-      async cancel(_sessionId: SessionId): Promise<void> {},
-      onMessage(next: AgentMessageHandler): void {
-        handler = next;
+      {
+        onWaitForTurnCompletion: async () => {
+          await wait;
+        },
       },
-      async dispose(): Promise<void> {},
-      async waitForResponseComplete(): Promise<void> {
-        await wait;
-      },
-    };
+    );
 
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createRuntime: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => runtime,
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1414,7 +1334,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createRuntime: () => asExecutionRunHostRuntime(createPromptEchoBackend()),
+      createRuntime: () => createPromptEchoRuntime(),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1459,7 +1379,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createRuntime: () => asExecutionRunHostRuntime(createPromptEchoBackend()),
+      createRuntime: () => createPromptEchoRuntime(),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
     });
@@ -1494,7 +1414,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: '/tmp/voice-agent-manager',
-      createRuntime: () => asExecutionRunHostRuntime(createReadyHandshakePromptEchoBackend()),
+      createRuntime: () => createReadyHandshakePromptEchoRuntime(),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
     });
@@ -1535,7 +1455,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createRuntime: () => asExecutionRunHostRuntime(createPromptEchoResumeBackend()),
+      createRuntime: () => createPromptEchoResumeRuntime(),
       sendAcp: () => {},
       onPublicStateUpdated: (run) => {
         publicStates.push(run as Record<string, unknown>);
@@ -1576,7 +1496,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createRuntime: () => asExecutionRunHostRuntime(createPromptEchoBackend()),
+      createRuntime: () => createPromptEchoRuntime(),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1625,7 +1545,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createRuntime: () => asExecutionRunHostRuntime(createDelayedJsonBackend('{"ok":true}', 50_000)),
+      createRuntime: () => createDelayedJsonRuntime('{"ok":true}', 50_000),
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
     });
@@ -1655,7 +1575,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       cwd: process.cwd(),
       createRuntime: (opts: { backendId: string; modelId?: string; permissionMode: string; start?: unknown }) => {
         seen.push(opts as Record<string, unknown>);
-        return asExecutionRunHostRuntime(createPromptEchoBackend());
+        return createPromptEchoRuntime();
       },
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
@@ -1690,7 +1610,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       cwd: process.cwd(),
       createRuntime: (opts: { backendId: string; modelId?: string; permissionMode: string; start?: unknown }) => {
         seen.push(opts as Record<string, unknown>);
-        return asExecutionRunHostRuntime(createPromptEchoBackend());
+        return createPromptEchoRuntime();
       },
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
@@ -1724,27 +1644,15 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       meta?: Record<string, unknown>;
     }> = [];
 
-    let handler: AgentMessageHandler | null = null;
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId: 'child_session_1' as SessionId };
-      },
-      async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
-        handler?.({ type: 'model-output', fullText: `Working: ${prompt}\n` } as any);
-        handler?.({ type: 'model-output', fullText: `Working: ${prompt}\nDone.\n` } as any);
-      },
-      async cancel(_sessionId: SessionId): Promise<void> {},
-      onMessage(next: AgentMessageHandler): void {
-        handler = next;
-      },
-      async dispose(): Promise<void> {},
-      async waitForResponseComplete(): Promise<void> {},
-    };
+    const runtime = createPromptRuntime((promptRuntime, _sessionId, prompt) => {
+      promptRuntime.emitMessage({ type: 'model-output', fullText: `Working: ${prompt}\n` });
+      promptRuntime.emitMessage({ type: 'model-output', fullText: `Working: ${prompt}\nDone.\n` });
+    });
 
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createRuntime: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => runtime,
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
       },
@@ -1791,15 +1699,11 @@ describe('ExecutionRunManager (long-lived runs)', () => {
 describe('ExecutionRunManager (bounded external send)', () => {
   it('rebuilds bounded interrupt prompts using the intent profile (preserves strict JSON guidance)', async () => {
     const prompts: string[] = [];
-    let handler: AgentMessageHandler | null = null;
     let waitResolve: (() => void) | null = null;
     let currentWait: Promise<void> = new Promise(() => {});
 
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId: 'child_session_1' as SessionId };
-      },
-      async sendPrompt(_sessionId: SessionId, prompt: string): Promise<void> {
+    const runtime = createPromptRuntime(
+      (promptRuntime, _sessionId, prompt) => {
         prompts.push(prompt);
         currentWait = new Promise<void>((resolve) => {
           waitResolve = resolve;
@@ -1809,26 +1713,23 @@ describe('ExecutionRunManager (bounded external send)', () => {
         if (prompts.length === 1) return;
 
         // Second prompt completes immediately with strict JSON.
-        handler?.({
+        promptRuntime.emitMessage({
           type: 'model-output',
           fullText: JSON.stringify({ summary: 'ok', deliverables: [{ id: 'd1', title: 'done' }] }),
-        } as any);
+        });
         waitResolve?.();
       },
-      async cancel(_sessionId: SessionId): Promise<void> {},
-      onMessage(next: AgentMessageHandler): void {
-        handler = next;
+      {
+        onWaitForTurnCompletion: async () => {
+          await currentWait;
+        },
       },
-      async dispose(): Promise<void> {},
-      async waitForResponseComplete(): Promise<void> {
-        await currentWait;
-      },
-    };
+    );
 
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
-      createRuntime: () => asExecutionRunHostRuntime(backend),
+      createRuntime: () => runtime,
       sendAcp: () => {},
       getNowMs: () => 1_700_000_000_000,
     });

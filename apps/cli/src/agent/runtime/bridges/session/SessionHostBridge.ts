@@ -1,7 +1,7 @@
 import type {
   BridgeLifecycleHookEventIdV1,
   BackendTargetRefV2Input,
-  ExternalSessionsProviderId,
+  ExternalSessionsAgentId,
   ExternalSessionsSource,
   HookScopeV1,
   RuntimeDescriptorV1,
@@ -14,8 +14,12 @@ import {
   resolveBackendExecutionSurfaces,
   type BackendExecutionSurfaces,
 } from '@/agent/runtime/registry/engineRegistry';
+import { createDaemonControlPluginLocalServicesRuntime } from '@/daemon/local/services/pluginBridgeClient';
 import { buildRuntimePublicationFromEngineResolution } from '@/agent/runtime/identity/buildRuntimePublicationFromEngineResolution';
-import type { ProviderMessageMetaEnricher } from '@happier-dev/agents';
+import type {
+  ProviderMessageMetaEnricher,
+  RuntimeOutboundTranscriptDispatchFacetV1,
+} from '@happier-dev/agents';
 import {
   evaluateCliSessionAttachEligibility,
   type CliSessionAttachEligibility,
@@ -66,16 +70,48 @@ export class SessionHostBridge implements SessionHostBridgeContract {
     return await resolveBackendExecutionSurfaces(backendId);
   }
 
-  private resolveEngineResolutionParams(params: unknown): Readonly<{ happyHomeDir?: string }> | undefined {
+  async resolveOutboundTranscriptDispatchFacet(backendId?: string | null): Promise<Readonly<{
+    backendId: string;
+    facet: RuntimeOutboundTranscriptDispatchFacetV1;
+  }> | null> {
+    const normalizedBackendId = typeof backendId === 'string' && backendId.trim().length > 0
+      ? backendId.trim()
+      : null;
+    if (!normalizedBackendId) {
+      return null;
+    }
+
+    const resolution = await resolveBackendEngineAdapterResolution(normalizedBackendId);
+    const facet = resolution?.engineAdapter.facets?.transcriptDispatch;
+    return facet ? { backendId: normalizedBackendId, facet } : null;
+  }
+
+  private resolveEngineResolutionParams(
+    params: unknown,
+  ): Parameters<typeof resolveBackendEngineAdapterResolution>[1] {
     if (!params || typeof params !== 'object') {
       return undefined;
     }
-    const happyHomeDir = (params as Readonly<Record<string, unknown>>).happyHomeDir;
-    if (typeof happyHomeDir !== 'string') {
-      return undefined;
+    const record = params as Readonly<Record<string, unknown>>;
+    const resolutionParams: {
+      happyHomeDir?: string;
+      localServicesRuntime?: ReturnType<typeof createDaemonControlPluginLocalServicesRuntime>;
+    } = {};
+
+    const happyHomeDir = record.happyHomeDir;
+    if (typeof happyHomeDir === 'string') {
+      const trimmedHappyHomeDir = happyHomeDir.trim();
+      if (trimmedHappyHomeDir.length > 0) {
+        resolutionParams.happyHomeDir = trimmedHappyHomeDir;
+      }
     }
-    const trimmedHappyHomeDir = happyHomeDir.trim();
-    return trimmedHappyHomeDir.length > 0 ? { happyHomeDir: trimmedHappyHomeDir } : undefined;
+
+    const startedBy = record.startedBy;
+    if (typeof startedBy === 'string' && startedBy.trim() === 'daemon') {
+      resolutionParams.localServicesRuntime = createDaemonControlPluginLocalServicesRuntime();
+    }
+
+    return Object.keys(resolutionParams).length > 0 ? resolutionParams : undefined;
   }
 
   private injectProviderMessageMetaEnricher(
@@ -150,9 +186,12 @@ export class SessionHostBridge implements SessionHostBridgeContract {
   }
 
   async evaluateAttachEligibility(
-    params: Parameters<typeof evaluateCliSessionAttachEligibility>[0],
+    params: Omit<Parameters<typeof evaluateCliSessionAttachEligibility>[0], 'resolveExecutionSurfaces'>,
   ): Promise<CliSessionAttachEligibility> {
-    return await evaluateCliSessionAttachEligibility(params);
+    return await evaluateCliSessionAttachEligibility({
+      ...params,
+      resolveExecutionSurfaces: (backendId) => this.resolveExecutionSurfaces(backendId),
+    });
   }
 
   resolveSessionHandoffEligibility(params: Readonly<{
@@ -176,7 +215,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
   }
 
   async resolveExternalSessionLinkIdentity(params: Readonly<{
-    providerId: ExternalSessionsProviderId;
+    agentId: ExternalSessionsAgentId;
     remoteSessionId: string;
     source: ExternalSessionsSource;
     runtimeDescriptor?: RuntimeDescriptorV1 | null;
@@ -186,7 +225,7 @@ export class SessionHostBridge implements SessionHostBridgeContract {
   }
 
   async canonicalizeLinkedExternalSessionSource(params: Readonly<{
-    providerId: ExternalSessionsProviderId;
+    agentId: ExternalSessionsAgentId;
     metadata: Record<string, unknown>;
     remoteSessionId: string;
     source: ExternalSessionsSource;
@@ -199,9 +238,8 @@ export class SessionHostBridge implements SessionHostBridgeContract {
     eventId: BridgeLifecycleHookEventIdV1;
     scope?: HookScopeV1;
     happySessionId?: string;
-    providerSessionId?: string;
-    providerId?: string;
-    backendId?: string;
+    agentSessionId?: string;
+    agentId?: string;
     backendTarget?: string;
     machineId?: string;
     workspaceId?: string;
@@ -217,9 +255,8 @@ export class SessionHostBridge implements SessionHostBridgeContract {
         eventId: params.eventId,
         ...(params.scope ? { scope: params.scope } : {}),
         ...(params.happySessionId ? { happySessionId: params.happySessionId } : {}),
-        ...(params.providerSessionId ? { providerSessionId: params.providerSessionId } : {}),
-        ...(params.providerId ? { providerId: params.providerId } : {}),
-        ...(params.backendId ? { backendId: params.backendId } : {}),
+        ...(params.agentSessionId ? { agentSessionId: params.agentSessionId } : {}),
+        ...(params.agentId ? { agentId: params.agentId } : {}),
         ...(params.backendTarget ? { backendTarget: params.backendTarget } : {}),
         ...(params.machineId ? { machineId: params.machineId } : {}),
         ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}),

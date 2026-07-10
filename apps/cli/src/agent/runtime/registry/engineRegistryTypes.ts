@@ -3,15 +3,15 @@ import type { ExecutionRunBackendIsolation } from '@/agent/executionRuns/registr
 import type {
     AnyTerminalRuntimeOps,
     ProviderAttachOps,
-} from '@/backends/types';
+} from '@/agent/catalog/types';
 import type { ExternalSessionExecutionSurface } from '@/session/external/providerOps';
 import type { CheckpointSurfaceV1, ForkSurfaceV1, HandoffSurfaceV1 } from '@happier-dev/agents';
-import type { BackendTargetRefV2Input } from '@happier-dev/protocol';
+import type { AcpConfigOptionOverridesV1, BackendTargetRefV2Input } from '@happier-dev/protocol';
 import type {
-    ResolvedBackendContribution,
+    ResolvedAgentRuntimeContribution,
     ResolvedContributionProvenance,
     ResolvedContributionRegistry,
-    ResolvedProviderContribution,
+    ResolvedAgentContribution,
 } from '@/plugins/projection/registry/types';
 import type { EngineAdapter, RuntimeCore } from '@happier-dev/agents';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
@@ -33,6 +33,7 @@ export type CreateCliExecutionRunBackendParams = Readonly<{
     backendId: string;
     backendTarget?: BackendTargetRefV2Input;
     modelId?: string;
+    sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     permissionMode: string;
     accountSettings?: Readonly<Record<string, unknown>> | null;
     start?: ExecutionRunBackendStartContext | null;
@@ -51,8 +52,8 @@ export type CliRuntimeCore = RuntimeCore<
 >;
 
 export type CliRuntimeCoreParams = Readonly<{
-    backend: ResolvedBackendContribution;
-    provider: ResolvedProviderContribution;
+    backend: ResolvedAgentRuntimeContribution;
+    provider: ResolvedAgentContribution;
     executionSurfaces: BackendExecutionSurfaces;
 }>;
 
@@ -120,12 +121,12 @@ export type BackendRuntimeOwnerResolution = Readonly<{
 
 export type EngineAdapterResolution = Readonly<{
     backendId: string;
-    providerId: string;
+    agentId: string;
     provenance: ResolvedContributionProvenance;
     selectedSource?: EngineResolutionSelectedSource;
     runtimeOwner: BackendRuntimeOwnerResolution;
-    backend: ResolvedBackendContribution;
-    provider: ResolvedProviderContribution;
+    backend: ResolvedAgentRuntimeContribution;
+    provider: ResolvedAgentContribution;
     engineAdapter: CliEngineAdapter;
     executionSurfaces: BackendExecutionSurfaces;
     diagnostics: readonly EngineResolutionDiagnostic[];

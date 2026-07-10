@@ -4,6 +4,7 @@ import type { ChildProcess } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createPluginExecSystemToolGrantStore } from '@/plugins/runtime/context/exec/system/tools/grants';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 import { createTerminalRuntimeProcessService } from './launchProcess';
 
@@ -157,7 +158,11 @@ describe('createTerminalRuntimeProcessService', () => {
             },
             args: ['--model', 'gpt-5'],
             cwd: '/repo',
-            env: { CODEX_HOME: '/tmp/codex-home' },
+            env: {
+                CODEX_HOME: '/tmp/codex-home',
+                CLAUDECODE: '1',
+                HAPPIER_DAEMON_RUNTIME_ID: 'runtime-parent',
+            },
             stdio: 'inherit',
         });
 
@@ -171,7 +176,59 @@ describe('createTerminalRuntimeProcessService', () => {
             env: expect.objectContaining({ CODEX_HOME: '/tmp/codex-home' }),
             stdio: 'inherit',
         }));
+        // Boundary fixture: Vitest cannot infer the injected SpawnLike call tuple from the fake child factory.
+        const launchedEnv = (spawn.mock.calls[0] as unknown as [string, readonly string[], { env?: NodeJS.ProcessEnv }])?.[2]?.env;
+        expect(launchedEnv?.CLAUDECODE).toBeUndefined();
+        expect(launchedEnv?.HAPPIER_DAEMON_RUNTIME_ID).toBeUndefined();
         await expect(handle.waitForTermination()).resolves.toEqual({ type: 'exited', code: 0 });
+    });
+
+    it('does not inherit or accept spoofed session-control metadata at the final launch boundary', async () => {
+        const envScope = createEnvKeyScope([
+            'HAPPIER_SESSION_PROFILE_ID',
+            'HAPPIER_SESSION_ATTACH_FILE',
+            'HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON',
+        ]);
+        envScope.patch({
+            HAPPIER_SESSION_PROFILE_ID: 'ambient-profile',
+            HAPPIER_SESSION_ATTACH_FILE: '/tmp/ambient-attach.json',
+            HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: 'ambient-selections',
+        });
+        try {
+            const child = new FakeChildProcess() as unknown as ChildProcess;
+            const spawn = vi.fn(() => child);
+            const service = createTerminalRuntimeProcessService({
+                spawn,
+                createManagedChildProcess: vi.fn(() => ({
+                    pid: child.pid ?? null,
+                    waitForTermination: vi.fn(async () => ({ type: 'exited' as const, code: 0 })),
+                })),
+                killProcessTree: vi.fn(),
+                verifyExecutableGrant: vi.fn(() => true),
+            });
+
+            const handle = await service.launch({
+                executable: {
+                    path: '/usr/local/bin/codex',
+                    hostGrant: { kind: 'agent-cli', grantId: 'agent-cli:codex' },
+                },
+                cwd: '/repo',
+                env: {
+                    HAPPIER_SESSION_PROFILE_ID: 'plugin-spoof',
+                    HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: 'plugin-spoof',
+                    SAFE_VALUE: 'kept',
+                },
+            });
+
+            const launchedEnv = (spawn.mock.calls[0] as unknown as [string, readonly string[], { env?: NodeJS.ProcessEnv }])?.[2]?.env;
+            expect(launchedEnv?.HAPPIER_SESSION_PROFILE_ID).toBeUndefined();
+            expect(launchedEnv?.HAPPIER_SESSION_ATTACH_FILE).toBeUndefined();
+            expect(launchedEnv?.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON).toBeUndefined();
+            expect(launchedEnv?.SAFE_VALUE).toBe('kept');
+            await handle.stop();
+        } finally {
+            envScope.restore();
+        }
     });
 
     it('resolves agent CLI launches into host-granted terminal executable descriptors', async () => {
@@ -290,7 +347,41 @@ describe('createTerminalRuntimeProcessService', () => {
             cwd: '/repo',
         })).rejects.toThrow('supervision setup failed');
 
-        expect(killProcessTree).toHaveBeenCalledWith(child);
+        expect(killProcessTree).toHaveBeenCalledWith(child, undefined);
+    });
+
+    it('kills the spawned child when launch aborts after spawn but before the handle is returned', async () => {
+        // Test boundary fixture: the process service only reads pid/stderr from the child directly.
+        const child = new FakeChildProcess() as unknown as ChildProcess;
+        const controller = new AbortController();
+        const killProcessTree = vi.fn(async () => {});
+        const service = createTerminalRuntimeProcessService({
+            spawn: vi.fn(() => child),
+            createManagedChildProcess: vi.fn(() => {
+                controller.abort();
+                return {
+                    pid: child.pid ?? null,
+                    waitForTermination: vi.fn(async () => ({ type: 'exited' as const, code: 0 })),
+                };
+            }),
+            killProcessTree,
+            verifyExecutableGrant: vi.fn(() => true),
+        });
+
+        await expect(service.launch({
+            executable: {
+                path: '/usr/local/bin/codex',
+                hostGrant: { kind: 'system-tool', grantId: 'system-tool:codex' },
+            },
+            args: [],
+            cwd: '/repo',
+            signal: controller.signal,
+        })).rejects.toMatchObject({
+            name: 'AbortError',
+        });
+
+        expect(killProcessTree).toHaveBeenCalledTimes(1);
+        expect(killProcessTree).toHaveBeenCalledWith(child, undefined);
     });
 
     it('removes abort listeners when the launched process is stopped before waiting', async () => {

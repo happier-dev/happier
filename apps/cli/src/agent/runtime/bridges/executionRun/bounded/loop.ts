@@ -22,6 +22,9 @@ import {
 } from '../errors';
 import { logger } from '@/ui/logger';
 
+const UNPROBEABLE_LIVENESS_SETTLE_GRACE_MS = 50;
+const MAX_UNPROBEABLE_LIVENESS_SETTLE_GRACE_MS = 250;
+
 export async function executeBoundedBackendRun(args: Readonly<{
   runId: string;
   callId: string;
@@ -66,6 +69,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
       runClass: params.runClass,
       ioMode: params.ioMode,
       startedAtMs,
+      ...(params.structuredOutputRecovery ? { structuredOutputRecovery: params.structuredOutputRecovery } : {}),
     } as const;
     let effectiveInstructions = start.instructions;
     const prompt = profile.buildPrompt({ ...start, instructions: effectiveInstructions });
@@ -219,8 +223,17 @@ export async function executeBoundedBackendRun(args: Readonly<{
         await runPromise;
         return;
       }
+      const boundedTimeoutMs = timeoutMs;
 
       async function readRunPromiseOutcomeIfSettled(): Promise<
+        | { type: 'complete' }
+        | { type: 'error'; error: unknown }
+        | { type: 'pending' }
+      > {
+        return readRunPromiseOutcomeAfterDelay(0);
+      }
+
+      async function readRunPromiseOutcomeAfterDelay(delayMs: number): Promise<
         | { type: 'complete' }
         | { type: 'error'; error: unknown }
         | { type: 'pending' }
@@ -228,10 +241,17 @@ export async function executeBoundedBackendRun(args: Readonly<{
         return Promise.race([
           runPromise.then(() => ({ type: 'complete' as const })).catch((error) => ({ type: 'error' as const, error })),
           new Promise<{ type: 'pending' }>((resolve) => {
-            const timer = setTimeout(() => resolve({ type: 'pending' }), 0);
+            const timer = setTimeout(() => resolve({ type: 'pending' }), delayMs);
             timer.unref?.();
           }),
         ]);
+      }
+
+      function resolveUnprobeableLivenessSettleGraceMs(): number {
+        return Math.min(
+          Math.max(boundedTimeoutMs, UNPROBEABLE_LIVENESS_SETTLE_GRACE_MS),
+          MAX_UNPROBEABLE_LIVENESS_SETTLE_GRACE_MS,
+        );
       }
 
       while (true) {
@@ -239,7 +259,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
         const outcome = await Promise.race([
           runPromise.then(() => ({ type: 'complete' as const })).catch((error) => ({ type: 'error' as const, error })),
           new Promise<{ type: 'timeout' }>((resolve) => {
-            timeout = setTimeout(() => resolve({ type: 'timeout' }), timeoutMs);
+            timeout = setTimeout(() => resolve({ type: 'timeout' }), boundedTimeoutMs);
             timeout.unref?.();
           }),
         ]);
@@ -250,12 +270,17 @@ export async function executeBoundedBackendRun(args: Readonly<{
 
         const livenessProbe = await probeTurnLiveness();
         if (!livenessProbe || typeof livenessProbe !== 'object') {
-          logger.debug('[ExecutionRuns] bounded timeout interval elapsed without backend liveness proof; timing out', {
+          const graceMs = resolveUnprobeableLivenessSettleGraceMs();
+          logger.debug('[ExecutionRuns] bounded timeout interval elapsed without backend liveness proof; waiting for settlement grace', {
             runId,
             callId,
             sidechainId,
-            timeoutMs,
+            timeoutMs: boundedTimeoutMs,
+            graceMs,
           });
+          const graceOutcome = await readRunPromiseOutcomeAfterDelay(graceMs);
+          if (graceOutcome.type === 'complete') return;
+          if (graceOutcome.type === 'error') throw graceOutcome.error;
         }
         if (
           livenessProbe
@@ -266,7 +291,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
             runId,
             callId,
             sidechainId,
-            timeoutMs,
+            timeoutMs: boundedTimeoutMs,
             livenessProbe,
           });
           continue;
@@ -278,7 +303,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
 
         void runPromise.catch(() => {});
         throw createExecutionRunTimeoutError({
-          timeoutMs,
+          timeoutMs: boundedTimeoutMs,
           errorCode: 'provider_inactivity_timeout',
           livenessProbe,
         });
@@ -297,6 +322,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
       start,
       rawText,
       finishedAtMs,
+      ...(params.structuredOutputRecovery ? { structuredOutputRecovery: params.structuredOutputRecovery } : {}),
     });
 
     const errorCode = (completion as any)?.toolResultOutput?.error?.code;
@@ -327,6 +353,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
         start,
         rawText: repairedRawText,
         finishedAtMs,
+        ...(params.structuredOutputRecovery ? { structuredOutputRecovery: params.structuredOutputRecovery } : {}),
       });
     }
 

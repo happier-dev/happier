@@ -30,14 +30,27 @@ describe('sessionControls publish helpers (shared)', () => {
     expect(next.permissionModeUpdatedAt).toBe(10);
   });
 
-  it('updates a nested string override v1 when updatedAt is newer', () => {
+  it('writes only the canonical structured model intent when updatedAt is newer', () => {
     const next = applyModelIntentSessionMetadata({ modelOverrideV1: { v: 1, updatedAt: 10, modelId: 'model-a' } } as any, {
       v: 1,
-      modelId: 'model-b',
+      selection: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: null,
+        modelId: 'model-b',
+      },
       updatedAt: 11,
     }) as any;
 
-    expect(next.modelOverrideV1).toEqual({ v: 1, updatedAt: 11, modelId: 'model-b' });
+    expect(next.modelSelectionIntentV1).toEqual({
+      v: 1,
+      updatedAt: 11,
+      selection: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: null,
+        modelId: 'model-b',
+      },
+    });
+    expect(next.modelOverrideV1).toEqual({ v: 1, updatedAt: 10, modelId: 'model-a' });
   });
 
   it('publishes config options only to canonical metadata keys from the shared publisher', async () => {
@@ -52,7 +65,7 @@ describe('sessionControls publish helpers (shared)', () => {
       },
       sessionConfigOptionsState: {
         v: 1,
-        provider: 'codex',
+        agentId: 'codex',
         updatedAt: 42,
         configOptions: [
           {
@@ -72,7 +85,7 @@ describe('sessionControls publish helpers (shared)', () => {
     expect(state.metadata.sessionConfigOptionsV1).toEqual(
       expect.objectContaining({
         v: 1,
-        provider: 'codex',
+        agentId: 'codex',
         updatedAt: 42,
         configOptions: expect.any(Array),
       }),
@@ -91,7 +104,7 @@ describe('sessionControls publish helpers (shared)', () => {
       } as any,
       sessionModesState: {
         v: 1,
-        provider: 'codex',
+        agentId: 'codex',
         updatedAt: 99,
         currentModeId: 'default',
         availableModes: [
@@ -106,7 +119,7 @@ describe('sessionControls publish helpers (shared)', () => {
     expect(state.metadata.sessionModesV1).toEqual(
       expect.objectContaining({
         v: 1,
-        provider: 'codex',
+        agentId: 'codex',
         updatedAt: 99,
         currentModeId: 'default',
       }),

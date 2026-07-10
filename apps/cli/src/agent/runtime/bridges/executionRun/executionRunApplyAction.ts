@@ -95,6 +95,7 @@ export async function applyExecutionRunAction(args: Readonly<{
       sessionId: run.sessionId,
       intent: 'review',
       backendTarget: run.backendTarget,
+      ...(run.runtimeSettings?.accountSettings ? { accountSettings: run.runtimeSettings.accountSettings } : {}),
       instructions: run.instructions,
       intentInput: {
         kind: 'review_follow_up.v1',

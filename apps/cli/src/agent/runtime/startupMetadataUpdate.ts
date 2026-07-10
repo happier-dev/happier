@@ -1,6 +1,10 @@
 import type { Metadata, PermissionMode } from '@/api/types';
 import { logger } from '@/ui/logger';
-import type { SessionAttachMetadataIdentityPolicy } from '@happier-dev/protocol';
+import type {
+  SessionAttachMetadataIdentityPolicy,
+  SessionModelSelectionIntentV1,
+  SessionModelSelectionV1,
+} from '@happier-dev/protocol';
 
 import {
   mergeSessionMetadataForStartup,
@@ -37,13 +41,14 @@ export function buildPermissionModeOverride(opts: {
 }
 
 export function buildModelOverride(opts: {
-  modelId?: string;
-  modelUpdatedAt?: number;
+  modelSelection?: SessionModelSelectionV1;
 }): ModelOverride {
-  if (typeof opts.modelId !== 'string') return null;
-  const normalized = opts.modelId.trim();
-  if (!normalized) return null;
-  return { modelId: normalized, updatedAt: opts.modelUpdatedAt };
+  if (!opts.modelSelection) return null;
+  return {
+    v: 1,
+    updatedAt: opts.modelSelection.updatedAt,
+    selection: opts.modelSelection.ref,
+  } satisfies SessionModelSelectionIntentV1;
 }
 
 export function applyStartupMetadataUpdateToSession(opts: {

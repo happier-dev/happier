@@ -8,8 +8,19 @@ describe('createModelOverrideSynchronizer', () => {
     const setSessionModel = vi.fn(async (_modelId: string) => {});
 
     const sync = createModelOverrideSynchronizer({
+      agentTargetKey: 'backend:codex',
       session: {
-        getMetadataSnapshot: () => ({ modelOverrideV1: { v: 1, updatedAt: 11, modelId: 'model-b' } } as any),
+        getMetadataSnapshot: () => ({
+          modelSelectionIntentV1: {
+            v: 1,
+            updatedAt: 11,
+            selection: {
+              agentTargetKey: 'backend:codex',
+              providerConnectionId: 'pc_work',
+              modelId: 'model-b',
+            },
+          },
+        } as any),
       },
       runtime: { setSessionModel },
       isStarted: () => started,
@@ -27,6 +38,7 @@ describe('createModelOverrideSynchronizer', () => {
     const setSessionModel = vi.fn(async (_modelId: string) => {});
 
     const sync = createModelOverrideSynchronizer({
+      agentTargetKey: 'backend:codex',
       session: {
         getMetadataSnapshot: () => ({ modelOverrideV1: { v: 1, updatedAt: 21, modelId: 'model-b' } } as any),
       },
@@ -46,6 +58,7 @@ describe('createModelOverrideSynchronizer', () => {
     });
 
     const sync = createModelOverrideSynchronizer({
+      agentTargetKey: 'backend:codex',
       session: {
         getMetadataSnapshot: () => ({ modelOverrideV1: { v: 1, updatedAt: 21, modelId: 'model-b' } } as any),
       },
@@ -78,6 +91,7 @@ describe('createModelOverrideSynchronizer', () => {
     });
 
     const sync = createModelOverrideSynchronizer({
+      agentTargetKey: 'backend:codex',
       session: {
         getMetadataSnapshot: () => ({ modelOverrideV1: { v: 1, updatedAt: 21, modelId: 'model-b' } } as any),
       },
@@ -110,6 +124,7 @@ describe('createModelOverrideSynchronizer', () => {
     });
 
     const sync = createModelOverrideSynchronizer({
+      agentTargetKey: 'backend:codex',
       session: {
         getMetadataSnapshot: () => ({ modelOverrideV1: { v: 1, updatedAt: 31, modelId: 'model-c' } } as any),
       },
@@ -129,5 +144,50 @@ describe('createModelOverrideSynchronizer', () => {
     resolveFirst();
     await Promise.all([flushA, flushB]);
     expect(setSessionModel).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves a clear tombstone timestamp without passing a fake model to the engine', async () => {
+    let metadata: any = {
+      modelSelectionIntentV1: { v: 1, updatedAt: 30, selection: null },
+    };
+    const setSessionModel = vi.fn(async (_modelId: string) => {});
+    const sync = createModelOverrideSynchronizer({
+      agentTargetKey: 'backend:codex',
+      session: { getMetadataSnapshot: () => metadata },
+      runtime: { setSessionModel },
+      isStarted: () => true,
+    });
+
+    sync.syncFromMetadata();
+    await sync.flushPendingAfterStart();
+    expect(setSessionModel).not.toHaveBeenCalled();
+
+    metadata = { modelOverrideV1: { v: 1, updatedAt: 20, modelId: 'older-model' } };
+    sync.syncFromMetadata();
+    await sync.flushPendingAfterStart();
+    expect(setSessionModel).not.toHaveBeenCalled();
+  });
+
+  it('refuses canonical selections for another agent target instead of applying the bare id', () => {
+    const sync = createModelOverrideSynchronizer({
+      agentTargetKey: 'backend:claude',
+      session: {
+        getMetadataSnapshot: () => ({
+          modelSelectionIntentV1: {
+            v: 1,
+            updatedAt: 31,
+            selection: {
+              agentTargetKey: 'backend:codex',
+              providerConnectionId: 'pc_work',
+              modelId: 'wrong-agent-model',
+            },
+          },
+        } as any),
+      },
+      runtime: { setSessionModel: vi.fn(async () => {}) },
+      isStarted: () => true,
+    });
+
+    expect(() => sync.syncFromMetadata()).toThrow(/target mismatch/i);
   });
 });

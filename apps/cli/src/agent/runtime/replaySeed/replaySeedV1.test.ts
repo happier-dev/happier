@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   buildProviderPromptWithReplaySeed,
@@ -129,6 +129,58 @@ describe('replaySeedV1', () => {
 
     expect(calls.map((c) => c.kind)).toEqual(['refresh', 'consume']);
     expect(res.providerPrompt).toBe('SEED\n\nhello');
+  });
+
+  it('does not strand prompt delivery when metadata refresh never resolves', async () => {
+    vi.useFakeTimers();
+    try {
+      let metadata: any = {};
+      const session = {
+        getMetadataSnapshot: () => metadata,
+        refreshSessionSnapshotFromServerBestEffort: vi.fn(() => new Promise<void>(() => {})),
+        updateMetadata: vi.fn(async (_updater: any) => {
+          throw new Error('should not consume a missing seed');
+        }),
+      };
+
+      const resultPromise = resolveProviderPromptWithReplaySeed({
+        session,
+        userText: 'hello',
+        allowSeed: true,
+        localId: 'local-1',
+        nowMs: 999,
+        refreshMetadataBeforeRead: true,
+      });
+
+      await Promise.resolve();
+      expect(session.refreshSessionSnapshotFromServerBestEffort).toHaveBeenCalledWith({
+        reason: 'waitForMetadataUpdate',
+      });
+
+      await vi.advanceTimersByTimeAsync(3_000);
+      const result = await Promise.race([
+        resultPromise,
+        Promise.resolve('still-pending' as const),
+      ]);
+
+      expect(result).toEqual({
+        providerPrompt: 'hello',
+        seedApplied: false,
+        seedText: '',
+      });
+      expect(session.updateMetadata).not.toHaveBeenCalled();
+      metadata = {
+        replaySeedV1: {
+          v: 1,
+          seedText: 'LATE_SEED',
+          sourceSessionId: 'parent',
+          sourceCutoffSeqInclusive: 3,
+          createdAtMs: 123,
+        },
+      };
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('uses a non-empty local metadata snapshot without refreshing before reading replay seed', async () => {
