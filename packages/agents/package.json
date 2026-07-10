@@ -10,6 +10,14 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./permissions": {
+      "types": "./dist/permissions/index.d.ts",
+      "default": "./dist/permissions/index.js"
+    },
+    "./agentSettings": {
+      "types": "./dist/agentSettings/index.d.ts",
+      "default": "./dist/agentSettings/index.js"
+    },
     "./session/controls/checkpoints": {
       "types": "./dist/session/controls/checkpoints.d.ts",
       "default": "./dist/session/controls/checkpoints.js"
@@ -17,6 +25,10 @@
     "./session/state/metadataWriters": {
       "types": "./dist/session/state/metadataWriters.d.ts",
       "default": "./dist/session/state/metadataWriters.js"
+    },
+    "./permissions/privilege": {
+      "types": "./dist/permissions/privilege.d.ts",
+      "default": "./dist/permissions/privilege.js"
     }
   },
   "files": [
@@ -25,7 +37,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "node -e \"const fs=require('node:fs');fs.rmSync('dist', { recursive: true, force: true });fs.rmSync('.tsbuildinfo', { force: true });\" && node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
+    "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
+    "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "postinstall:real": "yarn -s build",
     "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(/(^|[\\\\\\\\/])node_modules([\\\\\\\\/]|$)/i.test(process.cwd()))process.exit(0);try{const gate=require('../../scripts/postinstall/shouldRunPostinstall.cjs');if(!gate.shouldRunPostinstall({workspace:'agents',scope:process.env.HAPPIER_INSTALL_SCOPE||''}))process.exit(0);}catch{}if(!fs.existsSync('tsconfig.json'))process.exit(0);const run=(cmd,args)=>cp.spawnSync(cmd,args,{stdio:'inherit'});const npmExec=process.env.npm_execpath;let r;if(npmExec){r=run(process.execPath,[npmExec,'run','-s','postinstall:real']);}else{r=run(process.platform==='win32'?'yarn.cmd':'yarn',['-s','postinstall:real']);if(r.error&&process.platform==='win32'){r=run('yarn',['-s','postinstall:real']);}}if(r.error){console.error(r.error.message);process.exit(1);}process.exit(r.status??1);\"",
     "test": "vitest run --config ./vitest.config.ts",

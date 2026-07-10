@@ -4,7 +4,8 @@ import type { AgentModelConfig } from '../models.js';
 import type { AgentSessionModeDescriptor, AgentSessionModesKind } from '../sessionModes.js';
 import type { AgentCore, AgentId } from '../types.js';
 import type { AgentCliRuntimeSpec } from '../cli/runtime.js';
-import type { ProviderSettingsDefinition } from '../providerSettings/index.js';
+import type { AgentSettingsDefinition } from '../agentSettings/index.js';
+import type { BuiltInAcpConfig } from '../acp.js';
 
 /**
  * Canonical “agent definition” contract exported by bundled first-party extensions.
@@ -21,6 +22,7 @@ export type AgentDefinition = Readonly<{
   authProbeConfig: AgentAuthProbeConfig;
   localCli: AgentLocalCliConfig;
   agentCliRuntime: AgentCliRuntimeSpec;
-  providerSettings: ProviderSettingsDefinition | null;
+  builtInAcpConfig?: BuiltInAcpConfig | null;
+  agentSettings: AgentSettingsDefinition | null;
   runtimeContributions?: Readonly<Record<string, unknown>>;
 }>;

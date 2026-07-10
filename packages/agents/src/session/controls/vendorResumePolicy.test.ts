@@ -18,11 +18,22 @@ describe('vendorResumePolicy', () => {
     expect(resolveVendorResumeIdFromSessionMetadata('claude', { claudeSessionId: '   ' })).toBeNull();
   });
 
-  it('prefers vendor session ids from agentRuntimeDescriptorV1 over legacy top-level metadata', () => {
+  it('prefers vendor session ids from runtimeDescriptorV1 over legacy top-level metadata', () => {
+    expect(resolveVendorResumeIdFromSessionMetadata('codex', {
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        provider: { backendMode: 'appServer', providerSessionId: 'runtime_thread' },
+      },
+      codexSessionId: 'legacy_thread',
+    })).toBe('runtime_thread');
+  });
+
+  it('keeps legacy agentRuntimeDescriptorV1 read-compat for vendor session ids', () => {
     expect(resolveVendorResumeIdFromSessionMetadata('codex', {
       agentRuntimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: { backendMode: 'appServer', providerSessionId: 'runtime_thread' },
       },
       codexSessionId: 'legacy_thread',
@@ -47,7 +58,7 @@ describe('vendorResumePolicy', () => {
           piSessionId: 'p1',
           agentRuntimeDescriptorV1: {
             v: 1,
-            providerId: 'pi',
+            agentId: 'pi',
             provider: {
               resumeStrategy: 'sessionFileAbsolutePreferred',
               providerSessionId: 'p1',
@@ -172,7 +183,7 @@ describe('vendorResumePolicy', () => {
           codexSessionId: 'x1',
           sessionConfigOptionsV1: {
             v: 1,
-            provider: 'codex',
+            agentId: 'codex',
             updatedAt: 1,
             options: [],
           },

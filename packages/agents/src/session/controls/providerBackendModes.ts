@@ -1,5 +1,4 @@
 import { getProviderSessionControlAdapter } from '../../runtime/controlSurface/sessionControlAdapterRegistry.js';
-import type { CodexBackendMode } from '../../providerSettings/definitions/codex.js';
 import type { AgentId } from '../../types.js';
 import type { AgentRuntimeKind } from '../../runtimeKinds.js';
 
@@ -13,19 +12,7 @@ export function resolveProviderSessionBackendMode(params: Readonly<{
   const adapter = getProviderSessionControlAdapter(params.agentId);
   return adapter?.resolvePersistedSessionRuntimeKind?.(params.metadata)
     ?? (adapter ? resolveAgentConfiguredRuntimeKind({
-      agentId: params.agentId,
-      accountSettings: params.accountSettings,
-    }) : null);
-}
-
-export function resolveCodexSessionBackendMode(params: Readonly<{
-  metadata: unknown;
-  accountSettings?: Record<string, unknown> | null;
-}>): CodexBackendMode | null {
-  const backendMode = resolveProviderSessionBackendMode({
-    agentId: 'codex',
-    metadata: params.metadata,
+    agentId: params.agentId,
     accountSettings: params.accountSettings,
-  });
-  return backendMode === 'acp' || backendMode === 'appServer' ? backendMode : null;
+  }) : null);
 }

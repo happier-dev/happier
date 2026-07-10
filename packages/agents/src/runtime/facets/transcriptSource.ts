@@ -14,6 +14,7 @@ export type TranscriptSourceReadAfter<TItem> = Readonly<{
 
 export type TranscriptSourceFollowUpdate<TItem> = Readonly<{
   items: TItem[];
+  fromCursor?: string | null;
   nextCursor: string | null;
   truncated: boolean;
 }>;

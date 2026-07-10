@@ -6,23 +6,19 @@ import {
     type ConnectedServicesProviderStateSharingModeV1,
 } from '@happier-dev/protocol';
 import {
-    AGENT_PROVIDER_IDS,
-    isAgentProviderId,
-    type AgentProviderId,
-} from './generated/agentProviderIds.js';
+    AGENT_IDS,
+    isAgentId,
+    type AgentId,
+} from './generated/agentIds.js';
 import type { AnyAgentRuntimeKindsManifest } from './runtimeKinds.js';
 
 export {
-    AGENT_PROVIDER_IDS,
-    isAgentProviderId,
-    type AgentProviderId,
+    AGENT_IDS,
+    isAgentId,
+    type AgentId,
 };
-export const CANONICAL_AGENT_IDS = AGENT_PROVIDER_IDS;
-export type CanonicalAgentId = AgentProviderId;
-export type AgentId = AgentProviderId;
-export const AGENT_IDS: readonly AgentId[] = AGENT_PROVIDER_IDS;
-
-export const isAgentId = isAgentProviderId;
+export const CANONICAL_AGENT_IDS = AGENT_IDS;
+export type CanonicalAgentId = AgentId;
 
 export const PERMISSION_MODES = SESSION_PERMISSION_MODES;
 

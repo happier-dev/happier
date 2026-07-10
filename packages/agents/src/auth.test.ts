@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { AGENT_IDS, AGENT_PROVIDER_IDS } from './types.js';
+import { AGENT_IDS } from './types.js';
+import { BUNDLED_AGENT_DEFINITIONS_BY_ID } from './generated/bundledAgentDefinitions.js';
 import {
   AGENT_AUTH_PROBE_CONFIG,
   type AgentAuthProbeConfig,
@@ -8,17 +9,23 @@ import {
   getAgentAuthProbeConfig,
 } from './auth.js';
 import { CANONICAL_AGENT_LOCAL_CLI_CONFIG } from './localCli.js';
-import {
-  legacyCustomAcpCompat,
-} from './index.js';
+import * as legacyCustomAcpCompat from './compat/customAcp.js';
 
 describe('AGENT_AUTH_PROBE_CONFIG', () => {
   it('keeps the shared auth probe artifact map canonical-only', () => {
-    expect(Object.keys(AGENT_AUTH_PROBE_CONFIG).sort()).toEqual([...AGENT_PROVIDER_IDS].sort());
+    expect(Object.keys(AGENT_AUTH_PROBE_CONFIG).sort()).toEqual([...AGENT_IDS].sort());
+  });
+
+  it('sources canonical provider auth probe facts from bundled provider definitions', () => {
+    for (const providerId of AGENT_IDS) {
+      expect(CANONICAL_AGENT_AUTH_PROBE_CONFIG[providerId]).toBe(
+        BUNDLED_AGENT_DEFINITIONS_BY_ID[providerId].authProbeConfig,
+      );
+    }
   });
 
   it('keeps legacy customAcp out of the canonical auth probe artifacts', () => {
-    expect(Object.keys(CANONICAL_AGENT_AUTH_PROBE_CONFIG).sort()).toEqual([...AGENT_PROVIDER_IDS].sort());
+    expect(Object.keys(CANONICAL_AGENT_AUTH_PROBE_CONFIG).sort()).toEqual([...AGENT_IDS].sort());
     expect(CANONICAL_AGENT_AUTH_PROBE_CONFIG).not.toHaveProperty('customAcp');
   });
 
@@ -48,6 +55,33 @@ describe('AGENT_AUTH_PROBE_CONFIG', () => {
       backgroundChecks: 'safe',
       envVars: ['OPENAI_API_KEY', 'CODEX_API_KEY'],
     });
+  });
+
+  it('keeps Gemini auth probing scoped to API-key and Vertex environment facts', () => {
+    const config = getAgentAuthProbeConfig('gemini');
+    const serializedConfig = JSON.stringify(config);
+
+    expect(config).toMatchObject({
+      statusCommand: null,
+      parser: 'envOnly',
+      backgroundChecks: 'safe',
+      envVars: [
+        'GEMINI_API_KEY',
+        'GOOGLE_API_KEY',
+        'GOOGLE_GENAI_USE_VERTEXAI',
+        'GOOGLE_CLOUD_PROJECT',
+        'GOOGLE_CLOUD_LOCATION',
+      ],
+      credentialPaths: [],
+    });
+    for (const forbiddenFact of [
+      'oauth_creds.json',
+      'auth.json',
+      'application_default_credentials.json',
+      'gcloud ADC',
+    ]) {
+      expect(serializedConfig).not.toContain(forbiddenFact);
+    }
   });
 
   it('declares Cursor auth probing via about json with API-key fallback', () => {

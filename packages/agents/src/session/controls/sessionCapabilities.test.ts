@@ -76,7 +76,7 @@ describe('sessionCapabilities', () => {
     expect(getAgentSessionCapability('codex', 'usageLimitRecovery.checkNow')).toBe('supported');
     expect(getAgentSessionCapability('opencode', 'usageLimitRecovery.checkNow')).toBe('supported');
     expect(getAgentSessionCapability('claude', 'usageLimitRecovery.checkNow')).toBe('supported');
-    expect(getAgentSessionCapability('gemini', 'usageLimitRecovery.checkNow')).toBe('supported');
+    expect(getAgentSessionCapability('gemini', 'usageLimitRecovery.checkNow')).toBe('unsupported');
     expect(getAgentSessionCapability('pi', 'usageLimitRecovery.checkNow')).toBe('supported');
   });
 
@@ -85,7 +85,7 @@ describe('sessionCapabilities', () => {
     expect(isAgentSessionCapabilitySupported('claude', 'sessionRollback.conversation')).toBe(false);
     expect(isAgentSessionCapabilitySupported('opencode', 'usageLimitRecovery.checkNow')).toBe(true);
     expect(isAgentSessionCapabilitySupported('claude', 'usageLimitRecovery.checkNow')).toBe(true);
-    expect(isAgentSessionCapabilitySupported('gemini', 'usageLimitRecovery.checkNow')).toBe(true);
+    expect(isAgentSessionCapabilitySupported('gemini', 'usageLimitRecovery.checkNow')).toBe(false);
     expect(isAgentSessionCapabilitySupported('pi', 'usageLimitRecovery.checkNow')).toBe(true);
   });
 
@@ -97,6 +97,51 @@ describe('sessionCapabilities', () => {
         metadata: { codexSessionId: 'c1', codexBackendMode: 'mcp' },
       }),
     ).toBe('unsupported');
+
+    expect(
+      evaluateAgentSessionCapabilitySupport({
+        agentId: 'codex',
+        capability: 'sessionRollback.conversation',
+        metadata: {
+          codexSessionId: 'c1',
+          agentRuntimeDescriptorV1: {
+            v: 1,
+            agentId: 'codex',
+            provider: { backendMode: 'mcp' },
+          },
+        },
+      }),
+    ).toBe('unsupported');
+
+    expect(
+      evaluateAgentSessionCapabilitySupport({
+        agentId: 'codex',
+        capability: 'sessionRollback.conversation',
+        metadata: {
+          codexSessionId: 'c1',
+          agentRuntimeDescriptorV1: {
+            v: 1,
+            agentId: 'codex',
+            provider: { backendMode: 'acp' },
+          },
+        },
+      }),
+    ).toBe('unsupported');
+
+    expect(
+      evaluateAgentSessionCapabilitySupport({
+        agentId: 'codex',
+        capability: 'sessionRollback.conversation',
+        metadata: {
+          codexSessionId: 'c1',
+          agentRuntimeDescriptorV1: {
+            v: 1,
+            agentId: 'codex',
+            provider: { backendMode: 'appServer' },
+          },
+        },
+      }),
+    ).toBe('supported');
 
     expect(
       evaluateAgentSessionCapabilitySupport({
@@ -125,7 +170,7 @@ describe('sessionCapabilities', () => {
           codexSessionId: 'c1',
           agentRuntimeDescriptorV1: {
             v: 1,
-            providerId: 'codex',
+            agentId: 'codex',
             provider: { backendMode: 'appServer' },
           },
         },
@@ -175,7 +220,7 @@ describe('sessionCapabilities', () => {
         metadata: {
           agentRuntimeDescriptorV1: {
             v: 1,
-            providerId: 'opencode',
+            agentId: 'opencode',
             provider: { backendMode: 'server' },
           },
           opencodeBackendMode: 'acp',

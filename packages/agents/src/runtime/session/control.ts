@@ -1,3 +1,10 @@
+import type {
+  SessionConnectedServiceAuthApplyGenerationRequestV1,
+  SessionConnectedServiceAuthApplyGenerationResponseV1,
+  SessionConnectedServiceAuthReadRuntimeIdentityRequestV1,
+  SessionConnectedServiceAuthReadRuntimeIdentityResponseV1,
+} from '@happier-dev/protocol';
+
 export type HostRuntimeControlDiagnosticV1 = Readonly<{
   code: string;
   message?: string;
@@ -11,6 +18,10 @@ export type HostRuntimeControlFailureCodeV1 =
   | 'app_server_control_failed'
   | 'session_transport_unavailable'
   | 'session_transport_invalidation_failed'
+  | 'connected_service_auth_apply_unavailable'
+  | 'connected_service_auth_apply_failed'
+  | 'connected_service_runtime_identity_unavailable'
+  | 'connected_service_runtime_identity_failed'
   | 'connected_service_refresh_unavailable'
   | 'connected_service_refresh_failed'
   | 'resume_reachability_unavailable'
@@ -71,7 +82,27 @@ export type HostRuntimeControlSessionDelegateV1 = Readonly<{
   invalidateConnectedServiceAuthTransports?: (
     options?: HostRuntimeControlRequestOptionsV1,
   ) => Promise<HostRuntimeControlResultV1<true>>;
+  applyConnectedServiceAuthGeneration?: (
+    input: HostRuntimeControlConnectedServiceAuthApplyGenerationInputV1,
+    options?: HostRuntimeControlRequestOptionsV1,
+  ) => Promise<HostRuntimeControlResultV1<HostRuntimeControlConnectedServiceAuthApplyGenerationOutputV1>>;
+  readConnectedServiceRuntimeIdentity?: (
+    input: HostRuntimeControlConnectedServiceRuntimeIdentityInputV1,
+    options?: HostRuntimeControlRequestOptionsV1,
+  ) => Promise<HostRuntimeControlResultV1<HostRuntimeControlConnectedServiceRuntimeIdentityOutputV1>>;
 }>;
+
+export type HostRuntimeControlConnectedServiceAuthApplyGenerationInputV1 =
+  SessionConnectedServiceAuthApplyGenerationRequestV1;
+
+export type HostRuntimeControlConnectedServiceAuthApplyGenerationOutputV1 =
+  SessionConnectedServiceAuthApplyGenerationResponseV1;
+
+export type HostRuntimeControlConnectedServiceRuntimeIdentityInputV1 =
+  SessionConnectedServiceAuthReadRuntimeIdentityRequestV1;
+
+export type HostRuntimeControlConnectedServiceRuntimeIdentityOutputV1 =
+  SessionConnectedServiceAuthReadRuntimeIdentityResponseV1;
 
 export type HostRuntimeControlConnectedServiceRefreshInputV1 = Readonly<{
   serviceId: string;
@@ -117,6 +148,14 @@ export type HostRuntimeControlServiceV1 = Readonly<{
     invalidateConnectedServiceAuthTransports: (
       options?: HostRuntimeControlRequestOptionsV1,
     ) => Promise<HostRuntimeControlResultV1<true>>;
+    applyConnectedServiceAuthGeneration?: (
+      input: HostRuntimeControlConnectedServiceAuthApplyGenerationInputV1,
+      options?: HostRuntimeControlRequestOptionsV1,
+    ) => Promise<HostRuntimeControlResultV1<HostRuntimeControlConnectedServiceAuthApplyGenerationOutputV1>>;
+    readConnectedServiceRuntimeIdentity?: (
+      input: HostRuntimeControlConnectedServiceRuntimeIdentityInputV1,
+      options?: HostRuntimeControlRequestOptionsV1,
+    ) => Promise<HostRuntimeControlResultV1<HostRuntimeControlConnectedServiceRuntimeIdentityOutputV1>>;
   }>;
   connectedServices: Readonly<{
     refreshRuntimeAuth: (

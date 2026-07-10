@@ -31,6 +31,8 @@ export {
   writeSessionStateFieldToMetadata,
 };
 
+export { normalizeLegacyAgentVocabularySessionMetadata } from './legacyAgentVocabularyMetadata.js';
+
 export type SessionStateMetadataUpdateV1<F extends SessionStateFieldId = SessionStateFieldId> = Readonly<{
   fieldId: F;
   value: SessionStateFieldValue<F>;
@@ -111,7 +113,8 @@ export function applyModelIntentSessionMetadata<TMetadata extends SessionMetadat
   value: SessionStateFieldWriteValue<'intent.model'>,
 ): TMetadata {
   return writeModelIntentToMetadata(metadata, {
-    modelId: value.modelId,
+    v: 1,
+    selection: value.selection,
     updatedAt: value.updatedAt,
   }) as TMetadata;
 }

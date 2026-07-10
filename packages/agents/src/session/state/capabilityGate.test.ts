@@ -41,6 +41,21 @@ describe('isSessionStateDirectionSupported', () => {
     })).toEqual({ supported: true });
   });
 
+  it('allows runtime activity provider-to-Happier when advertised', () => {
+    expect(isSessionStateDirectionSupported({
+      capabilities: {
+        runtime: {
+          activity: {
+            supported: true,
+            providerToHappier: { supported: true, source: 'event' },
+          },
+        },
+      },
+      fieldId: 'runtime.activity',
+      direction: 'providerToHappier',
+    })).toEqual({ supported: true });
+  });
+
   it('blocks deferred view fields even when a provider advertises support', () => {
     expect(isSessionStateDirectionSupported({
       capabilities: {

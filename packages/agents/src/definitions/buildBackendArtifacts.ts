@@ -1,26 +1,26 @@
 import { AGENT_IDS, type AgentId } from '../types.js';
 import type { BackendCatalogDefinition, BackendDefinitionContractV1 } from './types.js';
-import { PROVIDER_ARTIFACTS } from './buildProviderArtifacts.js';
+import { AGENT_ARTIFACTS } from './buildAgentArtifacts.js';
 import { isConcreteBackendDefinitionAgentId } from './resolveBackendOwnership.js';
 import { buildEngineSpecFromRuntimeKindsManifest } from '../runtime/engine/contracts.js';
 
 export const BACKEND_DEFINITION_AGENT_IDS: readonly AgentId[] = AGENT_IDS.filter(isConcreteBackendDefinitionAgentId);
 
 function createBackendDefinition(agentId: AgentId): BackendCatalogDefinition {
-  const provider = PROVIDER_ARTIFACTS.providerDefinitionsById.get(agentId);
-  if (provider === null || provider === undefined) {
-    throw new Error(`Missing provider definition for backend definition: ${agentId}`);
+  const agent = AGENT_ARTIFACTS.agentDefinitionsById.get(agentId);
+  if (agent === null || agent === undefined) {
+    throw new Error(`Missing agent definition for backend definition: ${agentId}`);
   }
 
   return {
     id: agentId,
-    providerId: agentId,
-    provider,
+    agentId,
+    agent,
     engine: buildEngineSpecFromRuntimeKindsManifest({
       engineId: agentId,
-      runtimeKindsManifest: provider.core.runtimeKinds ?? null,
+      runtimeKindsManifest: agent.core.runtimeKinds ?? null,
     }),
-    runtimeKinds: provider.core.runtimeKinds ?? null,
+    runtimeKinds: agent.core.runtimeKinds ?? null,
   };
 }
 
@@ -31,7 +31,7 @@ const BACKEND_DEFINITIONS_BY_ID = new Map<AgentId, BackendCatalogDefinition>(
 const BACKEND_DEFINITION_CONTRACTS = Object.freeze(BACKEND_DEFINITION_AGENT_IDS.map((agentId) => ({
   kindVersion: 1 as const,
   id: agentId,
-  providerId: agentId,
+  agentId,
 } satisfies BackendDefinitionContractV1)));
 const BACKEND_DEFINITION_CONTRACTS_BY_ID = new Map<string, BackendDefinitionContractV1>(
   BACKEND_DEFINITION_CONTRACTS.map((definition) => [definition.id, definition]),

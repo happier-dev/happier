@@ -1,7 +1,6 @@
 import {
   writeAcpConfigOptionIntentToMetadata,
   writeAcpSessionModeIntentToMetadata,
-  writeModelIntentToMetadata,
   writePermissionModeIntentToMetadata,
   writeStringOverrideIntentToMetadata,
 } from './bindings/intent.js';
@@ -38,10 +37,9 @@ export function computeNextMetadataStringOverrideV1(params: Readonly<{
   if (!overrideKey || !valueKey) return params.metadata;
 
   if (overrideKey === MODEL_OVERRIDE_KEY && valueKey === 'modelId') {
-    return writeModelIntentToMetadata(params.metadata, {
-      modelId: params.value,
-      updatedAt: params.updatedAt,
-    });
+    // Deployed modelOverrideV1 is read-only compatibility. New model writes must use
+    // SessionModelSelectionIntentV1 through the typed intent.model state publisher.
+    return params.metadata;
   }
 
   if (
@@ -54,7 +52,7 @@ export function computeNextMetadataStringOverrideV1(params: Readonly<{
     });
   }
 
-  if (valueKey !== 'modelId' && valueKey !== 'modeId') return params.metadata;
+  if (valueKey !== 'modeId') return params.metadata;
   return writeStringOverrideIntentToMetadata({
     metadata: params.metadata,
     overrideKey,

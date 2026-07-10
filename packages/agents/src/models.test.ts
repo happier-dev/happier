@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import * as modelsModule from './models.js';
-import { AGENT_IDS, AGENT_PROVIDER_IDS } from './types.js';
+import { AGENT_IDS } from './types.js';
 import { LEGACY_CONFIGURED_BACKEND_SENTINEL_ID } from './compat/legacyConfiguredBackend.js';
 import { BUNDLED_AGENT_DEFINITIONS_BY_ID } from './generated/bundledAgentDefinitions.js';
-import { legacyCustomAcpCompat } from './index.js';
+import * as legacyCustomAcpCompat from './compat/customAcp.js';
 import {
   AGENT_MODEL_CONFIG,
   CANONICAL_AGENT_MODEL_CONFIG,
@@ -14,7 +14,7 @@ import {
 
 describe('agent model config', () => {
   it('covers every canonical agent in the shared model artifact map', () => {
-    expect(Object.keys(AGENT_MODEL_CONFIG).sort()).toEqual([...AGENT_PROVIDER_IDS].sort());
+    expect(Object.keys(AGENT_MODEL_CONFIG).sort()).toEqual([...AGENT_IDS].sort());
     for (const agentId of AGENT_IDS) {
       expect(getAgentModelConfig(agentId)).toBeDefined();
     }
@@ -101,15 +101,35 @@ describe('agent model config', () => {
     expect(CANONICAL_AGENT_MODEL_CONFIG.claude).toBe(BUNDLED_AGENT_DEFINITIONS_BY_ID.claude.modelConfig);
   });
 
-  it('ships a non-empty static model list for Codex as a robust fallback when dynamic probing fails', () => {
+  it('sources canonical provider model facts from bundled provider definitions', () => {
+    for (const providerId of AGENT_IDS) {
+      expect(CANONICAL_AGENT_MODEL_CONFIG[providerId]).toBe(
+        BUNDLED_AGENT_DEFINITIONS_BY_ID[providerId].modelConfig,
+      );
+    }
+  });
+
+  it('does not ship named static Codex models because Codex model truth is dynamic', () => {
     const codex = getAgentModelConfig('codex');
     const codexModels = getAgentStaticModels('codex');
 
-    // Codex dynamic probing can fail transiently (missing CLI, auth not ready). The UI should still
-    // have a usable model picker without requiring a refresh.
     expect(codex.supportsSelection).toBe(true);
-    expect(codexModels.length).toBeGreaterThan(1);
-    expect(codexModels.map((model) => model.id)).toContain('gpt-5.4');
+    expect(codex.dynamicProbe).toBe('auto');
+    expect(codex.staticModels).toBeUndefined();
+    expect(codex.allowedModes).toEqual(['default']);
+    expect(codexModels).toEqual([{ id: 'default', name: 'default' }]);
+  });
+
+  it('constrains Gemini freeform model ids to Gemini resource names', () => {
+    const gemini = getAgentModelConfig('gemini');
+
+    expect(gemini.supportsFreeform).toBe(true);
+    expect(gemini.dynamicProbe).toBe('static-only');
+    expect(gemini.freeformModelIdPrefixes).toEqual([
+      'gemini-',
+      'models/gemini-',
+      'publishers/google/models/gemini-',
+    ]);
   });
 
   it('allows Kimi to use ACP-backed dynamic model probing', () => {

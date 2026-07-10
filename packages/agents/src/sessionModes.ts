@@ -1,5 +1,5 @@
 import type { AgentId, CanonicalAgentId } from './types.js';
-import { AGENT_PROVIDER_IDS } from './types.js';
+import { AGENT_IDS } from './types.js';
 import { mergeAuthoredWithGeneratedAgentFacts } from './definitions/generatedFacts.js';
 import type { AgentRuntimeModeSwitchKind } from './advancedModes.js';
 
@@ -23,18 +23,6 @@ export type AgentSessionModeDescriptor = Readonly<{
  * - avoid duplicating “does this agent expose ACP modes?” logic across packages
  */
 const AUTHORED_AGENT_SESSION_MODE_DESCRIPTORS = Object.freeze({
-  claude: { source: 'provider-native', semantics: 'agent-modes', runtimeSwitch: 'provider-native' },
-  codex: { source: 'acp', semantics: 'policy-presets', runtimeSwitch: 'metadata-gating' },
-  gemini: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },
-  auggie: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },
-  qwen: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },
-  kimi: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },
-  kilo: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
-  kiro: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
-  cursor: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
-  ohMyPi: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
-  pi: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },
-  copilot: { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' },
 } satisfies Partial<Record<CanonicalAgentId, AgentSessionModeDescriptor>>);
 
 export const CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS: Readonly<Record<CanonicalAgentId, AgentSessionModeDescriptor>> =
@@ -61,7 +49,7 @@ function descriptorToSessionModesKind(descriptor: AgentSessionModeDescriptor): A
 
 export const CANONICAL_AGENT_SESSION_MODES: Readonly<Record<CanonicalAgentId, AgentSessionModesKind>> = Object.freeze(
   Object.fromEntries(
-    AGENT_PROVIDER_IDS.map((agentId) => [
+    AGENT_IDS.map((agentId) => [
       agentId,
       descriptorToSessionModesKind(CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS[agentId]),
     ]),

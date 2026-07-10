@@ -265,7 +265,7 @@ describe('voiceAgentPrompt', () => {
     });
 
     expect(localPrompt).toContain('Discovery checklist:');
-    expect(localPrompt).toContain('- Use listAgentBackends before choosing backendTargetKeys internally');
+    expect(localPrompt).toMatch(/Use listAgentBackends before choosing .*backendTargetKeys internally/);
     expect(localPrompt).toContain('- Use listSessions before choosing sessionId internally');
     expect(localPrompt).toContain('- If the exact session title is not in the first listSessions page, continue with its next cursor or use spawnSessionPicker');
     expect(localPrompt).toContain('- Prefer spawnSessionPicker if the user has not already chosen an exact path');

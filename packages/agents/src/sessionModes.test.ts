@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { AGENT_IDS, AGENT_PROVIDER_IDS } from './types.js';
-import { legacyCustomAcpCompat } from './index.js';
+import { AGENT_IDS } from './types.js';
+import { BUNDLED_AGENT_DEFINITIONS_BY_ID } from './generated/bundledAgentDefinitions.js';
+import * as legacyCustomAcpCompat from './compat/customAcp.js';
 import {
   AGENT_SESSION_MODE_DESCRIPTORS,
   AGENT_SESSION_MODES,
@@ -39,6 +40,14 @@ describe('sessionModes', () => {
     });
   });
 
+  it('sources canonical provider session-mode facts from bundled provider definitions', () => {
+    for (const providerId of AGENT_IDS) {
+      expect(CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS[providerId]).toBe(
+        BUNDLED_AGENT_DEFINITIONS_BY_ID[providerId].sessionModeDescriptor,
+      );
+    }
+  });
+
   it('keeps flat compatibility shims aligned with the structured descriptor', () => {
     expect(getAgentSessionModesKind('claude')).toBe('staticAgentModes');
     expect(getAgentSessionModesKind('opencode')).toBe('acpAgentModes');
@@ -54,16 +63,16 @@ describe('sessionModes', () => {
   });
 
   it('keeps the shared session-mode artifacts canonical-only while serving compat lookups explicitly', () => {
-    expect(Object.keys(AGENT_SESSION_MODE_DESCRIPTORS).sort()).toEqual([...AGENT_PROVIDER_IDS].sort());
-    expect(Object.keys(AGENT_SESSION_MODES).sort()).toEqual([...AGENT_PROVIDER_IDS].sort());
+    expect(Object.keys(AGENT_SESSION_MODE_DESCRIPTORS).sort()).toEqual([...AGENT_IDS].sort());
+    expect(Object.keys(AGENT_SESSION_MODES).sort()).toEqual([...AGENT_IDS].sort());
     for (const agentId of AGENT_IDS) {
       expect(getAgentSessionModeDescriptor(agentId)).toBeDefined();
     }
   });
 
   it('keeps legacy customAcp out of the canonical session-mode artifacts', () => {
-    expect(Object.keys(CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS).sort()).toEqual([...AGENT_PROVIDER_IDS].sort());
-    expect(Object.keys(CANONICAL_AGENT_SESSION_MODES).sort()).toEqual([...AGENT_PROVIDER_IDS].sort());
+    expect(Object.keys(CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS).sort()).toEqual([...AGENT_IDS].sort());
+    expect(Object.keys(CANONICAL_AGENT_SESSION_MODES).sort()).toEqual([...AGENT_IDS].sort());
     expect(CANONICAL_AGENT_SESSION_MODE_DESCRIPTORS).not.toHaveProperty('customAcp');
     expect(CANONICAL_AGENT_SESSION_MODES).not.toHaveProperty('customAcp');
     expect(AGENT_SESSION_MODE_DESCRIPTORS).not.toHaveProperty('customAcp');

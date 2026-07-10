@@ -11,10 +11,10 @@ export type RuntimeDescriptor = Readonly<{
   rawProvider: Readonly<Record<string, unknown>>;
 }>;
 
-function readRuntimeHandleFromProviderExtra(provider: Record<string, unknown>): Readonly<Record<string, unknown>> | null {
-  const providerExtra = asRecord(provider.providerExtra);
-  if (!providerExtra) return null;
-  return asRecord(providerExtra.runtimeHandle);
+function readRuntimeHandleFromAgentExtra(agentPayload: Record<string, unknown>): Readonly<Record<string, unknown>> | null {
+  const agentExtra = asRecord(agentPayload.agentExtra);
+  if (!agentExtra) return null;
+  return asRecord(agentExtra.runtimeHandle);
 }
 
 function readProviderSessionIdCompat(provider: Readonly<Record<string, unknown>>): string | null {
@@ -29,28 +29,28 @@ export function readNormalizedRuntimeDescriptor(metadata: unknown): RuntimeDescr
   const parsed = readRuntimeDescriptorV1FromMetadata(metadataRecord);
   if (!parsed) return null;
 
-  const providerReader = getRuntimeDescriptorReader(parsed.providerId);
+  const providerReader = getRuntimeDescriptorReader(parsed.agentId);
   if (providerReader) {
     const providerDescriptor = providerReader(metadataRecord);
     if (providerDescriptor) {
       return {
-        providerId: providerDescriptor.providerId,
+        providerId: providerDescriptor.agentId,
         runtimeKind: normalizeTrimmedString(providerDescriptor.runtimeKind),
         providerSessionId: normalizeTrimmedString(providerDescriptor.providerSessionId),
-        runtimeHandle: readRuntimeHandleFromProviderExtra(parsed.provider as Record<string, unknown>)
+        runtimeHandle: readRuntimeHandleFromAgentExtra(parsed.agent as Record<string, unknown>)
           ?? providerDescriptor.runtimeHandle,
-        rawProvider: parsed.provider as Readonly<Record<string, unknown>>,
+        rawProvider: parsed.agent as Readonly<Record<string, unknown>>,
       };
     }
   }
 
-  const provider = asRecord(parsed.provider);
-  if (!provider) return null;
+  const agentPayload = asRecord(parsed.agent);
+  if (!agentPayload) return null;
   return {
-    providerId: parsed.providerId,
-    runtimeKind: normalizeTrimmedString(provider.backendMode),
-    providerSessionId: readProviderSessionIdCompat(provider),
-    runtimeHandle: readRuntimeHandleFromProviderExtra(provider),
-    rawProvider: provider,
+    providerId: parsed.agentId,
+    runtimeKind: normalizeTrimmedString(agentPayload.backendMode),
+    providerSessionId: readProviderSessionIdCompat(agentPayload),
+    runtimeHandle: readRuntimeHandleFromAgentExtra(agentPayload),
+    rawProvider: agentPayload,
   };
 }

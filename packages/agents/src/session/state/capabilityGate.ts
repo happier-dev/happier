@@ -18,7 +18,9 @@ const FIELD_CAPABILITY_PATH = {
   'intent.acpConfigOption': ['intent', 'acpConfigOption'],
   'display.title': ['display', 'title'],
   'runtime.workState': ['runtime', 'workState'],
+  'runtime.activity': ['runtime', 'activity'],
   'runtime.usageLimitRecovery': ['runtime', 'usageLimitRecovery'],
+  'runtime.sessionRunner': ['runtime', 'sessionRunner'],
   'view.readState': ['view', 'readState'],
   'view.attention': ['view', 'attention'],
 } as const satisfies Record<SessionStateFieldId, readonly [SessionStateFieldFamily, string]>;

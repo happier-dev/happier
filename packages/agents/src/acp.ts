@@ -1,5 +1,5 @@
-import type { AgentId } from './types.js';
-import { getAgentCliRuntimeSpec } from './cli/runtime.js';
+import { AGENT_IDS, type AgentId } from './types.js';
+import { BUNDLED_AGENT_DEFINITIONS_BY_ID } from './generated/bundledAgentDefinitions.js';
 
 export type BuiltInAcpTransportProfile = 'generic' | 'kiro';
 export type BuiltInAcpYesNoAuto = 'yes' | 'no' | 'auto';
@@ -17,36 +17,14 @@ export type BuiltInAcpConfig = Readonly<{
   promptImageSupport: BuiltInAcpYesNoAuto;
 }>;
 
-function providerLauncherCommand(agentId: AgentId): string {
-  return getAgentCliRuntimeSpec(agentId).binaryName;
-}
-
-export const BUILT_IN_ACP_CONFIG: Readonly<Partial<Record<AgentId, BuiltInAcpConfig>>> = Object.freeze({
-  ohMyPi: {
-    agentId: 'ohMyPi',
-    launcher: {
-      command: providerLauncherCommand('ohMyPi'),
-      args: ['--mode', 'acp'],
-    },
-    transportProfile: 'generic',
-    supportsLoadSession: true,
-    supportsModes: 'yes',
-    supportsModels: 'yes',
-    promptImageSupport: 'yes',
-  },
-  kiro: {
-    agentId: 'kiro',
-    launcher: {
-      command: providerLauncherCommand('kiro'),
-      args: ['acp'],
-    },
-    transportProfile: 'kiro',
-    supportsLoadSession: true,
-    supportsModes: 'yes',
-    supportsModels: 'yes',
-    promptImageSupport: 'yes',
-  },
-});
+export const BUILT_IN_ACP_CONFIG: Readonly<Partial<Record<AgentId, BuiltInAcpConfig>>> = Object.freeze(
+  Object.fromEntries(
+    AGENT_IDS.flatMap((agentId): ReadonlyArray<readonly [AgentId, BuiltInAcpConfig]> => {
+      const config = BUNDLED_AGENT_DEFINITIONS_BY_ID[agentId]?.builtInAcpConfig;
+      return config ? [[agentId, config]] : [];
+    }),
+  ) as Partial<Record<AgentId, BuiltInAcpConfig>>,
+);
 
 export function hasBuiltInAcpConfig(agentId: AgentId): boolean {
   return BUILT_IN_ACP_CONFIG[agentId] != null;

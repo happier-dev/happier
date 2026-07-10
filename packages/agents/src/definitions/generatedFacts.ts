@@ -1,23 +1,23 @@
 import {
-  AGENT_PROVIDER_IDS,
-  type AgentProviderId,
-} from '../generated/agentProviderIds.js';
+  AGENT_IDS,
+  type AgentId,
+} from '../generated/agentIds.js';
 import { BUNDLED_AGENT_DEFINITIONS_BY_ID } from '../generated/bundledAgentDefinitions.js';
 
 type BundledAgentDefinition = (typeof BUNDLED_AGENT_DEFINITIONS_BY_ID)[keyof typeof BUNDLED_AGENT_DEFINITIONS_BY_ID];
 
 const GENERATED_AGENT_DEFINITIONS_BY_ID = BUNDLED_AGENT_DEFINITIONS_BY_ID as Readonly<
-  Partial<Record<AgentProviderId, BundledAgentDefinition>>
+  Partial<Record<AgentId, BundledAgentDefinition>>
 >;
 
 export function mergeAuthoredWithGeneratedAgentFacts<T>(params: Readonly<{
-  authored: Readonly<Partial<Record<AgentProviderId, T>>>;
+  authored: Readonly<Partial<Record<AgentId, T>>>;
   label: string;
   readGenerated: (definition: BundledAgentDefinition) => T | null | undefined;
-}>): Readonly<Record<AgentProviderId, T>> {
-  const entries: Array<[AgentProviderId, T]> = [];
+}>): Readonly<Record<AgentId, T>> {
+  const entries: Array<[AgentId, T]> = [];
 
-  for (const agentId of AGENT_PROVIDER_IDS) {
+  for (const agentId of AGENT_IDS) {
     const authored = params.authored[agentId];
     if (authored !== undefined) {
       entries.push([agentId, authored]);
@@ -32,5 +32,5 @@ export function mergeAuthoredWithGeneratedAgentFacts<T>(params: Readonly<{
     entries.push([agentId, generatedFact]);
   }
 
-  return Object.freeze(Object.fromEntries(entries) as Record<AgentProviderId, T>);
+  return Object.freeze(Object.fromEntries(entries) as Record<AgentId, T>);
 }

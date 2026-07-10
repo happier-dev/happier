@@ -10,17 +10,6 @@ export function getBackendCatalogDefinition(agentId: AgentId): BackendCatalogDef
   return BACKEND_ARTIFACTS.backendDefinitionsById.get(agentId) ?? null;
 }
 
-/**
- * Compatibility exports while callers migrate to catalog-specific naming.
- */
-export function getAllBackendDefinitions(): readonly BackendCatalogDefinition[] {
-  return getAllBackendCatalogDefinitions();
-}
-
-export function getBackendDefinition(agentId: AgentId): BackendCatalogDefinition | null {
-  return getBackendCatalogDefinition(agentId);
-}
-
 export function getAllBackendDefinitionContracts() {
   return BACKEND_ARTIFACTS.backendDefinitionContracts;
 }

@@ -1,22 +1,18 @@
 export type {
-  ProviderCatalogDefinition,
+  AgentCatalogDefinition,
   BackendCatalogDefinition,
-  ProviderDefinition,
-  BackendDefinition,
-  ProviderDefinitionContractV1,
+  AgentDefinitionContractV1,
   BackendDefinitionContractV1,
 } from './types.js';
 export {
-  getAllProviderDefinitions,
-  getProviderDefinition,
-  getAllProviderDefinitionContracts,
-  getProviderDefinitionContract,
-} from './providerDefinitions.js';
+  getAllAgentCatalogDefinitions,
+  getAgentCatalogDefinition,
+  getAllAgentDefinitionContracts,
+  getAgentDefinitionContract,
+} from './agentDefinitions.js';
 export {
   getAllBackendCatalogDefinitions,
   getBackendCatalogDefinition,
-  getAllBackendDefinitions,
-  getBackendDefinition,
   getAllBackendDefinitionContracts,
   getBackendDefinitionContract,
 } from './backendDefinitions.js';

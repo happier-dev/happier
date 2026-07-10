@@ -44,6 +44,8 @@ export type TerminalControlCapture = Readonly<{
    * (e.g. Claude Unified's dim-placeholder composer detection) prefer this over `text`.
    */
   styledText?: string;
+  /** Zero-based terminal cursor position when the host can report it. */
+  cursor?: Readonly<{ x: number; y: number }>;
   capturedAtMs: number;
   hostKind: TerminalHostKind;
 }>;

@@ -20,8 +20,9 @@ describe('sessionControlAdapterRegistry', () => {
     expect(source).not.toContain('OPENCODE_SESSION_CONTROL_ADAPTER');
     expect(source).not.toContain('PI_SESSION_CONTROL_ADAPTER');
     expect(generatedSource).not.toContain('@happier-dev/plugins-');
-    expect(generatedSource).toContain('../providers/codex/sessionControlAdapter.js');
-    expect(generatedSource).toContain('../providers/opencode/sessionControlAdapter.js');
+    expect(generatedSource).not.toContain('../providers/codex/sessionControlAdapter.js');
+    expect(generatedSource).not.toContain('../providers/opencode/sessionControlAdapter.js');
+    expect(generatedSource).toContain('createGeneratedRuntimeProjectionSessionControlAdapter');
   });
 
   it('exposes only the providers that own session-control adapters', () => {
@@ -35,11 +36,25 @@ describe('sessionControlAdapterRegistry', () => {
       codexBackendMode: 'mcp',
       codexSessionId: 'thread-mcp',
     })).toBe('mcp');
+    expect(getProviderSessionControlAdapter('codex')?.resolveConfiguredRuntimeKind?.({
+      experimentalCodexAcp: true,
+    })).toBe('appServer');
     expect(getProviderSessionControlAdapter('opencode')?.normalizeRuntimeKindOverride?.(' acp ')).toBe('acp');
+    expect(getProviderSessionControlAdapter('opencode')?.normalizeRuntimeKindOverride?.('server')).toBe('server');
+    expect(getProviderSessionControlAdapter('opencode')?.normalizeRuntimeKindOverride?.('appServer')).toBeNull();
+    expect(getProviderSessionControlAdapter('opencode')?.resolveConfiguredRuntimeKind?.({ opencodeBackendMode: ' acp ' })).toBe('acp');
+    expect(getProviderSessionControlAdapter('opencode')?.applyRuntimeKindOverrideToAccountSettings?.({ other: 'value' }, 'server')).toEqual({
+      other: 'value',
+      opencodeBackendMode: 'server',
+    });
+    expect(getProviderSessionControlAdapter('opencode')?.resolveVendorResumeId?.({
+      opencodeBackendMode: 'server',
+      opencodeSessionId: ' opencode-session-1 ',
+    })).toBe('opencode-session-1');
     expect(getProviderSessionControlAdapter('pi')?.resolveVendorResumeId?.({
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'pi',
+        agentId: 'pi',
         provider: {
           resumeStrategy: 'sessionFileAbsolutePreferred',
           providerSessionId: 'pi-session-1',

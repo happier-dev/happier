@@ -5,6 +5,7 @@ import type {
   SessionStateFieldDeliveryClassV1,
   SessionStateFieldId,
   SessionStateFieldValue,
+  SessionModelSelectionIntentV1,
 } from '@happier-dev/protocol';
 
 import type { SessionStateConflictPolicy } from './policies/_types.js';
@@ -76,6 +77,8 @@ export type SessionStateFieldWriteValue<F extends SessionStateFieldId> =
         value: SessionStateFieldValue<F>;
         metadataKey: string;
       }>
+    : F extends 'intent.model'
+      ? SessionModelSelectionIntentV1
     : F extends 'intent.permissionMode'
       ? SessionStateFieldValue<F> | Readonly<{
         v: 1;

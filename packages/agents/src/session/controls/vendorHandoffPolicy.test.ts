@@ -25,7 +25,7 @@ describe('vendorHandoffPolicy', () => {
     expect(resolveVendorHandoffIdFromSessionMetadata('codex', {
       agentRuntimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: { backendMode: 'appServer', providerSessionId: 'runtime_thread' },
       },
       codexSessionId: 'legacy_thread',
@@ -81,7 +81,7 @@ describe('vendorHandoffPolicy', () => {
           opencodeSessionId: 'o1',
           agentRuntimeDescriptorV1: {
             v: 1,
-            providerId: 'opencode',
+            agentId: 'opencode',
             provider: {
               backendMode: 'acp',
               providerSessionId: 'o1',

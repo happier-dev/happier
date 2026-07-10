@@ -51,11 +51,23 @@ export const SESSION_STATE_FIELD_REGISTRY = {
     conflictPolicy: 'bindingOwned',
     deliveryClass: 'durable_required',
   },
+  'runtime.activity': {
+    id: 'runtime.activity',
+    class: 'runtime',
+    conflictPolicy: 'bindingOwned',
+    deliveryClass: 'durable_best_effort',
+  },
   'runtime.usageLimitRecovery': {
     id: 'runtime.usageLimitRecovery',
     class: 'runtime',
     conflictPolicy: 'bindingOwned',
     deliveryClass: 'durable_required',
+  },
+  'runtime.sessionRunner': {
+    id: 'runtime.sessionRunner',
+    class: 'runtime',
+    conflictPolicy: 'bindingOwned',
+    deliveryClass: 'durable_best_effort',
   },
   'view.readState': {
     id: 'view.readState',

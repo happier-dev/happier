@@ -45,4 +45,11 @@ describe('agent tools delivery capability', () => {
     expect(usesShellBridgeTools('cursor')).toBe(true);
     expect(isAgentToolsUnsupported('cursor')).toBe(false);
   });
+
+  it('does not inject Happier shell-bridge tools for Antigravity', () => {
+    expect(getAgentToolsCapability('antigravity')).toEqual({ delivery: 'unsupported', support: 'unsupported' });
+    expect(usesNativeMcpTools('antigravity')).toBe(false);
+    expect(usesShellBridgeTools('antigravity')).toBe(false);
+    expect(isAgentToolsUnsupported('antigravity')).toBe(true);
+  });
 });

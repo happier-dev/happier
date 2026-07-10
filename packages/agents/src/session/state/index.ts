@@ -97,6 +97,7 @@ export {
   type InferredPermissionModeIntent,
 } from './sources/permissionModeInference.js';
 export {
+  resolveModelSelectionIntentFromSessionMetadata,
   resolveMetadataStringOverrideV1,
   resolvePermissionIntentFromSessionMetadata,
 } from './metadataReaders.js';

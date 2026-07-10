@@ -1,4 +1,5 @@
 import type {
+  SessionContextUsageSnapshotV1,
   SessionMessageRole,
   UsageObservationScope,
 } from '@happier-dev/protocol';
@@ -29,6 +30,12 @@ export type RuntimeOutboundTranscriptDispatchInputV1 = Readonly<{
   body: unknown;
   meta?: Record<string, unknown>;
   metadata?: Record<string, unknown> | null;
+  /**
+   * Happier session id for the dispatch. Optional and provider-agnostic; a provider facet may use it
+   * to consult per-session runtime state (e.g. the Claude CWF4 workflow-owned work-state registry)
+   * without re-deriving identity from metadata.
+   */
+  sessionId?: string;
   now?: () => number;
   randomId?: () => string;
   debug?: (message: string, data?: unknown) => void;
@@ -55,6 +62,7 @@ export type RuntimeOutboundTranscriptUsageObservationV1 = Readonly<{
   }> | null;
   contextUsedTokens: number | null;
   contextWindowTokens: number | null;
+  contextSnapshot?: SessionContextUsageSnapshotV1;
 }>;
 
 export type RuntimeOutboundTranscriptPostSendEffectV1 =

@@ -1,4 +1,5 @@
 export const MODEL_OVERRIDE_KEY = 'modelOverrideV1';
+export const MODEL_SELECTION_INTENT_KEY = 'modelSelectionIntentV1';
 
 export const PERMISSION_MODE_KEY = 'permissionMode';
 export const PERMISSION_MODE_UPDATED_AT_KEY = 'permissionModeUpdatedAt';

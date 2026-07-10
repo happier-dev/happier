@@ -11,15 +11,15 @@ describe('runtimeDescriptor session-state binding', () => {
     expect(readRuntimeDescriptorSessionState({
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
-        provider: {
+        agentId: 'codex',
+        agent: {
           backendMode: 'appServer',
           providerSessionId: 'canonical-thread',
         },
       },
       agentRuntimeDescriptorV1: {
         v: 1,
-        providerId: 'opencode',
+        agentId: 'opencode',
         provider: {
           backendMode: 'server',
           providerSessionId: 'legacy-session',
@@ -28,8 +28,8 @@ describe('runtimeDescriptor session-state binding', () => {
     })).toEqual({
       value: {
         v: 1,
-        providerId: 'codex',
-        provider: {
+        agentId: 'codex',
+        agent: {
           backendMode: 'appServer',
           providerSessionId: 'canonical-thread',
         },
@@ -38,10 +38,10 @@ describe('runtimeDescriptor session-state binding', () => {
     });
   });
 
-  it('falls back to legacy agentRuntimeDescriptorV1 reads and preserves that read alias by default', () => {
+  it('falls back to legacy agentRuntimeDescriptorV1 reads but replaces it on canonical writes', () => {
     const legacyDescriptor = {
       v: 1,
-      providerId: 'pi',
+      agentId: 'pi',
       provider: {
         resumeStrategy: 'sessionFileBySessionId',
         providerSessionId: 'pi-session',
@@ -51,7 +51,14 @@ describe('runtimeDescriptor session-state binding', () => {
     expect(readRuntimeDescriptorSessionState({
       agentRuntimeDescriptorV1: legacyDescriptor,
     })).toEqual({
-      value: legacyDescriptor,
+      value: {
+        v: 1,
+        agentId: 'pi',
+        agent: {
+          resumeStrategy: 'sessionFileBySessionId',
+          providerSessionId: 'pi-session',
+        },
+      },
       updatedAt: null,
     });
 
@@ -60,18 +67,17 @@ describe('runtimeDescriptor session-state binding', () => {
       agentRuntimeDescriptorV1: legacyDescriptor,
     }, {
       v: 1,
-      providerId: 'opencode',
-      provider: {
+      agentId: 'opencode',
+      agent: {
         backendMode: 'server',
         providerSessionId: 'oc-session',
       },
     })).toEqual({
       path: '/tmp/project',
-      agentRuntimeDescriptorV1: legacyDescriptor,
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'opencode',
-        provider: {
+        agentId: 'opencode',
+        agent: {
           backendMode: 'server',
           providerSessionId: 'oc-session',
         },
@@ -79,26 +85,21 @@ describe('runtimeDescriptor session-state binding', () => {
     });
   });
 
-  it('clears canonical descriptor metadata while preserving the legacy read alias', () => {
+  it('clears canonical and legacy descriptor metadata through the binding', () => {
     expect(writeRuntimeDescriptorSessionState({
       path: '/tmp/project',
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: { backendMode: 'appServer' },
       },
       agentRuntimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: { backendMode: 'acp' },
       },
     }, null)).toEqual({
       path: '/tmp/project',
-      agentRuntimeDescriptorV1: {
-        v: 1,
-        providerId: 'codex',
-        provider: { backendMode: 'acp' },
-      },
     });
   });
 
@@ -109,21 +110,16 @@ describe('runtimeDescriptor session-state binding', () => {
       path: '/tmp/project',
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: { backendMode: 'appServer' },
       },
       agentRuntimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: { backendMode: 'acp' },
       },
     })).toEqual({
       path: '/tmp/project',
-      agentRuntimeDescriptorV1: {
-        v: 1,
-        providerId: 'codex',
-        provider: { backendMode: 'acp' },
-      },
     });
   });
 });

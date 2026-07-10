@@ -1,4 +1,4 @@
-import type { SessionMetadata, SessionStateFieldId } from '@happier-dev/protocol';
+import { SESSION_RUNNER_RUNTIME_METADATA_KEY, type SessionMetadata, type SessionStateFieldId } from '@happier-dev/protocol';
 
 import type {
   MetadataUpdatePort,
@@ -13,6 +13,8 @@ import {
   permissionModeIntentBinding,
 } from './intent.js';
 import { runtimeDescriptorBinding } from './runtimeDescriptor.js';
+import { runtimeActivityBinding } from './runtimeActivity.js';
+import { sessionRunnerRuntimeBinding } from './sessionRunnerRuntime.js';
 import { sessionWorkStateBinding } from './workState.js';
 import { sessionUsageLimitRecoveryBinding } from './usageLimitRecovery.js';
 import { summaryTextBinding } from './summaryText.js';
@@ -27,7 +29,9 @@ const SESSION_STATE_METADATA_BINDINGS = {
   'intent.acpConfigOption': acpConfigOptionIntentBinding,
   'display.title': summaryTextBinding,
   'runtime.workState': sessionWorkStateBinding,
+  'runtime.activity': runtimeActivityBinding,
   'runtime.usageLimitRecovery': sessionUsageLimitRecoveryBinding,
+  'runtime.sessionRunner': sessionRunnerRuntimeBinding,
 } satisfies Partial<{ [F in SessionStateFieldId]: SessionStateBinding<F> }>;
 
 function getBinding<F extends SessionStateFieldId>(fieldId: F): SessionStateBinding<F> | null {
@@ -78,6 +82,7 @@ export function clearSessionStateFieldFromMetadata(
       delete next.acpSessionModeOverrideV1;
       break;
     case 'intent.model':
+      delete next.modelSelectionIntentV1;
       delete next.modelOverrideV1;
       break;
     case 'intent.acpConfigOption':
@@ -90,8 +95,17 @@ export function clearSessionStateFieldFromMetadata(
     case 'runtime.workState':
       delete next.sessionWorkStateV1;
       break;
+    case 'runtime.activity':
+      delete next.runtimeActivityActiveCount;
+      delete next.runtimeActivityObservedAt;
+      delete next.runtimeActivityExpiresAt;
+      delete next.runtimeActivitySourceClass;
+      break;
     case 'runtime.usageLimitRecovery':
       delete next.sessionUsageLimitRecoveryV1;
+      break;
+    case 'runtime.sessionRunner':
+      delete next[SESSION_RUNNER_RUNTIME_METADATA_KEY];
       break;
     case 'view.readState':
     case 'view.attention':

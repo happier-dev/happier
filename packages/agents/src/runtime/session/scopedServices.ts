@@ -9,6 +9,8 @@ import type {
   ExternalSessionTranscriptReadAfterResponse,
   SessionId,
   SessionStateFieldId,
+  SessionSystemRecordKind,
+  SessionSystemRecordNamespace,
   SubagentId,
   SubagentLifecycleDetailV1 as ProtocolSubagentLifecycleDetailV1,
   SubagentRefInputV1 as ProtocolSubagentRefInputV1,
@@ -33,6 +35,7 @@ export type SessionRuntimeAuthRefreshRequestV1 = Readonly<{
   materializedEnv?: Readonly<Record<string, string>> | null;
   targetMaterializedEnv?: Readonly<Record<string, string>> | null;
   classification?: unknown;
+  failingAccessTokenFingerprint?: string | null;
   reason?: string | null;
 }>;
 
@@ -128,7 +131,7 @@ export type ExternalSessionTakeoverInputV1 = ProtocolExternalSessionTakeoverInpu
 export type ExternalSessionTakeoverResultV1 = ProtocolExternalSessionTakeoverResultV1;
 
 export type ExternalSessionListCandidatesParamsV1 = Readonly<{
-  providerId?: string;
+  agentId?: string;
   source?: ExternalSessionSourceV1;
   cursor?: string;
   limit?: number;
@@ -143,7 +146,7 @@ export type ExternalSessionListCandidatesResultV1 = Readonly<{
 }>;
 
 export type ExternalSessionAttachParamsV1 = Readonly<{
-  providerId: string;
+  agentId: string;
   remoteSessionId: string;
   source?: ExternalSessionSourceV1;
   metadata?: Readonly<Record<string, unknown>>;
@@ -156,7 +159,7 @@ export type ExternalSessionAttachResultV1 = Readonly<{
 }>;
 
 export type ExternalSessionTranscriptPageParamsV1 = Readonly<{
-  providerId: string;
+  agentId: string;
   remoteSessionId: string;
   source: ExternalSessionSourceV1;
   direction: 'older' | 'newer';
@@ -166,7 +169,7 @@ export type ExternalSessionTranscriptPageParamsV1 = Readonly<{
 }>;
 
 export type ExternalSessionTranscriptReadAfterParamsV1 = Readonly<{
-  providerId: string;
+  agentId: string;
   remoteSessionId: string;
   source: ExternalSessionSourceV1;
   cursor: string;
@@ -176,6 +179,7 @@ export type ExternalSessionTranscriptReadAfterParamsV1 = Readonly<{
 
 export type ExternalSessionTranscriptUpdateV1 = Readonly<{
   items: readonly ExternalSessionTranscriptItemV1[];
+  fromCursor?: string | null;
   nextCursor?: string | null;
 }>;
 
@@ -256,8 +260,8 @@ export type SessionScopedSubscriptionEventV1 = Readonly<{
 export type SessionScopedSendUserTextRequestV1 = Readonly<{
   kind: 'userText';
   text: string;
-  opts?: Readonly<{
-    localId?: string;
+  opts: Readonly<{
+    localId: string;
     meta?: Readonly<Record<string, unknown>>;
   }>;
 }>;
@@ -283,7 +287,7 @@ export type SessionScopedAgentMessageOptionsV1 = Readonly<{
 
 export type SessionScopedSendAgentMessageRequestV1 = Readonly<{
   kind: 'agentMessageEphemeral' | 'agentMessageCommitted';
-  provider: string;
+  agentId: string;
   body: Readonly<Record<string, unknown>>;
   opts: SessionScopedAgentMessageOptionsV1;
 }>;
@@ -298,6 +302,12 @@ export type SessionScopedSendResultV1 = Readonly<
   | { ok: true }
   | { ok: false; error: 'invalid_request' | 'unsupported_kind' | string }
 >;
+
+export type SessionProviderAcceptedUserMessageDeliveryQueryV1 = Readonly<{
+  localIds?: readonly string[] | null;
+  userMessageSeq?: number | null;
+  userMessageSeqs?: readonly number[] | null;
+}>;
 
 export type SessionScopedSubscribeRequestV1 = Readonly<{
   eventName?: string;
@@ -332,6 +342,42 @@ export type SessionStateFieldWriteRequestV1<F extends SessionStateFieldId = Sess
   reason?: string;
 }>;
 
+/**
+ * Narrow, generic, session-scoped durable system-record write (the durable detail counterpart of
+ * `writeMetadata`). The HOST owns credentials, the data-encryption key, content sealing, and the
+ * `/v2/sessions/:id/system-records` transport — mirroring how the host writes MEMORY system records.
+ * A runtime contributes a typed `payload`; it never sees the token or DEK. The host resolves the
+ * session's stored-content encryption mode/context (lazy + cached) and seals `payload` into a plain
+ * or encrypted envelope before upserting. Rejects on failure so a caller can isolate/retry per write.
+ */
+export type SessionSystemRecordWriteRequestV1 = Readonly<{
+  namespace: SessionSystemRecordNamespace;
+  kind: SessionSystemRecordKind;
+  /** Stable, idempotent record id within the namespace/kind (upsert key). */
+  localId: string;
+  /** Provider-agnostic record payload; the host seals it per the session's encryption mode. */
+  payload: unknown;
+  reason?: string;
+}>;
+
+/**
+ * Narrow, generic, session-scoped durable system-record read. The HOST owns credentials, the
+ * data-encryption key, content opening, and transport. A runtime asks for a stable record id and
+ * receives an opened provider-agnostic payload, never the encrypted/plain storage envelope.
+ */
+export type SessionSystemRecordReadRequestV1 = Readonly<{
+  namespace: SessionSystemRecordNamespace;
+  localId: string;
+  reason?: string;
+}>;
+
+export type SessionSystemRecordReadResultV1 = Readonly<{
+  namespace: SessionSystemRecordNamespace;
+  kind: SessionSystemRecordKind;
+  localId: string;
+  payload: unknown;
+}>;
+
 export type SessionPermissionModeV1 = string;
 
 export type SessionPermissionDecisionRequestV1 = Readonly<{
@@ -360,6 +406,20 @@ export type SessionPermissionDecisionV1 =
  */
 export type SessionPermissionUpdateV1 = Readonly<Record<string, unknown>>;
 
+export type SessionPermissionFollowUpPromptDeliveryV1 = 'nextTurn' | 'followUp';
+
+export type SessionPermissionFollowUpPromptIntentV1 = Readonly<{
+  prompt: string;
+  delivery: SessionPermissionFollowUpPromptDeliveryV1;
+}>;
+
+export type SessionPermissionPersistAllowRuleScopeV1 = 'session' | 'workspace' | 'account';
+
+export type SessionPermissionPersistAllowRuleV1 = Readonly<{
+  scope: SessionPermissionPersistAllowRuleScopeV1;
+  toolName?: string;
+}>;
+
 export type SessionPermissionDecisionResultV1 = Readonly<{
   decision: SessionPermissionDecisionV1;
   rationale?: string;
@@ -369,6 +429,18 @@ export type SessionPermissionDecisionResultV1 = Readonly<{
    * Claude AskUserQuestion uses this to answer the native tool call without a follow-up text turn.
    */
   answers?: Readonly<Record<string, string>>;
+  /**
+   * Optional typed prompt the host/runtime should deliver as a later user turn after this
+   * permission decision settles. This reserves follow-up/next-turn intent explicitly instead
+   * of smuggling user text through provider-local permission payloads.
+   */
+  followUpPrompt?: SessionPermissionFollowUpPromptIntentV1;
+  /**
+   * Optional typed persistence intent for an approved permission rule. Provider-specific
+   * permission update payloads can still ride `updatedPermissions`, but the persistence scope is
+   * explicit on the public decision surface before it freezes.
+   */
+  persistAllowRule?: SessionPermissionPersistAllowRuleV1;
   /**
    * Optional host-rewritten tool input returned by the active permission surface.
    */
@@ -392,6 +464,9 @@ export interface SessionPermissionsServiceV1 {
 
 export interface SessionScopedServicesV1 {
   readonly sessionId?: string;
+  hasProviderAcceptedUserMessageDelivery?(
+    query: SessionProviderAcceptedUserMessageDeliveryQueryV1,
+  ): boolean;
   send(request: SessionScopedSendRequestV1): Promise<SessionScopedSendResultV1>;
   subscribe(
     request: SessionScopedSubscribeRequestV1,
@@ -400,6 +475,16 @@ export interface SessionScopedServicesV1 {
   writeMetadata(request: SessionMetadataWriteRequestV1): Promise<void>;
   writeAgentState(request: SessionAgentStateWriteRequestV1): Promise<void>;
   writeStateField<F extends SessionStateFieldId>(request: SessionStateFieldWriteRequestV1<F>): Promise<void>;
+  /**
+   * Write a durable session system record (host-sealed). Optional so a host that predates the
+   * capability degrades gracefully; runtimes must treat an absent method as "records unavailable".
+   */
+  writeSystemRecord?(request: SessionSystemRecordWriteRequestV1): Promise<void>;
+  /**
+   * Read a durable session system record (host-opened). Optional for older hosts; runtimes must
+   * treat an absent method as "readback unavailable" and avoid inventing alternate storage paths.
+   */
+  readSystemRecord?(request: SessionSystemRecordReadRequestV1): Promise<SessionSystemRecordReadResultV1 | null>;
   readonly mcp: SessionMcpServiceV1;
   readonly auth: SessionAuthServiceV1;
   readonly permissions: SessionPermissionsServiceV1;

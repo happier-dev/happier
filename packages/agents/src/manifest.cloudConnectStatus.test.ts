@@ -1,15 +1,29 @@
 import { describe, expect, it } from 'vitest';
 
 import * as manifestModule from './manifest.js';
-import { AGENT_PROVIDER_IDS } from './types.js';
+import { BUNDLED_AGENT_DEFINITIONS_BY_ID } from './generated/bundledAgentDefinitions.js';
+import { AGENT_IDS } from './types.js';
 import { LEGACY_CONFIGURED_BACKEND_SENTINEL_ID } from './compat/legacyConfiguredBackend.js';
 import { AGENTS_CORE, CANONICAL_AGENTS_CORE, getAgentCore, getAgentResumeConfig, getProviderConnectedServicesAdapter } from './manifest.js';
-import { legacyCustomAcpCompat } from './index.js';
+import * as legacyCustomAcpCompat from './compat/customAcp.js';
 
 describe('AGENTS_CORE cloudConnect status', () => {
   it('marks codex and claude connect targets as wired', () => {
     expect(AGENTS_CORE.codex.cloudConnect?.status).toBe('wired');
     expect(AGENTS_CORE.claude.cloudConnect?.status).toBe('wired');
+  });
+
+  it('sources Codex shared core facts from the bundled plugin definition', () => {
+    expect(CANONICAL_AGENTS_CORE.codex).toBe(BUNDLED_AGENT_DEFINITIONS_BY_ID.codex.core);
+    expect(AGENTS_CORE.codex).toBe(BUNDLED_AGENT_DEFINITIONS_BY_ID.codex.core);
+  });
+
+  it('sources canonical provider core facts from bundled provider definitions', () => {
+    for (const providerId of AGENT_IDS) {
+      expect(CANONICAL_AGENTS_CORE[providerId]).toBe(
+        BUNDLED_AGENT_DEFINITIONS_BY_ID[providerId].core,
+      );
+    }
   });
 
   it('exposes OpenAI API key connected service compatibility for codex/opencode/pi', () => {
@@ -18,9 +32,28 @@ describe('AGENTS_CORE cloudConnect status', () => {
     expect(AGENTS_CORE.pi.connectedServices?.supportedServiceIds).toContain('openai');
   });
 
-  it('exposes token-only Claude subscription compatibility for OpenCode', () => {
+  it('exposes Claude subscription OAuth and setup-token compatibility for OpenCode', () => {
     expect(AGENTS_CORE.opencode.connectedServices?.supportedServiceIds).toContain('claude-subscription');
-    expect(AGENTS_CORE.opencode.connectedServices?.supportedKindsByServiceId?.['claude-subscription']).toEqual(['token']);
+    expect(AGENTS_CORE.opencode.connectedServices?.supportedKindsByServiceId?.['claude-subscription']).toEqual([
+      'oauth',
+      'token',
+    ]);
+    // Anthropic Console API key stays token-only (x-api-key, direct).
+    expect(AGENTS_CORE.opencode.connectedServices?.supportedKindsByServiceId?.anthropic).toEqual(['token']);
+  });
+
+  it('exposes Claude subscription OAuth and setup-token compatibility for Pi', () => {
+    expect(AGENTS_CORE.pi.connectedServices?.supportedServiceIds).toContain('claude-subscription');
+    expect(AGENTS_CORE.pi.connectedServices?.supportedKindsByServiceId?.['claude-subscription']).toEqual([
+      'oauth',
+      'token',
+    ]);
+  });
+
+  it('keeps Gemini connected-service metadata token-only in shared agent core', () => {
+    expect(getAgentCore('antigravity').connectedServices?.supportedKindsByServiceId?.gemini).toEqual(['token']);
+    expect(getAgentCore('gemini').connectedServices?.supportedKindsByServiceId?.gemini).toEqual(['token']);
+    expect(getAgentCore('ohMyPi').connectedServices?.supportedKindsByServiceId?.gemini).toEqual(['token']);
   });
 
   it('advertises Codex provider state sharing capabilities from the shared catalog', () => {
@@ -121,7 +154,7 @@ describe('AGENTS_CORE cloudConnect status', () => {
   });
 
   it('keeps customAcp out of the shared provider manifest artifacts while preserving explicit compat lookup', () => {
-    expect(Object.keys(AGENTS_CORE).sort()).toEqual([...AGENT_PROVIDER_IDS].sort());
+    expect(Object.keys(AGENTS_CORE).sort()).toEqual([...AGENT_IDS].sort());
     expect(AGENTS_CORE).not.toHaveProperty(LEGACY_CONFIGURED_BACKEND_SENTINEL_ID);
     expect(CANONICAL_AGENTS_CORE).not.toHaveProperty(LEGACY_CONFIGURED_BACKEND_SENTINEL_ID);
     expect('LEGACY_CUSTOM_ACP_AGENT_CORE' in manifestModule).toBe(false);

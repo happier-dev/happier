@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import * as agents from './index.js';
-import * as providerSettings from './providerSettings/index.js';
+import * as agentSettings from './agentSettings/index.js';
 import {
   AGENTS_CORE,
   AGENT_MODEL_CONFIG,
@@ -25,20 +25,19 @@ import {
   type EngineAdapter,
   getAgentCliSetupRecommendedIds,
   getAgentCliSetupSupportedIds,
-  getAllProviderDefinitions,
-  getAllProviderDefinitionContracts,
-  getAllBackendDefinitions,
+  getAllAgentCatalogDefinitions,
+  getAllAgentDefinitionContracts,
+  getAllBackendCatalogDefinitions,
   getAllBackendDefinitionContracts,
-  getProviderDefinition,
-  getProviderDefinitionContract,
-  getBackendDefinition,
+  getAgentCatalogDefinition,
+  getAgentDefinitionContract,
+  getBackendCatalogDefinition,
   getBackendDefinitionContract,
   readNormalizedRuntimeDescriptor,
   getProviderAuthAdapter,
   getProviderConnectedServicesAdapter,
   getAgentResumeConfig,
   getProviderRuntimePreferencesAdapter,
-  getProviderMessageMetaEnricher,
   publishRuntimeCapabilities,
   type RuntimeCapabilities,
   type RuntimeControlSurface,
@@ -47,7 +46,6 @@ import {
   type RuntimeTranscriptSourceFacet,
   type SessionStateFacet,
   type AgentId,
-  type AgentProviderId,
   type AgentAuthProbeConfig,
   type AgentLocalCliConfig,
   type CanonicalAgentId,
@@ -138,6 +136,16 @@ describe('agents package exports', () => {
     });
   });
 
+  it('publishes permission helpers through an explicit narrow subpath', () => {
+    const packageJson = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8')) as {
+      exports?: Record<string, unknown>;
+    };
+    expect(packageJson.exports).toHaveProperty('./permissions', {
+      types: './dist/permissions/index.d.ts',
+      default: './dist/permissions/index.js',
+    });
+  });
+
   it('does not publish the generic session-state metadata patch bypass subpath', () => {
     const packageJson = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8')) as {
       exports?: Record<string, unknown>;
@@ -161,6 +169,15 @@ describe('agents package exports', () => {
   it('does not expose stale Codex runtime compatibility aliases from the package root', () => {
     expect('normalizeCodexRuntimeBackendMode' in agents).toBe(false);
     expect('CODEX_SESSION_CONTROL_ADAPTER_RUNTIME_HELPERS' in agents).toBe(false);
+    expect('buildCodexRuntimeDescriptorProviderExtra' in agents).toBe(false);
+    expect('readCodexRuntimeDescriptorProviderExtra' in agents).toBe(false);
+    expect('buildCodexSpawnRuntimeAffinityCompatFields' in agents).toBe(false);
+    expect('resolvePersistedCodexRuntimeIdentity' in agents).toBe(false);
+    expect('resolvePersistedCodexProviderSessionId' in agents).toBe(false);
+  });
+
+  it('does not keep the providers-level runtime descriptor registry compatibility shim', () => {
+    expect(existsSync(join(packageDir, 'src/providers/runtimeDescriptorReaderRegistry.ts'))).toBe(false);
   });
 
   it('does not expose OpenCode runtime descriptor construction from the package root', () => {
@@ -169,21 +186,21 @@ describe('agents package exports', () => {
     expect('readOpenCodeRuntimeDescriptorProviderExtra' in agents).toBe(false);
   });
 
-  it('does not expose OpenCode plugin-owned provider settings from the package root or settings facade', () => {
-    const openCodeProviderSettingsExports = [
-      'OPENCODE_PROVIDER_SETTINGS_DEFINITION',
-      'OPENCODE_PROVIDER_FIELDS',
-      'OPENCODE_PROVIDER_SETTINGS_DEFAULTS',
-      'buildOpenCodeProviderSettingsShape',
+  it('does not expose OpenCode plugin-owned agent settings from the package root or settings facade', () => {
+    const openCodeAgentSettingsExports = [
+      'OPENCODE_AGENT_SETTINGS_DEFINITION',
+      'OPENCODE_AGENT_FIELDS',
+      'OPENCODE_AGENT_SETTINGS_DEFAULTS',
+      'buildOpenCodeAgentSettingsShape',
       'normalizeOpenCodeBackendMode',
       'normalizeOpenCodeServerBaseUrl',
       'normalizeOpenCodeServerBaseUrlExplicit',
       'readOpenCodeExplicitServerBaseUrl',
     ] as const;
 
-    for (const exportName of openCodeProviderSettingsExports) {
+    for (const exportName of openCodeAgentSettingsExports) {
       expect(exportName in agents).toBe(false);
-      expect(exportName in providerSettings).toBe(false);
+      expect(exportName in agentSettings).toBe(false);
     }
   });
 
@@ -200,17 +217,84 @@ describe('agents package exports', () => {
     expect('pi' in agents.providers).toBe(false);
   });
 
-  it('re-exports Kimi provider setting fields from the package root', () => {
-    expect(agents.KIMI_PROVIDER_FIELDS.kimiAcpPythonSelector.default).toBe('auto');
+  it('does not expose Kimi plugin-owned agent setting shims from the package root or settings facade', () => {
+    const kimiAgentSettingExports = [
+      'KIMI_AGENT_SETTINGS_DEFINITION',
+      'KIMI_AGENT_FIELDS',
+      'KIMI_AGENT_SETTINGS_DEFAULTS',
+      'buildKimiAgentSettingsShape',
+      'normalizeKimiAcpPythonSelector',
+      'resolveKimiSpawnExtrasFromSettings',
+    ] as const;
+
+    for (const exportName of kimiAgentSettingExports) {
+      expect(exportName in agents).toBe(false);
+      expect(exportName in agentSettings).toBe(false);
+    }
   });
 
-  it('does not expose runtime helpers through the provider-settings facade', () => {
-    expect('resolveCodexSpawnExtrasForRuntime' in providerSettings).toBe(false);
-    expect('resolveCodexSpawnExtrasFromSettings' in providerSettings).toBe(false);
-    expect('resolveCodexRuntimeBackendMode' in providerSettings).toBe(false);
-    expect('buildClaudeRemoteOutgoingMessageMetaExtras' in providerSettings).toBe(false);
-    expect('resolveProviderOutgoingMessageMetaExtras' in providerSettings).toBe(false);
+  it('does not expose Claude plugin-owned agent setting helpers from the package root or settings facade', () => {
+    const claudeAgentSettingExports = [
+      'CLAUDE_REMOTE_AGENT_SETTINGS_DEFINITION',
+      'CLAUDE_REMOTE_AGENT_FIELDS',
+      'CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS',
+      'CLAUDE_UNIFIED_TERMINAL_HOSTS',
+      'CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICES',
+      'MAX_CLAUDE_REMOTE_ADVANCED_OPTIONS_JSON_CHARS',
+      'buildClaudeRemoteAgentSettingsShape',
+      'isValidClaudeRemoteAdvancedOptionsJson',
+      'normalizeClaudeUnifiedTerminalHost',
+      'normalizeClaudeUnifiedTerminalResumeChoice',
+      'normalizeClaudeRemoteAdvancedOptionsJson',
+    ] as const;
+
+    for (const exportName of claudeAgentSettingExports) {
+      expect(exportName in agents).toBe(false);
+      expect(exportName in agentSettings).toBe(false);
+    }
+  });
+
+  it('does not expose Codex agent-settings field-map shims through the settings facade', () => {
+    const codexAgentSettingExports = [
+      'CODEX_AGENT_SETTINGS_DEFINITION',
+      'CODEX_AGENT_FIELDS',
+      'CODEX_AGENT_SETTINGS_DEFAULTS',
+      'buildCodexAgentSettingsShape',
+    ] as const;
+
+    for (const exportName of codexAgentSettingExports) {
+      expect(exportName in agentSettings).toBe(false);
+    }
+  });
+
+  it('does not expose runtime helpers through the agent-settings facade', () => {
+    expect('resolveCodexSpawnExtrasForRuntime' in agentSettings).toBe(false);
+    expect('resolveCodexSpawnExtrasFromSettings' in agentSettings).toBe(false);
+    expect('resolveCodexRuntimeBackendMode' in agentSettings).toBe(false);
+    expect('buildClaudeRemoteOutgoingMessageMetaExtras' in agentSettings).toBe(false);
+    expect('resolveProviderOutgoingMessageMetaExtras' in agentSettings).toBe(false);
     expect('buildClaudeRemoteOutgoingMessageMetaExtras' in agents).toBe(false);
+    expect('resolveProviderOutgoingMessageMetaExtras' in agents).toBe(false);
+    expect('getProviderMessageMetaEnricher' in agents).toBe(false);
+  });
+
+  it('does not expose Codex runtime-preference helpers from the package root', () => {
+    const codexRuntimePreferenceExports = [
+      'CodexBackendMode',
+      'normalizeCodexBackendMode',
+      'resolveCodexSessionBackendMode',
+      'resolveCodexSessionRuntimePreferences',
+      'resolveCodexRuntimeBackendMode',
+      'resolveCodexSpawnExtrasForRuntime',
+      'resolveCodexSpawnExtrasFromSettings',
+      'buildCodexAgentRuntimeDescriptor',
+    ] as const;
+    const rootSource = readFileSync(join(packageDir, 'src/index.ts'), 'utf8');
+
+    for (const exportName of codexRuntimePreferenceExports) {
+      expect(exportName in agents).toBe(false);
+      expect(rootSource).not.toMatch(new RegExp(`\\b${exportName}\\b`, 'u'));
+    }
   });
 
   it('does not expose Claude plugin-owned permission bridge helpers from the package root', () => {
@@ -222,20 +306,34 @@ describe('agents package exports', () => {
     expect(existsSync(join(packageDir, 'src/providers/claude'))).toBe(false);
   });
 
+  it('does not keep a Codex provider source owner under the agents package', () => {
+    expect(existsSync(join(packageDir, 'src/providers/codex'))).toBe(false);
+  });
+
+  it('keeps shared runtime descriptor types provider-open', () => {
+    const runtimeDescriptorTypesSource = readFileSync(
+      join(packageDir, 'src/runtime/identity/runtimeDescriptorTypes.ts'),
+      'utf8',
+    );
+
+    expect(runtimeDescriptorTypesSource).not.toMatch(/SupportedRuntimeDescriptorProviderId\s*=\s*['"]/u);
+    expect(runtimeDescriptorTypesSource).not.toMatch(/\b(Codex|OpenCode|Pi)SharedRuntimeDescriptor\b/u);
+  });
+
   it('re-exports the provider setup helper lists from the package root', () => {
     expect(getAgentCliSetupSupportedIds()).toEqual(getAgentCliSetupSupportedIdsFromProviderRuntime());
     expect(getAgentCliSetupRecommendedIds()).toEqual(getAgentCliSetupRecommendedIdsFromProviderRuntime());
   });
 
   it('re-exports canonical aggregates while keeping customAcp compat root exports narrowly scoped', () => {
-    expectTypeOf<AgentProviderId>().toEqualTypeOf<CanonicalAgentId>();
+    expectTypeOf<AgentId>().toEqualTypeOf<CanonicalAgentId>();
     expectTypeOf<AgentId>().toEqualTypeOf<CanonicalAgentId>();
     expectTypeOf<(typeof agents.AGENT_IDS)[number]>().toEqualTypeOf<CanonicalAgentId>();
-    expectTypeOf<(typeof agents.AGENT_PROVIDER_IDS)[number]>().toEqualTypeOf<AgentProviderId>();
-    expect(agents.AGENT_PROVIDER_IDS).toEqual(agents.CANONICAL_AGENT_IDS);
+    expectTypeOf<(typeof agents.AGENT_IDS)[number]>().toEqualTypeOf<AgentId>();
     expect(agents.AGENT_IDS).toEqual(agents.CANONICAL_AGENT_IDS);
-    expect(agents.isAgentProviderId('claude')).toBe(true);
-    expect(agents.isAgentProviderId('customAcp')).toBe(false);
+    expect(agents.AGENT_IDS).toEqual(agents.CANONICAL_AGENT_IDS);
+    expect(agents.isAgentId('claude')).toBe(true);
+    expect(agents.isAgentId('customAcp')).toBe(false);
     expect(agents.AGENT_IDS).not.toContain('customAcp');
     expect(AGENTS_CORE).not.toHaveProperty('customAcp');
     expect(AGENT_MODEL_CONFIG).not.toHaveProperty('customAcp');
@@ -287,13 +385,13 @@ describe('agents package exports', () => {
   });
 
   it('re-exports the canonical provider and backend definition registry helpers from the package root', () => {
-    expect(typeof getAllProviderDefinitions).toBe('function');
-    expect(typeof getAllProviderDefinitionContracts).toBe('function');
-    expect(typeof getAllBackendDefinitions).toBe('function');
+    expect(typeof getAllAgentCatalogDefinitions).toBe('function');
+    expect(typeof getAllAgentDefinitionContracts).toBe('function');
+    expect(typeof getAllBackendCatalogDefinitions).toBe('function');
     expect(typeof getAllBackendDefinitionContracts).toBe('function');
-    expect(typeof getProviderDefinition).toBe('function');
-    expect(typeof getProviderDefinitionContract).toBe('function');
-    expect(typeof getBackendDefinition).toBe('function');
+    expect(typeof getAgentCatalogDefinition).toBe('function');
+    expect(typeof getAgentDefinitionContract).toBe('function');
+    expect(typeof getBackendCatalogDefinition).toBe('function');
     expect(typeof getBackendDefinitionContract).toBe('function');
   });
 
@@ -328,7 +426,7 @@ describe('agents package exports', () => {
     expect(readNormalizedRuntimeDescriptor({
       agentRuntimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: {
           backendMode: 'appServer',
           providerSessionId: 'thread_1',
@@ -419,7 +517,6 @@ describe('agents package exports', () => {
     expect(typeof getProviderConnectedServicesAdapter).toBe('function');
     expect(typeof getAgentResumeConfig).toBe('function');
     expect(typeof getProviderRuntimePreferencesAdapter).toBe('function');
-    expect(typeof getProviderMessageMetaEnricher).toBe('function');
     expect(getProviderAuthAdapter('claude')).toEqual({
       supportKind: 'login_terminal',
       localCliAuth: expect.any(Object),
@@ -439,6 +536,5 @@ describe('agents package exports', () => {
       sourcePreference: { default: 'system-first' },
       defaultRuntimeKind: { default: 'appServer' },
     });
-    expect(getProviderMessageMetaEnricher('claude')).toEqual({});
   });
 });

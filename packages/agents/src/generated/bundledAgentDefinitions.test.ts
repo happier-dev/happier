@@ -21,10 +21,14 @@ describe('bundledAgentDefinitions', () => {
 
     expect(codexDefinition.agentCliRuntime).toEqual(expect.objectContaining({
       id: 'codex',
-      title: 'codex CLI',
+      title: 'OpenAI Codex CLI',
       binaryName: 'codex',
-      managedInstall: null,
-      manualInstallKind: 'none',
+      managedInstall: expect.objectContaining({
+        kind: 'github_release_binary',
+        githubRepo: 'openai/codex',
+        binaryName: 'codex',
+      }),
+      manualInstallKind: 'command',
     }));
     expect(codexDefinition).not.toHaveProperty('providerCliRuntime');
   });
@@ -36,8 +40,12 @@ describe('bundledAgentDefinitions', () => {
       id: 'opencode',
       title: 'OpenCode CLI',
       binaryName: 'opencode',
-      managedInstall: null,
-      manualInstallKind: 'vendor_recipe',
+      managedInstall: expect.objectContaining({
+        kind: 'managed_package',
+        packageName: 'opencode-ai',
+        packageBinarySetup: { kind: 'opencode_platform_binary' },
+      }),
+      manualInstallKind: 'command',
     }));
     expect(opencodeDefinition).not.toHaveProperty('providerCliRuntime');
   });

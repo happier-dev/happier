@@ -3,21 +3,18 @@ import { describe, expect, it } from 'vitest';
 import { AGENTS_CORE } from '../manifest.js';
 import { legacyCustomAcpCompat } from '../index.js';
 import type { AnyAgentRuntimeKindsManifest } from '../runtimeKinds.js';
-import { getProviderDefinition } from './providerDefinitions.js';
+import { getAgentCatalogDefinition } from './agentDefinitions.js';
 import { BACKEND_DEFINITION_AGENT_IDS } from './buildBackendArtifacts.js';
 import {
   getAllBackendCatalogDefinitions,
   getBackendCatalogDefinition,
   getAllBackendDefinitionContracts,
-  getAllBackendDefinitions,
-  getBackendDefinition,
   getBackendDefinitionContract,
 } from './backendDefinitions.js';
 import { buildEngineSpecFromRuntimeKindsManifest } from '../runtime/engine/contracts.js';
 
 describe('backendDefinitions', () => {
   it('assembles one backend definition for every concrete built-in backend id', () => {
-    expect(getAllBackendDefinitions().map((definition) => definition.id).sort()).toEqual([...BACKEND_DEFINITION_AGENT_IDS].sort());
     expect(getAllBackendCatalogDefinitions().map((definition) => definition.id).sort()).toEqual([...BACKEND_DEFINITION_AGENT_IDS].sort());
   });
 
@@ -26,16 +23,15 @@ describe('backendDefinitions', () => {
   });
 
   it('does not expose customAcp as a concrete backend definition id', () => {
-    expect(getBackendDefinition('customAcp')).toBeNull();
     expect(getBackendCatalogDefinition('customAcp')).toBeNull();
   });
 
   it('derives backend definitions from the existing declarative runtime surfaces', () => {
-    const codex = getBackendDefinition('codex');
+    const codex = getBackendCatalogDefinition('codex');
     expect(codex).not.toBeNull();
-    expect(codex?.providerId).toBe('codex');
-    expect(codex?.provider).toBe(getProviderDefinition('codex'));
-    expect(codex?.provider.core).toBe(AGENTS_CORE.codex);
+    expect(codex?.agentId).toBe('codex');
+    expect(codex?.agent).toBe(getAgentCatalogDefinition('codex'));
+    expect(codex?.agent.core).toBe(AGENTS_CORE.codex);
     expect(codex?.runtimeKinds).toBe(AGENTS_CORE.codex.runtimeKinds ?? null);
     expect(codex?.engine).toMatchObject({
       engineId: 'codex',
@@ -116,7 +112,7 @@ describe('backendDefinitions', () => {
       expect.objectContaining({
         kindVersion: 1,
         id: 'codex',
-        providerId: 'codex',
+        agentId: 'codex',
       }),
     );
   });

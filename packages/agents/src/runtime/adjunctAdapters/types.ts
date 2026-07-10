@@ -1,5 +1,4 @@
 import type { AgentCliSupportKind } from '../../localCli.js';
-import type { AgentId } from '../../types.js';
 
 export type RuntimePreferencesAdapter = Readonly<{
   sourcePreference?: Readonly<Record<string, unknown>>;
@@ -21,9 +20,4 @@ export type ProviderAuthAdapter = Readonly<{
 
 export type ProviderMessageMetaEnricher = Readonly<{
   buildOutgoingMessageMetaExtras?: (params: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>>;
-}>;
-
-export type ProviderMessageMetaRegistration = Readonly<{
-  agentId: AgentId;
-  enricher: ProviderMessageMetaEnricher;
 }>;

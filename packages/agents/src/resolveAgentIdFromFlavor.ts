@@ -1,5 +1,5 @@
 import type { CanonicalAgentId } from './types.js';
-import { AGENT_PROVIDER_IDS } from './types.js';
+import { AGENT_IDS } from './types.js';
 import { AGENTS_CORE } from './manifest.js';
 import { resolveLegacyConfiguredBackendCompatAgentIdFromFlavor } from './compat/legacyConfiguredBackend.js';
 
@@ -21,13 +21,13 @@ export function resolveCanonicalAgentIdFromFlavor(flavor: unknown): CanonicalAge
     return null;
   }
 
-  for (const id of AGENT_PROVIDER_IDS) {
+  for (const id of AGENT_IDS) {
     if (id.toLowerCase() === normalized) {
       return id;
     }
   }
 
-  for (const id of AGENT_PROVIDER_IDS) {
+  for (const id of AGENT_IDS) {
     const entry = AGENTS_CORE[id];
     const aliases = 'flavorAliases' in entry ? entry.flavorAliases ?? [] : [];
     if (aliases.some((value: string) => value.trim().toLowerCase() === normalized)) {

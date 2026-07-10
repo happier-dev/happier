@@ -1,4 +1,4 @@
-export type TerminalHostKind = 'tmux' | 'zellij';
+export type TerminalHostKind = 'tmux' | 'zellij' | 'windows_console';
 
 export type TerminalInjectionFailurePhase =
     | 'liveness'
@@ -17,6 +17,14 @@ export type TerminalPromptInput = Readonly<{
         kind: 'ui_pending' | 'ui_immediate' | 'rpc';
         clientId?: string;
         nonce: string;
+        localIds?: readonly string[];
+        /**
+         * Committed transcript seq of the user row this prompt came from (HF-1 owed-delivery
+         * watermark custody). Provider acceptance confirms the watermark for this seq; prompts
+         * without one leave the watermark behind (at-least-once redelivery, never silent loss).
+         */
+        userMessageSeq?: number | null;
+        userMessageSeqs?: readonly number[];
     }>;
     scheduling: Readonly<{
         deferredUntilQuietMs?: number;
@@ -47,6 +55,7 @@ export type TerminalInputInjectionResult =
             | 'awaiting_provider_acceptance';
         recoverable: true;
         observedAt: number;
+        retryAfterMs?: number;
         hostKind?: TerminalHostKind;
         hostSessionName?: string;
         paneId?: string;
@@ -61,6 +70,8 @@ export type TerminalInputInjectionResult =
             | 'write_failed'
             | 'submit_failed'
             | 'ambiguous_provider_acceptance'
+            | 'invalid_prompt_text'
+            | 'payload_too_large'
             | 'unsupported';
         phase: TerminalInjectionFailurePhase;
         recoverable: boolean;

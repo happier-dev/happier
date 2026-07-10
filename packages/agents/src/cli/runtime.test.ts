@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import * as agentCliRuntimeModule from './runtime.js';
 import { BUNDLED_AGENT_DEFINITIONS_BY_ID } from '../generated/bundledAgentDefinitions.js';
-import { AGENT_IDS, AGENT_PROVIDER_IDS } from '../types.js';
+import { AGENT_IDS } from '../types.js';
 import { LEGACY_CONFIGURED_BACKEND_SENTINEL_ID } from '../compat/legacyConfiguredBackend.js';
 import {
   CANONICAL_AGENT_CLI_RUNTIME_SPECS,
@@ -12,12 +12,12 @@ import {
   type AgentCliRuntimeSpec,
   AGENT_CLI_RUNTIME_SPECS,
 } from './runtime.js';
-import { legacyCustomAcpCompat } from '../index.js';
+import * as legacyCustomAcpCompat from '../compat/customAcp.js';
 import { getAgentCliRuntimeSpecForLookupId } from './runtimeLookup.js';
 
 describe('AGENT_CLI_RUNTIME_SPECS', () => {
-  it('sources extracted Stage E runtime specs from generated plugin facts', () => {
-    for (const providerId of ['auggie', 'kimi', 'kilo', 'copilot'] as const) {
+  it('sources canonical provider runtime specs from bundled provider definitions', () => {
+    for (const providerId of AGENT_IDS) {
       expect(getAgentCliRuntimeSpec(providerId)).toBe(
         BUNDLED_AGENT_DEFINITIONS_BY_ID[providerId].agentCliRuntime,
       );
@@ -50,6 +50,14 @@ describe('AGENT_CLI_RUNTIME_SPECS', () => {
   });
 
   it('declares managed package sources for package-backed CLIs', () => {
+    expect(getAgentCliRuntimeSpec('opencode')).toMatchObject({
+      managedInstall: {
+        kind: 'managed_package',
+        packageName: 'opencode-ai',
+        binaryName: 'opencode',
+        packageBinarySetup: { kind: 'opencode_platform_binary' },
+      },
+    });
     expect(getAgentCliRuntimeSpec('gemini')).toMatchObject({
       managedInstall: {
         kind: 'managed_package',
@@ -93,8 +101,6 @@ describe('AGENT_CLI_RUNTIME_SPECS', () => {
 
   it('keeps upstream manual install hints on the runtime catalog for vendor-recipe providers', () => {
     expect(JSON.stringify(getAgentCliRuntimeSpec('claude'))).toContain('claude.ai/install.sh');
-    expect(JSON.stringify(getAgentCliRuntimeSpec('opencode'))).toContain('opencode.ai/install');
-    expect(JSON.stringify(getAgentCliRuntimeSpec('opencode'))).toContain('npm install -g opencode-ai');
     expect(JSON.stringify(getAgentCliRuntimeSpec('kimi'))).toContain('code.kimi.com/install.sh');
   });
 
@@ -128,6 +134,7 @@ describe('AGENT_CLI_RUNTIME_SPECS', () => {
   it('captures vendor-specific user bin directories on the runtime catalog', () => {
     expect(getAgentCliRuntimeSpec('claude')).toMatchObject({
       knownUserBinDirSuffixes: ['.local/bin'],
+      systemCommandResolutionStrategy: 'known-user-first-runnable',
     });
     expect(getAgentCliRuntimeSpec('kimi')).toMatchObject({
       knownUserBinDirSuffixes: ['.local/bin'],
@@ -139,6 +146,7 @@ describe('AGENT_CLI_RUNTIME_SPECS', () => {
       knownUserBinDirSuffixes: ['.bun/bin'],
     });
     expect(getAgentCliRuntimeSpec('codex').knownUserBinDirSuffixes).toBeNull();
+    expect(getAgentCliRuntimeSpec('codex')).not.toHaveProperty('systemCommandResolutionStrategy');
   });
 
   it('keeps manual-install metadata only when the provider intentionally exposes user-facing guidance', () => {
@@ -158,20 +166,19 @@ describe('AGENT_CLI_RUNTIME_SPECS', () => {
       },
     });
     expect(getAgentCliRuntimeSpec('opencode')).toMatchObject({
-      manualInstallKind: 'vendor_recipe',
-      manualInstallRecipes: {
-        win32: [
-          {
-            cmd: 'cmd.exe',
-            args: ['/c', 'npm install -g opencode-ai'],
-          },
-        ],
+      managedInstall: {
+        kind: 'managed_package',
+        packageName: 'opencode-ai',
+        binaryName: 'opencode',
+        packageBinarySetup: { kind: 'opencode_platform_binary' },
       },
+      manualInstallKind: 'command',
+      manualInstallRecipes: null,
     });
   });
 
   it('keeps the shared agent CLI runtime artifact map canonical-only', () => {
-    expect(Object.keys(AGENT_CLI_RUNTIME_SPECS).sort()).toEqual([...AGENT_PROVIDER_IDS].sort());
+    expect(Object.keys(AGENT_CLI_RUNTIME_SPECS).sort()).toEqual([...AGENT_IDS].sort());
   });
 
   it('keeps customAcp out of the canonical agent CLI runtime specs while preserving explicit compat lookup', () => {
@@ -201,6 +208,7 @@ describe('AGENT_CLI_RUNTIME_SPECS', () => {
       'claude',
       'codex',
       'opencode',
+      'antigravity',
       'gemini',
       'auggie',
       'qwen',
@@ -211,6 +219,8 @@ describe('AGENT_CLI_RUNTIME_SPECS', () => {
       'ohMyPi',
       'pi',
       'copilot',
+      'coderabbit',
+      'deepsec',
     ]);
     expect(getAgentCliSetupSupportedIds()).not.toContain('customAcp');
   });

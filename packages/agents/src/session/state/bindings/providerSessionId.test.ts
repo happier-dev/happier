@@ -11,7 +11,7 @@ describe('providerSessionId session-state binding', () => {
     expect(readProviderSessionIdSessionState({
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'opencode',
+        agentId: 'opencode',
         provider: {
           backendMode: 'server',
           providerSessionId: 'oc-descriptor-session',
@@ -27,7 +27,7 @@ describe('providerSessionId session-state binding', () => {
     expect(readProviderSessionIdSessionState({
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'opencode',
+        agentId: 'opencode',
         provider: {
           backendMode: 'server',
           vendorSessionId: 'legacy-oc-session',
@@ -53,7 +53,7 @@ describe('providerSessionId session-state binding', () => {
       path: '/tmp/project',
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: {
           backendMode: 'appServer',
           providerSessionId: 'descriptor-thread',
@@ -87,7 +87,7 @@ describe('providerSessionId session-state binding', () => {
     const next = providerSessionIdBinding.write({
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'opencode',
+        agentId: 'opencode',
         provider: {
           backendMode: 'server',
           providerSessionId: 'old-session',
@@ -134,7 +134,7 @@ describe('providerSessionId session-state binding', () => {
     const next = providerSessionIdBinding.write({
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'gemini',
+        agentId: 'gemini',
         provider: {
           backendMode: 'shell',
           providerSessionId: 'old-session',

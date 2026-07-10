@@ -3,6 +3,8 @@ import type {
   AcpConfigOptionOverridesV1,
   AcpSessionModeIntentV1,
   ModelOverrideV1,
+  SessionModelSelectionIntentReadCompatV1,
+  SessionModelSelectionIntentV1,
   PermissionModeIntentV1,
   SessionMetadata,
 } from '@happier-dev/protocol';
@@ -10,6 +12,7 @@ import {
   AcpConfigOptionOverridesV1Schema,
   AcpSessionModeOverrideV1Schema,
   ModelOverrideV1Schema,
+  SessionModelSelectionIntentV1Schema,
 } from '@happier-dev/protocol';
 
 import { parsePermissionIntentAlias } from '../../../permissions/index.js';
@@ -19,6 +22,7 @@ import {
   LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
   LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY,
   MODEL_OVERRIDE_KEY,
+  MODEL_SELECTION_INTENT_KEY,
   PERMISSION_MODE_KEY,
   PERMISSION_MODE_UPDATED_AT_KEY,
   SESSION_CONFIG_OPTION_OVERRIDES_KEY,
@@ -123,22 +127,44 @@ export function writeStringOverrideIntentToMetadata(params: Readonly<{
   return nextMetadata;
 }
 
-export function readModelIntentFromMetadata(metadata: SessionMetadata): ModelOverrideV1 | null {
-  const parsed = ModelOverrideV1Schema.safeParse((metadata as MetadataRecord)[MODEL_OVERRIDE_KEY]);
-  return parsed.success ? parsed.data : null;
+export function readModelIntentFromMetadata(metadata: SessionMetadata): SessionModelSelectionIntentReadCompatV1 | null {
+  const record = metadata as MetadataRecord;
+  const canonical = SessionModelSelectionIntentV1Schema.safeParse(record[MODEL_SELECTION_INTENT_KEY]);
+  const legacy = ModelOverrideV1Schema.safeParse(record[MODEL_OVERRIDE_KEY]);
+  if (!canonical.success) return legacy.success ? legacy.data : null;
+  if (!legacy.success || canonical.data.updatedAt >= legacy.data.updatedAt) return canonical.data;
+  return legacy.data;
 }
 
 export function writeModelIntentToMetadata(
   metadata: SessionMetadata,
-  update: Readonly<{ modelId: string | null; updatedAt: number }>,
+  update: SessionModelSelectionIntentV1,
 ): SessionMetadata {
-  return writeStringOverrideIntentToMetadata({
-    metadata: metadata as MetadataRecord,
-    overrideKey: MODEL_OVERRIDE_KEY,
-    valueKey: 'modelId',
-    value: update.modelId,
-    updatedAt: update.updatedAt,
-  }) as SessionMetadata;
+  const candidate = SessionModelSelectionIntentV1Schema.parse(update);
+  const current = readModelIntentFromMetadata(metadata);
+  const currentComparable = current && 'selection' in current
+    ? current.selection
+    : current && current.modelId !== null
+      ? { legacyModelId: current.modelId }
+      : null;
+  const candidateComparable = candidate.selection;
+  const result = resolveTimestampedFieldUpdate({
+    current: current
+      ? { value: currentComparable, updatedAt: current.updatedAt }
+      : null,
+    candidate: { value: candidateComparable, updatedAt: candidate.updatedAt },
+    staleBehavior: 'bump-if-value-changed',
+    isEqual: (left, right) => JSON.stringify(left) === JSON.stringify(right),
+  });
+  if (!result.accepted) return metadata;
+  return {
+    ...(metadata as MetadataRecord),
+    [MODEL_SELECTION_INTENT_KEY]: {
+      v: 1,
+      updatedAt: result.updatedAt,
+      selection: result.value,
+    },
+  } as SessionMetadata;
 }
 
 export function readPermissionModeIntentFromMetadata(
@@ -341,7 +367,8 @@ export const modelIntentBinding = {
     return { value, updatedAt: value?.updatedAt ?? null };
   },
   write: (metadata, update) => writeModelIntentToMetadata(metadata, {
-    modelId: update.value.modelId,
+    v: 1,
+    selection: update.value.selection,
     updatedAt: update.updatedAt ?? update.value.updatedAt,
   }),
 } satisfies SessionStateBinding<'intent.model'>;

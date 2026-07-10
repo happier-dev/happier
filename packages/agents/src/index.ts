@@ -8,10 +8,8 @@ export const CANONICAL_AGENT_MODEL_CONFIG = CANONICAL_AGENT_MODEL_CONFIG_FROM_MO
 export const CANONICAL_AGENT_CLI_RUNTIME_SPECS = CANONICAL_AGENT_CLI_RUNTIME_SPECS_FROM_RUNTIME;
 
 export {
-    AGENT_PROVIDER_IDS,
     AGENT_IDS,
     CANONICAL_AGENT_IDS,
-    isAgentProviderId,
     isAgentId,
     PERMISSION_INTENTS,
     PERMISSION_MODES,
@@ -21,7 +19,6 @@ export type {
     AgentCoreRuntimeControlSurface,
     AgentHandoffConfig,
     AgentId,
-    AgentProviderId,
     CanonicalAgentId,
     AgentLocalControlConfig,
     AgentLocalControlAttachStrategy,
@@ -53,17 +50,15 @@ export {
   isRuntimeCheckedExperimentalVendorResume,
 } from './manifest.js';
 export {
-  getAllProviderDefinitions,
-  getAllProviderDefinitionContracts,
-  getAllBackendDefinitions,
+  getAllAgentCatalogDefinitions,
+  getAllAgentDefinitionContracts,
+  getAllBackendCatalogDefinitions,
   getAllBackendDefinitionContracts,
-  getProviderDefinition,
-  getProviderDefinitionContract,
-  getBackendDefinition,
+  getAgentCatalogDefinition,
+  getAgentDefinitionContract,
+  getBackendCatalogDefinition,
   getBackendDefinitionContract,
-  type ProviderDefinition,
-  type BackendDefinition,
-  type ProviderDefinitionContractV1,
+  type AgentDefinitionContractV1,
   type BackendDefinitionContractV1,
 } from './definitions/index.js';
 export {
@@ -91,18 +86,47 @@ export {
   supportsAgentConnectedServiceSessionAuthSwitchTransition,
 } from './connectedServices/runtimeFallbackCapability.js';
 export {
+  buildConnectedServiceAccountGroupOptionsByServiceId,
+  buildConnectedServiceProfileOptionsByServiceId,
+  connectedServiceProfileKey,
+  filterConnectedServiceV2ProfilesForAgent,
+  isConnectedServiceProfileOptionSelectable,
+  isConnectedServiceProfileKindSupportedForAgent,
+  isConnectedServiceProfileStatusSelectable,
+  resolveAgentSupportedConnectedServiceIds,
+  resolveConnectedServiceDefaultProfileId,
+  resolveConnectedServiceProfileLabel,
+  type ConnectedServicesAccountGroupOption,
+  type ConnectedServicesAccountGroupOptionsByServiceId,
+  type ConnectedServicesProfileOption,
+  type ConnectedServicesProfileOptionsByServiceId,
+} from './connectedServices/sessionOptions.js';
+export {
   resolveRecoverableTurnFailureRetryDecision,
   resolveRecoverableTurnFailureSecondFailure,
   type RecoverableTurnFailurePromptMode,
   type RecoverableTurnFailureRetryDecision,
   type RecoverableTurnFailureSecondFailureDecision,
 } from './runtime/session/recoverableTurnFailurePolicy.js';
+export {
+  DEFAULT_AGENT_STATE_EQUIVALENT_REQUEST_COMPLETION_WINDOW_MS,
+  isAgentStateRequestCoveredByCompletedRequests,
+  readAgentStateRequestCompletedAt,
+  resolveAgentStateRequestCoverageOptions,
+  type AgentStateRequestCoverageOptions,
+  type AgentStateRequestCoverageOptionsKind,
+  type AgentStateRequestCoverageRecord,
+} from './runtime/agentStateRequestCoverage.js';
 export type {
   HostRuntimeControlAppServerDelegateInputV1,
   HostRuntimeControlAppServerDelegateV1,
   HostRuntimeControlAppServerRequestV1,
+  HostRuntimeControlConnectedServiceAuthApplyGenerationInputV1,
+  HostRuntimeControlConnectedServiceAuthApplyGenerationOutputV1,
   HostRuntimeControlConnectedServiceRefreshInputV1,
   HostRuntimeControlConnectedServicesDelegateV1,
+  HostRuntimeControlConnectedServiceRuntimeIdentityInputV1,
+  HostRuntimeControlConnectedServiceRuntimeIdentityOutputV1,
   HostRuntimeControlContextV1,
   HostRuntimeControlDiagnosticV1,
   HostRuntimeControlFailureCodeV1,
@@ -121,6 +145,19 @@ export type {
   TerminalInputInjectionV1,
   TerminalPromptInput,
 } from './runtime/terminal/inputInjection.js';
+export {
+  prepareTerminalPromptTextForInjection,
+  type TerminalPromptTextSafetyResult,
+} from './runtime/terminal/promptTextSafety.js';
+export {
+  TERMINAL_PROMPT_BASE_WRITE_TIMEOUT_MS,
+  TERMINAL_PROMPT_MAX_WRITE_TIMEOUT_MS,
+  resolveTerminalPromptWriteBudget,
+  resolveTerminalPromptWriteTimeoutMs,
+} from './runtime/terminal/promptWriteTimeout.js';
+export type {
+  TerminalPromptWriteBudget,
+} from './runtime/terminal/promptWriteTimeout.js';
 export type {
   TerminalHostLivenessV1,
   TerminalInputReadinessStatusV1,
@@ -147,11 +184,14 @@ export type {
   TerminalSpecialKey,
 } from './runtime/terminal/control.js';
 export { resolveAgentIdFromFlavor, resolveCanonicalAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
-export { inferAgentIdFromSessionMetadata, resolveAgentIdFromSessionMetadata } from './resolveAgentIdFromSessionMetadata.js';
+export { inferAgentIdFromSessionMetadata, resolveAgentIdFromSessionMetadata, resolveDeclaredAgentIdFromSessionMetadata } from './resolveAgentIdFromSessionMetadata.js';
 export {
   AGENT_MODEL_CONFIG,
   getAgentModelConfig,
   getAgentStaticModels,
+  hasConstrainedFreeformModelIds,
+  isFreeformModelIdAllowed,
+  type AgentFreeformModelIdConfig,
   type AgentModelConfig,
   type AgentModelDescriptor,
   type AgentModelNonAcpApplyScope,
@@ -206,16 +246,14 @@ export {
 export * as legacyCustomAcpCompat from './compat/customAcp.js';
 
 export {
-  KIMI_PROVIDER_FIELDS,
-  normalizeCodexBackendMode,
-  normalizeKimiAcpPythonSelector,
-  type CodexBackendMode,
-  type KimiAcpPythonSelector,
-  type ProviderSettingsDescriptor,
-  getAllProviderSettingsDefinitions,
-  getProviderSettingsDefinition,
-  type ProviderSettingsDefinition,
-} from './providerSettings/index.js';
+  type AgentSettingsDescriptor,
+  getAllAgentSettingsDefinitions,
+  getAgentSettingsDefaults,
+  getAgentSettingsDefinition,
+  getAgentSettingsFields,
+  getAgentSettingsShape,
+  type AgentSettingsDefinition,
+} from './agentSettings/index.js';
 
 export {
   getAgentAdvancedModeCapabilities,
@@ -248,7 +286,9 @@ export {
     resolvePermissionModeGroupForSessionModeDescriptor,
     normalizePermissionModeForAgent,
     normalizePermissionModeForGroup,
+    resolveProviderNativePermissionModeForAgent,
     resolveLatestPermissionIntent,
+    type ProviderNativePermissionMode,
 } from './permissions/index.js';
 
 export {
@@ -275,12 +315,13 @@ export {
   SESSION_CONFIG_OPTION_OVERRIDES_KEY,
   SESSION_MODE_OVERRIDE_KEY,
   isSessionStateDirectionSupported,
-    resolveFingerprintPublication,
-    resolveTimestampedFieldUpdate,
-    rollbackFingerprintPublication,
-    sanitizeSessionStateErrorCode,
-    SESSION_STATE_FIELD_REGISTRY,
-    resolveMetadataStringOverrideV1,
+  resolveFingerprintPublication,
+  resolveTimestampedFieldUpdate,
+  rollbackFingerprintPublication,
+  sanitizeSessionStateErrorCode,
+  SESSION_STATE_FIELD_REGISTRY,
+  resolveModelSelectionIntentFromSessionMetadata,
+  resolveMetadataStringOverrideV1,
   resolvePermissionIntentFromSessionMetadata,
   type FingerprintPublicationDecision,
   type FingerprintPublicationState,
@@ -319,21 +360,6 @@ export {
   type AgentSessionCapabilityKey,
 } from './session/controls/sessionCapabilities.js';
 export {
-  buildCodexSpawnRuntimeAffinityCompatFields,
-  resolvePersistedCodexRuntimeIdentity,
-  resolvePersistedCodexProviderSessionId,
-  type CodexSpawnRuntimeAffinityCompatFields,
-  type PersistedCodexRuntimeIdentity,
-} from './providers/codex/runtimeIdentity.js';
-export {
-  buildCodexRuntimeDescriptorProviderExtra,
-  readCodexRuntimeDescriptorProviderExtra,
-  type CodexRuntimeDescriptorProviderExtra,
-} from './providers/codex/runtimeDescriptorExtra.js';
-export {
-  buildCodexAgentRuntimeDescriptor,
-} from './providers/codex/buildAgentRuntimeDescriptor.js';
-export {
   readNormalizedRuntimeDescriptor,
 } from './runtime/identity/runtimeDescriptor.js';
 export {
@@ -366,7 +392,7 @@ export {
   readSessionMetadataConnectedServiceBindings,
   readSessionMetadataRuntimeDescriptor,
   type SessionMetadataConnectedServiceBinding,
-} from './providers/readSessionMetadataRuntimeDescriptor.js';
+} from './runtime/identity/readSessionMetadataRuntimeDescriptor.js';
 export {
   applyAgentRuntimeKindOverrideToAccountSettings,
   normalizeAgentRuntimeKindOverride,
@@ -382,7 +408,6 @@ export {
 } from './session/controls/checkpoints.js';
 export {
   resolveProviderSessionBackendMode,
-  resolveCodexSessionBackendMode,
 } from './session/controls/providerBackendModes.js';
 export {
   LEGACY_ACP_CONFIG_OPTIONS_STATE_KEY,
@@ -437,15 +462,15 @@ export {
 } from './cli/runtime.js';
 
 // Namespaced provider-specific helpers/knobs.
-export * as providers from './providers/index.js';
+export * as providers from './providerNamespace/index.js';
 
-export * from './providers/providerCliInstallGuidance.js';
+export * from './cli/providerCliInstallGuidance.js';
 
-export * from './providerSettings/index.js';
+export * from './agentSettings/index.js';
 
 export type {
   BackendCatalogDefinition,
-  ProviderCatalogDefinition,
+  AgentCatalogDefinition,
 } from './definitions/types.js';
 export type { EngineSpec, RuntimeKindSpec } from './runtime/engine/contracts.js';
 export type {
@@ -488,6 +513,7 @@ export type {
   ExternalSessionFileFollowInputV1,
   ExternalSessionFileFollowLineV1,
   ExternalSessionFileFollowPolicyInputV1,
+  ExternalSessionFileFollowResetReasonV1,
   ExternalSessionFileFollowRuntimeServiceV1,
   ExternalSessionFileFollowStartAtV1,
   ExternalSessionFileFollowStrategyV1,
@@ -607,9 +633,14 @@ export type {
   SessionPermissionDecisionRequestV1,
   SessionPermissionDecisionResultV1,
   SessionPermissionDecisionV1,
+  SessionPermissionFollowUpPromptDeliveryV1,
+  SessionPermissionFollowUpPromptIntentV1,
   SessionPermissionModeV1,
+  SessionPermissionPersistAllowRuleScopeV1,
+  SessionPermissionPersistAllowRuleV1,
   SessionPermissionUpdateV1,
   SessionPermissionsServiceV1,
+  SessionProviderAcceptedUserMessageDeliveryQueryV1,
   SessionRuntimeAuthRefreshRequestV1,
   SessionRuntimeAuthRefreshResultV1,
   SessionRuntimeAuthServicesV1,
@@ -623,6 +654,9 @@ export type {
   SessionScopedSubscribeRequestV1,
   SessionScopedSubscriptionEventV1,
   SessionStateFieldWriteRequestV1,
+  SessionSystemRecordReadRequestV1,
+  SessionSystemRecordReadResultV1,
+  SessionSystemRecordWriteRequestV1,
   SubscriptionV1,
   SubagentCompleteParamsV1,
   SubagentGetParamsV1,
@@ -668,17 +702,6 @@ export {
   getProviderAuthAdapter,
   getProviderConnectedServicesAdapter,
   getProviderRuntimePreferencesAdapter,
-  getProviderMessageMetaEnricher,
 } from './runtime/adjunctAdapters/index.js';
-export {
-  isCodexVendorResumeBackendEnabled,
-  resolveCodexSessionRuntimePreferences,
-  resolveCodexRuntimeBackendMode,
-  resolveCodexSpawnExtrasForRuntime,
-  resolveCodexSpawnExtrasFromSettings,
-} from './runtime/preferences/index.js';
-export {
-  resolveProviderOutgoingMessageMetaExtras,
-} from './runtime/adjunctAdapters/messageMetaRegistry.js';
 
 export * from './voice/index.js';

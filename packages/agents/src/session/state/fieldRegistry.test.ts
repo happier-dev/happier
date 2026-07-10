@@ -26,4 +26,13 @@ describe('SESSION_STATE_FIELD_REGISTRY', () => {
       deliveryClass: 'durable_required',
     });
   });
+
+  it('registers runtime activity as a binding-owned runtime projection', () => {
+    expect(getSessionStateFieldDescriptor('runtime.activity')).toEqual({
+      id: 'runtime.activity',
+      class: 'runtime',
+      conflictPolicy: 'bindingOwned',
+      deliveryClass: 'durable_best_effort',
+    });
+  });
 });

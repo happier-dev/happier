@@ -60,13 +60,31 @@ describe('evaluateExistingSessionAutomationEligibility', () => {
     });
   });
 
-  it('accepts runtime-descriptor sessions without legacy top-level vendor ids', () => {
+  it('accepts runtimeDescriptorV1 sessions without legacy top-level vendor ids', () => {
+    expect(
+      evaluateExistingSessionAutomationEligibility({
+        metadata: {
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'opencode',
+            provider: { backendMode: 'server', providerSessionId: 'opencode-session-1' },
+          },
+        },
+      }),
+    ).toEqual({
+      eligible: true,
+      agentId: 'opencode',
+      strategy: 'vendor_resume',
+    });
+  });
+
+  it('keeps legacy agentRuntimeDescriptorV1 read-compat for runtime-descriptor sessions', () => {
     expect(
       evaluateExistingSessionAutomationEligibility({
         metadata: {
           agentRuntimeDescriptorV1: {
             v: 1,
-            providerId: 'opencode',
+            agentId: 'opencode',
             provider: { backendMode: 'server', providerSessionId: 'opencode-session-1' },
           },
         },

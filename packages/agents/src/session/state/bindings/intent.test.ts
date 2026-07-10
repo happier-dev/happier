@@ -6,6 +6,7 @@ import {
   readAcpSessionModeIntentFromMetadata,
   writeAcpConfigOptionIntentToMetadata,
   writeAcpSessionModeIntentToMetadata,
+  readModelIntentFromMetadata,
   writeModelIntentToMetadata,
   writePermissionModeIntentToMetadata,
 } from './intent.js';
@@ -16,25 +17,61 @@ import {
 } from './publishField.js';
 
 describe('intent session-state bindings', () => {
-  it('writes model intent with bumped stale local updates and clear tombstones', () => {
+  it('reads the newest canonical-or-legacy model intent with canonical tie precedence', () => {
+    const canonical = {
+      v: 1 as const,
+      updatedAt: 10,
+      selection: {
+        agentTargetKey: 'agent:codex',
+        providerConnectionId: 'pc_work',
+        modelId: 'vendor/model',
+      },
+    };
+    expect(readModelIntentFromMetadata({
+      modelSelectionIntentV1: canonical,
+      modelOverrideV1: { v: 1, updatedAt: 10, modelId: 'legacy-native' },
+    })).toEqual(canonical);
+    expect(readModelIntentFromMetadata({
+      modelSelectionIntentV1: canonical,
+      modelOverrideV1: { v: 1, updatedAt: 11, modelId: null },
+    })).toEqual({ v: 1, updatedAt: 11, modelId: null });
+  });
+
+  it('writes canonical model intent only, with bumped stale updates and clear tombstones', () => {
     const base = {
       modelOverrideV1: { v: 1, updatedAt: 10, modelId: 'gpt-4' },
     };
 
     const changed = writeModelIntentToMetadata(base, {
-      modelId: 'gpt-5',
+      v: 1,
       updatedAt: 9,
+      selection: {
+        agentTargetKey: 'agent:codex',
+        providerConnectionId: 'pc_work',
+        modelId: 'gpt-5',
+      },
     });
     expect(changed).toEqual({
-      modelOverrideV1: { v: 1, updatedAt: 11, modelId: 'gpt-5' },
+      modelOverrideV1: { v: 1, updatedAt: 10, modelId: 'gpt-4' },
+      modelSelectionIntentV1: {
+        v: 1,
+        updatedAt: 11,
+        selection: {
+          agentTargetKey: 'agent:codex',
+          providerConnectionId: 'pc_work',
+          modelId: 'gpt-5',
+        },
+      },
     });
 
     const cleared = writeModelIntentToMetadata(changed, {
-      modelId: '',
+      v: 1,
       updatedAt: 8,
+      selection: null,
     });
     expect(cleared).toEqual({
-      modelOverrideV1: { v: 1, updatedAt: 12, modelId: null },
+      modelOverrideV1: { v: 1, updatedAt: 10, modelId: 'gpt-4' },
+      modelSelectionIntentV1: { v: 1, updatedAt: 12, selection: null },
     });
   });
 
@@ -352,12 +389,25 @@ describe('intent session-state metadata updater', () => {
   it('creates a field updater backed by the registered binding', () => {
     const updater = createSessionStateFieldMetadataUpdater('intent.model', {
       v: 1,
-      modelId: 'gpt-5',
       updatedAt: 20,
+      selection: {
+        agentTargetKey: 'agent:codex',
+        providerConnectionId: null,
+        modelId: 'gpt-5',
+      },
     });
 
     expect(updater({ modelOverrideV1: { v: 1, modelId: 'gpt-4', updatedAt: 10 } })).toEqual({
-      modelOverrideV1: { v: 1, modelId: 'gpt-5', updatedAt: 20 },
+      modelOverrideV1: { v: 1, modelId: 'gpt-4', updatedAt: 10 },
+      modelSelectionIntentV1: {
+        v: 1,
+        updatedAt: 20,
+        selection: {
+          agentTargetKey: 'agent:codex',
+          providerConnectionId: null,
+          modelId: 'gpt-5',
+        },
+      },
     });
   });
 

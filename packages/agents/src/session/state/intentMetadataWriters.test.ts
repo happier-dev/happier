@@ -78,52 +78,23 @@ describe("session state intent metadata writers", () => {
         });
     });
 
-    it("writes a clear tombstone for string overrides", () => {
-        const next = computeNextMetadataStringOverrideV1({
-            metadata: {
-                modelOverrideV1: {
-                    v: 1,
-                    updatedAt: 10,
-                    modelId: "gpt-4",
-                },
+    it("never writes the deployed modelOverrideV1 compatibility field", () => {
+        const metadata = {
+            modelOverrideV1: {
+                v: 1,
+                updatedAt: 10,
+                modelId: "gpt-4",
             },
+        };
+        const next = computeNextMetadataStringOverrideV1({
+            metadata,
             overrideKey: "modelOverrideV1",
             valueKey: "modelId",
             value: "   ",
             updatedAt: 20,
         });
 
-        expect(next).toEqual({
-            modelOverrideV1: {
-                v: 1,
-                updatedAt: 20,
-                modelId: null,
-            },
-        });
-    });
-
-    it("uses monotonic bump when clearing with a stale timestamp", () => {
-        const next = computeNextMetadataStringOverrideV1({
-            metadata: {
-                modelOverrideV1: {
-                    v: 1,
-                    updatedAt: 20,
-                    modelId: "gpt-4",
-                },
-            },
-            overrideKey: "modelOverrideV1",
-            valueKey: "modelId",
-            value: "",
-            updatedAt: 1,
-        });
-
-        expect(next).toEqual({
-            modelOverrideV1: {
-                v: 1,
-                updatedAt: 21,
-                modelId: null,
-            },
-        });
+        expect(next).toBe(metadata);
     });
 
     it("dual-writes canonical and legacy session mode override keys", () => {

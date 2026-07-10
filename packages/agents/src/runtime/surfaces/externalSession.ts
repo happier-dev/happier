@@ -2,7 +2,7 @@ import type { MaybePromise } from '../engine/contracts.js';
 import type {
   BackendSurfaceAvailabilityV1,
   ExternalSessionCandidateV1,
-  ExternalSessionsProviderId,
+  ExternalSessionsAgentId,
   ExternalSessionTranscriptRawMessageV1,
   ExternalSessionsSearchMode,
   ExternalSessionsSource,
@@ -22,7 +22,7 @@ export type ExternalSessionFailureCodeV1 =
   | 'candidate_not_found'
   | 'follow_not_supported'
   | 'takeover_not_available'
-  | 'provider_unavailable';
+  | 'agent_unavailable';
 
 export type ExternalSessionAvailabilityOperationV1 =
   | 'resolveSource'
@@ -54,6 +54,8 @@ export type ExternalSessionFileFollowLineV1 = Readonly<{
   sequence: number;
 }>;
 
+export type ExternalSessionFileFollowResetReasonV1 = 'missing' | 'replaced' | 'truncated';
+
 export type ExternalSessionFileFollowPolicyInputV1 = Readonly<{
   pollIntervalMs?: number;
   missingFileRetryIntervalMs?: number;
@@ -68,6 +70,7 @@ export type ExternalSessionFileFollowInputV1 = Readonly<{
   policy?: ExternalSessionFileFollowPolicyInputV1;
   signal?: AbortSignal;
   onLine(line: ExternalSessionFileFollowLineV1): void | Promise<void>;
+  onReset?(event: Readonly<{ reason: ExternalSessionFileFollowResetReasonV1 }>): void | Promise<void>;
   onError?(error: unknown): void | Promise<void>;
 }>;
 
@@ -82,7 +85,7 @@ export type ExternalSessionFileFollowRuntimeServiceV1 = Readonly<{
 }>;
 
 export type ExternalSessionProviderStoreKeyV1 = Readonly<{
-  providerId: ExternalSessionsProviderId;
+  agentId: ExternalSessionsAgentId;
   source: ExternalSessionsSource;
   providerSessionId: string;
 }>;
@@ -116,7 +119,7 @@ export type ExternalSessionTranscriptStoreRuntimeServiceV1 = Readonly<{
 }>;
 
 export type ExternalSessionCandidateHostListRequestV1 = Readonly<{
-  providerId: ExternalSessionsProviderId;
+  agentId: ExternalSessionsAgentId;
   source: ExternalSessionsSource;
   cursor?: string;
   limit: number;
@@ -152,6 +155,12 @@ export type ExternalSessionRuntimeContextV1 = Readonly<{
 
 export type ExternalSessionResolveSourceRequestV1 = Readonly<{
   source: ExternalSessionsSource;
+  /**
+   * Host-supplied environment for deterministic source validation/canonicalization.
+   * This is intentionally scoped to source resolution; runtime operations receive
+   * host services through `runtime` instead of ambient process state.
+   */
+  env?: NodeJS.ProcessEnv;
   runtime?: ExternalSessionRuntimeContextV1;
 }>;
 

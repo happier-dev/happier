@@ -51,7 +51,13 @@ export type SessionStateMetadataWriteResult =
     version: number;
     provider?: SessionStateApplyResult;
   }>
-  | Readonly<{ ok: false; reason: 'unsupported' | 'conflict' | 'forbidden' | 'unknown_error' }>;
+  | Readonly<{ ok: false; reason: 'unsupported' | 'conflict' | 'forbidden' | 'unknown_error' }>
+  | Readonly<{
+    ok: false;
+    reason: 'durable_delivery_unavailable';
+    fieldId: SessionStateFieldId;
+    deliveryClass: 'durable_required';
+  }>;
 
 export type SessionStateObserveProviderResult =
   | Readonly<{ ok: true; disposable: SessionStateDisposable }>

@@ -18,7 +18,7 @@ describe('metadataWriters', () => {
           fieldId: 'identity.runtimeDescriptor',
           value: {
             v: 1,
-            providerId: 'codex',
+            agentId: 'codex',
             provider: {
               backendMode: 'appServer',
               providerSessionId: 'vendor-parent-1',

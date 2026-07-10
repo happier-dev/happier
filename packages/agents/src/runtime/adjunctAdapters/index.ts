@@ -8,4 +8,3 @@ export type {
 export { getProviderAuthAdapter } from '../../auth.js';
 export { getProviderConnectedServicesAdapter } from '../../manifest.js';
 export { getProviderRuntimePreferencesAdapter } from '../preferences/index.js';
-export { getProviderMessageMetaEnricher } from './messageMetaRegistry.js';

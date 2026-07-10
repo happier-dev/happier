@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_AGENT_ID } from './manifest.js';
 
 import { resolveAgentIdFromFlavor, resolveCanonicalAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
-import { inferAgentIdFromSessionMetadata } from './resolveAgentIdFromSessionMetadata.js';
+import { inferAgentIdFromSessionMetadata, resolveDeclaredAgentIdFromSessionMetadata } from './resolveAgentIdFromSessionMetadata.js';
 import { resolveLegacyCustomAcpCompatAgentIdFromFlavor } from './compat/customAcp.js';
 
 describe('resolveAgentIdFromFlavor', () => {
@@ -49,8 +49,19 @@ describe('resolveAgentIdFromFlavor', () => {
 });
 
 describe('inferAgentIdFromSessionMetadata', () => {
-  it('prefers metadata.flavor when it resolves', () => {
+  it('uses metadata.flavor when canonical runtime metadata is absent', () => {
     expect(inferAgentIdFromSessionMetadata({ flavor: 'gpt' })).toBe('codex');
+  });
+
+  it('prefers canonical runtimeDescriptorV1 provider ids over stale metadata.flavor', () => {
+    expect(inferAgentIdFromSessionMetadata({
+      flavor: 'claude',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        provider: { backendMode: 'appServer', providerSessionId: 'codex_1' },
+      },
+    })).toBe('codex');
   });
 
   it('falls back to vendor resume id fields when flavor is missing', () => {
@@ -58,18 +69,23 @@ describe('inferAgentIdFromSessionMetadata', () => {
     expect(inferAgentIdFromSessionMetadata({ claudeSessionId: 'c1' })).toBe('claude');
   });
 
+  it('does not treat vendor resume id fields as declared runtime owners', () => {
+    expect(resolveDeclaredAgentIdFromSessionMetadata({ opencodeSessionId: 'o1' })).toBeNull();
+    expect(resolveDeclaredAgentIdFromSessionMetadata({ claudeSessionId: 'c1' })).toBeNull();
+  });
+
   it('prefers agentRuntimeDescriptorV1 provider ids when flavor and legacy fields are missing', () => {
     expect(inferAgentIdFromSessionMetadata({
       agentRuntimeDescriptorV1: {
         v: 1,
-        providerId: 'opencode',
+        agentId: 'opencode',
         provider: { backendMode: 'server', providerSessionId: 'oc_1' },
       },
     })).toBe('opencode');
     expect(inferAgentIdFromSessionMetadata({
       agentRuntimeDescriptorV1: {
         v: 1,
-        providerId: 'ohMyPi',
+        agentId: 'ohMyPi',
         provider: { resumeStrategy: 'sessionFileBySessionId', providerSessionId: 'omp_1' },
       },
     })).toBe('ohMyPi');
@@ -97,12 +113,26 @@ describe('inferAgentIdFromSessionMetadata', () => {
     })).toBe('codex');
   });
 
+  it('prefers direct session provider ids over stale metadata.flavor', () => {
+    expect(inferAgentIdFromSessionMetadata({
+      flavor: 'claude',
+      directSessionV1: {
+        v: 1,
+        providerId: 'opencode',
+        machineId: 'm1',
+        remoteSessionId: 'o1',
+        source: { kind: 'opencodeServer', directory: '/repo' },
+        linkedAtMs: 1,
+      },
+    })).toBe('opencode');
+  });
+
   it('does not let legacy customAcp flavor carriers override canonical runtime metadata', () => {
     expect(inferAgentIdFromSessionMetadata({
       flavor: 'customAcp',
       agentRuntimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: { backendMode: 'appServer', providerSessionId: 'codex_1' },
       },
     })).toBe('codex');

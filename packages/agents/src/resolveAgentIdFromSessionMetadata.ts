@@ -1,6 +1,6 @@
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
 import type { AgentId } from './types.js';
-import { AGENT_IDS, isAgentProviderId } from './types.js';
+import { AGENT_IDS, isAgentId } from './types.js';
 import { isLegacyConfiguredBackendSentinelId } from './compat/legacyConfiguredBackend.js';
 import { DEFAULT_AGENT_ID, getAgentResumeConfig } from './manifest.js';
 import { resolveCanonicalAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
@@ -25,16 +25,36 @@ function normalizeResolvedAgentId(value: unknown): AgentId | null {
     return null;
   }
 
-  return isAgentProviderId(value) ? value : null;
+  return isAgentId(value) ? value : null;
 }
 
-function readDirectSessionProviderId(metadata: Record<string, unknown>): AgentId | null {
+function readDirectSessionAgentId(metadata: Record<string, unknown>): AgentId | null {
   for (const key of ['directSessionV1', 'externalSessionV1'] as const) {
     const directSession = asRecord(metadata[key]);
-    const providerId = typeof directSession?.providerId === 'string' ? directSession.providerId.trim() : null;
-    const resolvedProviderId = normalizeResolvedAgentId(providerId);
-    if (resolvedProviderId) return resolvedProviderId;
+    // legacy `providerId` external-link read-compat (pre-rename persisted metadata)
+    const rawAgentId = directSession?.agentId ?? directSession?.providerId;
+    const agentId = typeof rawAgentId === 'string' ? rawAgentId.trim() : null;
+    const resolvedAgentId = normalizeResolvedAgentId(agentId);
+    if (resolvedAgentId) return resolvedAgentId;
   }
+  return null;
+}
+
+export function resolveDeclaredAgentIdFromSessionMetadata(metadata: unknown): AgentId | null {
+  const record = asRecord(metadata);
+  if (!record) return null;
+
+  const runtimeDescriptor = readRuntimeDescriptorV1FromMetadata(record);
+  const runtimeDescriptorProviderId = normalizeResolvedAgentId(runtimeDescriptor?.agentId);
+  if (runtimeDescriptorProviderId) {
+    return runtimeDescriptorProviderId;
+  }
+
+  const directSessionProviderId = readDirectSessionAgentId(record);
+  if (directSessionProviderId) {
+    return directSessionProviderId;
+  }
+
   return null;
 }
 
@@ -42,19 +62,11 @@ export function resolveAgentIdFromSessionMetadata(metadata: unknown): AgentId | 
   const record = asRecord(metadata);
   if (!record) return null;
 
+  const declaredAgentId = resolveDeclaredAgentIdFromSessionMetadata(record);
+  if (declaredAgentId) return declaredAgentId;
+
   const byFlavor = resolveCanonicalAgentIdFromFlavor(record.flavor);
   if (byFlavor) return byFlavor;
-
-  const runtimeDescriptor = readRuntimeDescriptorV1FromMetadata(record);
-  const runtimeDescriptorProviderId = normalizeResolvedAgentId(runtimeDescriptor?.providerId);
-  if (runtimeDescriptorProviderId) {
-    return runtimeDescriptorProviderId;
-  }
-
-  const directSessionProviderId = readDirectSessionProviderId(record);
-  if (directSessionProviderId) {
-    return directSessionProviderId;
-  }
 
   for (const id of AGENT_IDS) {
     const resume = getAgentResumeConfig(id);

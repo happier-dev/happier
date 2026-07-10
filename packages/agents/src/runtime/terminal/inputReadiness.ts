@@ -5,6 +5,7 @@ import type {
 
 export type TerminalHostLivenessV1 = Readonly<{
     paneAlive: boolean;
+    probeInconclusive?: boolean;
     paneDead?: boolean;
     panePid?: number;
     paneCurrentCommand?: string;

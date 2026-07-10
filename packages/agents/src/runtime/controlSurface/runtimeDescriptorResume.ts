@@ -1,6 +1,5 @@
 import {
-  readCanonicalRuntimeDescriptorV1ForProvider,
-  readRawRuntimeDescriptorV1FromMetadata,
+  readCanonicalRuntimeDescriptorV1ForAgent,
   readRuntimeDescriptorV1FromMetadata,
 } from '@happier-dev/protocol';
 
@@ -34,8 +33,8 @@ export function createRuntimeDescriptorResumeIdSessionControlAdapter(
       const metadataRecord = asRecord(metadata);
       if (!metadataRecord) return null;
 
-      const descriptor = readCanonicalRuntimeDescriptorV1ForProvider(
-        readRuntimeDescriptorV1FromMetadata(metadataRecord) ?? readRawRuntimeDescriptorV1FromMetadata(metadataRecord),
+      const descriptor = readCanonicalRuntimeDescriptorV1ForAgent(
+        readRuntimeDescriptorV1FromMetadata(metadataRecord),
         contribution.providerId,
       );
       const descriptorRecord = asRecord(descriptor);

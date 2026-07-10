@@ -3,7 +3,7 @@ import type { SessionScopedServicesV1 } from '../session/scopedServices.js';
 import type {
   BackendSurfaceAvailabilityV1,
   ExternalSessionTranscriptRawMessageV1,
-  ExternalSessionsProviderId,
+  ExternalSessionsAgentId,
   ExternalSessionsSource,
   RuntimeDescriptorV1,
   SubagentLifecycleDetailV1,
@@ -28,6 +28,11 @@ export type TerminalRuntimeLaunchRequestV1 = Readonly<{
   sessionId: string;
   metadata: Readonly<Record<string, unknown>>;
   directory: string;
+  isolation?: Readonly<{
+    env?: Readonly<Record<string, string>>;
+    unsetEnvKeys?: readonly string[];
+  }> | null;
+  env?: Readonly<Record<string, string>>;
   services?: SessionScopedServicesV1;
   signal?: AbortSignal;
   host?: TerminalRuntimeHostOrchestrationV1;
@@ -78,6 +83,7 @@ export type TerminalRuntimeProcessLaunchRequestV1 = Readonly<{
   args?: readonly string[];
   cwd: string;
   env?: Readonly<Record<string, string | undefined>>;
+  unsetEnvKeys?: readonly string[];
   stdio?: TerminalRuntimeProcessStdioV1;
   windowsHide?: boolean;
   windowsVerbatimArguments?: boolean;
@@ -119,7 +125,7 @@ export type TerminalRuntimeProcessServiceV1 = Readonly<{
 }>;
 
 export type TerminalRuntimeDirectTranscriptBindingV1 = Readonly<{
-  providerId: ExternalSessionsProviderId;
+  agentId: ExternalSessionsAgentId;
   source: ExternalSessionsSource;
   remoteSessionId: string;
 }>;
@@ -151,8 +157,8 @@ export type TerminalRuntimeProviderSessionProjectionV1 = Readonly<{
 }>;
 
 export type TerminalRuntimeSubagentProjectionV1 = Readonly<{
-  providerId?: string;
-  providerKind?: string;
+  agentId?: string;
+  agentKind?: string;
   providerSessionId?: string;
   subagentId: string;
   label?: string;

@@ -2,6 +2,9 @@ import { PERMISSION_INTENTS, PERMISSION_MODES, type PermissionIntent, type Permi
 import type { AgentId } from '../types.js';
 import { getAgentSessionModeDescriptor, type AgentSessionModeDescriptor } from '../sessionModes.js';
 
+export { PERMISSION_MODES };
+export type { PermissionIntent, PermissionMode };
+
 function normalizeToken(raw: string): string {
     return raw
         .trim()
@@ -20,28 +23,13 @@ export function isPermissionIntent(value: unknown): value is PermissionIntent {
 
 export type PermissionModeGroupId = 'claude' | 'codexLike';
 
-export function normalizePermissionModeForGroup(mode: PermissionMode, group: PermissionModeGroupId): PermissionMode {
-    if (group === 'claude') {
-        switch (mode) {
-            case 'safe-yolo':
-                return 'acceptEdits';
-            case 'yolo':
-                return 'bypassPermissions';
-            case 'read-only':
-                return 'default';
-            default:
-                return mode;
-        }
-    }
+export function normalizePermissionModeForGroup(mode: PermissionMode, _group: PermissionModeGroupId): PermissionMode {
+    const normalized = parsePermissionIntentAlias(mode) ?? 'default';
 
-    switch (mode) {
-        case 'acceptEdits':
-            return 'safe-yolo';
-        case 'bypassPermissions':
-            return 'yolo';
-        default:
-            return mode;
-    }
+    // `plan` is an agent behavior mode, not permission strictness. Fail it closed at this layer.
+    if (normalized === 'plan') return 'read-only';
+
+    return normalized;
 }
 
 export function resolvePermissionModeGroupForSessionModeDescriptor(
@@ -56,6 +44,29 @@ export function resolvePermissionModeGroupForAgent(agentId: AgentId): Permission
 
 export function normalizePermissionModeForAgent(params: { agentId: AgentId; mode: PermissionMode }): PermissionMode {
     return normalizePermissionModeForGroup(params.mode, resolvePermissionModeGroupForAgent(params.agentId));
+}
+
+export type ProviderNativePermissionMode = PermissionMode | 'auto' | 'dontAsk';
+
+export function resolveProviderNativePermissionModeForAgent(params: {
+    agentId: AgentId;
+    mode: PermissionMode;
+}): ProviderNativePermissionMode {
+    if (resolvePermissionModeGroupForAgent(params.agentId) !== 'claude') {
+        return normalizePermissionModeForAgent(params);
+    }
+
+    const normalized = normalizePermissionModeForGroup(params.mode, 'claude');
+    switch (normalized) {
+        case 'yolo':
+            return 'bypassPermissions';
+        case 'safe-yolo':
+            return 'auto';
+        case 'read-only':
+            return 'dontAsk';
+        default:
+            return normalized;
+    }
 }
 
 /**
@@ -85,6 +96,8 @@ export function parsePermissionModeAlias(raw: string): PermissionMode | null {
         case 'readonly':
         case 'read-only':
         case 'read':
+        case 'no-tools':
+        case 'notools':
         case 'ro':
             return 'read-only';
 

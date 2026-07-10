@@ -26,6 +26,8 @@ export type TerminalHostHandle = Readonly<{
 export type TerminalInputState = Readonly<{
     stable: boolean;
     currentInput: string;
+    /** Zero-based terminal cursor position when the host can report it. */
+    cursor?: Readonly<{ x: number; y: number }>;
     observedAt: number;
 }>;
 
@@ -36,6 +38,7 @@ export type TerminalHostAdapter = Readonly<{
         workingDirectory: string;
         spawnArgv: readonly string[];
         spawnEnv: Readonly<Record<string, string>>;
+        unsetEnvKeys?: readonly string[];
         isolatedEnv: boolean;
     }>): Promise<TerminalHostHandle>;
     injectUserPrompt(handle: TerminalHostHandle, input: TerminalPromptInput): Promise<TerminalInputInjectionResult>;

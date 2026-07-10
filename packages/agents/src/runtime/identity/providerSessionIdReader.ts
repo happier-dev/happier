@@ -1,6 +1,5 @@
 import {
-  readRawRuntimeDescriptorV1FromMetadata,
-  readRuntimeDescriptorV1ForProvider,
+  readRuntimeDescriptorV1ForAgent,
   readRuntimeDescriptorV1FromMetadata,
 } from '@happier-dev/protocol';
 
@@ -39,15 +38,15 @@ export function createProviderSessionIdRuntimeDescriptorReader<
     const metadataRecord = asRecord(metadata);
     if (!metadataRecord) return null;
 
-    const descriptor = readRuntimeDescriptorV1ForProvider(
-      readRuntimeDescriptorV1FromMetadata(metadataRecord) ?? readRawRuntimeDescriptorV1FromMetadata(metadataRecord),
+    const descriptor = readRuntimeDescriptorV1ForAgent(
+      readRuntimeDescriptorV1FromMetadata(metadataRecord),
       contribution.providerId,
     );
     if (!descriptor) return null;
 
-    const providerSessionId = readProviderSessionIdCompat(descriptor.provider);
+    const providerSessionId = readProviderSessionIdCompat(descriptor.agent);
     const sharedDescriptor = {
-      providerId: contribution.providerId,
+      agentId: contribution.providerId,
       runtimeKind: null,
       providerSessionId,
       runtimeHandle: buildProviderSessionIdRuntimeHandle(providerSessionId),
