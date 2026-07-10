@@ -1,6 +1,6 @@
 import {
   definePluginManifest,
-  type PluginBackendContributionV2,
+  type PluginAgentContributionV2,
   type PluginManifestV2,
 } from '@happier-dev/plugin-sdk';
 
@@ -8,7 +8,7 @@ const CURSOR_BACKEND_ID = 'cursor';
 
 type CursorPluginManifestV2 = Omit<PluginManifestV2, 'contributes'> & Readonly<{
   contributes: Readonly<{
-    backends: ReadonlyArray<PluginBackendContributionV2>;
+    agents: ReadonlyArray<PluginAgentContributionV2>;
   }>;
 }>;
 
@@ -19,25 +19,25 @@ export const PLUGIN_MANIFEST = definePluginManifest({
   displayName: 'Cursor',
   description: undefined,
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: ['backends'] },
-  targets: {},
-  capabilities: {
-    permissions: [
+  activationEvents: ['onAgent:cursor'],
+  uses: ['agents'],
+  entrypoints: { main: './dist/index.js' },
+  permissions: {
+    required: [
       {
         capability: 'env',
         reason: 'Read CURSOR_API_KEY when the user chooses environment-based Cursor authentication.',
         scope: 'CURSOR_API_KEY',
       },
     ],
-    optionalPermissions: [],
+    optional: [],
   },
   contributes: {
-    backends: [
+    agents: [
       {
         kindVersion: 1,
         id: CURSOR_BACKEND_ID,
-        agentId: 'cursor',
-        engine: { kind: 'custom' },
+        runtime: { kind: 'custom' },
         surfaceHandlers: [],
         capabilities: {
           executionRun: { supported: false },

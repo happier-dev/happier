@@ -1,12 +1,12 @@
 import type {
+  AgentRuntimeV1,
   CreateSessionRuntimeParamsV1,
   PluginContextV1,
 } from '@happier-dev/plugin-sdk';
-import type { BundledBackendEngineV1 } from '@happier-dev/plugin-sdk/internal/runtime/session';
 
 import { createCursorAcpRuntimeConnection } from '../acp/connection.js';
 
-export function createCursorBackendEngine(ctx: PluginContextV1): BundledBackendEngineV1 {
+export function createCursorBackendEngine(ctx: PluginContextV1): AgentRuntimeV1 {
   return {
     runtimeCore: {
       createSessionRuntime: async (sessionParams: CreateSessionRuntimeParamsV1) => {

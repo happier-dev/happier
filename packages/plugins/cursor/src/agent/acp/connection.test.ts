@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type {
   AcpRuntimeHandleV1,
+  AcpSessionStartParamsV1,
   AcpSessionRuntimeV1,
   PluginContextV1,
 } from '@happier-dev/plugin-sdk';
@@ -9,7 +10,7 @@ import type {
 import { createCursorAcpRuntimeConnection } from './connection.js';
 
 function createSessionRuntimeFixture() {
-  const startOrLoadSession = vi.fn(async (input?: Readonly<{ providerSessionId?: string }>) => (
+  const startOrLoadSession = vi.fn(async (input?: AcpSessionStartParamsV1) => (
     input?.providerSessionId ?? 'cursor-provider-created'
   ));
   const sessionRuntime: AcpSessionRuntimeV1 = {
@@ -26,11 +27,9 @@ function createSessionRuntimeFixture() {
     dispose: vi.fn(async () => undefined),
   };
   const ctx = {
-    acp: {
-      createRuntime: vi.fn(async () => handle),
-    },
     env: {
       get: vi.fn(() => undefined),
+      list: vi.fn(() => ({})),
     },
     config: {
       values: {},
@@ -41,12 +40,19 @@ function createSessionRuntimeFixture() {
       error: vi.fn(),
       debug: vi.fn(),
     },
-    session: {
-      permissions: {
-        requestDecision: vi.fn(async () => ({ decision: 'approved' })),
-        getMode: vi.fn(() => 'default'),
+    agentRuntime: {
+      acp: {
+        createRuntime: vi.fn(async () => handle),
       },
-      writeMetadata: vi.fn(async () => undefined),
+    },
+    sessions: {
+      current: {
+        permissions: {
+          requestDecision: vi.fn(async () => ({ decision: 'approved' })),
+          getMode: vi.fn(() => 'default'),
+        },
+        writeMetadata: vi.fn(async () => undefined),
+      },
     },
   } as unknown as PluginContextV1;
   return { ctx, startOrLoadSession };
@@ -55,7 +61,7 @@ function createSessionRuntimeFixture() {
 describe('createCursorAcpRuntimeConnection', () => {
   it('does not treat generic Happier session ids as Cursor provider session ids', async () => {
     const { ctx, startOrLoadSession } = createSessionRuntimeFixture();
-    const plan = await createCursorAcpRuntimeConnection({
+    const runtime = await createCursorAcpRuntimeConnection({
       ctx,
       sessionParams: {
         backendId: 'cursor',
@@ -67,14 +73,8 @@ describe('createCursorAcpRuntimeConnection', () => {
       },
     });
 
-    const runtime = await plan.config.createSessionRuntime({
-      directory: '/repo',
-      session: {
-        sessionId: 'happier-session-runtime',
-      },
-    });
-    await runtime.startOrLoadSession();
+    await runtime.send({ v: 1, text: 'hello cursor' });
 
-    expect(startOrLoadSession).toHaveBeenCalledWith();
+    expect(startOrLoadSession).toHaveBeenCalledWith({ mcpServers: [] });
   });
 });

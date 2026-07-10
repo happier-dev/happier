@@ -61,6 +61,8 @@ export const AGENT_DEFINITION = Object.freeze({
     id: CURSOR_AGENT_ID,
     title: 'Cursor Agent CLI',
     binaryName: 'cursor-agent',
+    alternativeBinaryNames: ['agent'],
+    alternativeBinaryFallbackEnabledEnvVar: 'HAPPIER_CURSOR_AGENT_FALLBACK_ENABLED',
     knownUserBinDirSuffixes: ['.local/bin'],
     sourcePreferenceDefault: 'system-first',
     managedInstall: null,
@@ -70,5 +72,11 @@ export const AGENT_DEFINITION = Object.freeze({
     installGuideUrl: 'https://cursor.com/docs/cli/installation',
     docsUrl: 'https://cursor.com/docs/cli',
   },
-  providerSettings: null,
+  agentSettings: null,
+  runtimeContributions: {
+    agentCatalogEntry: {
+      importName: 'CURSOR_AGENT_RUNTIME_CONTRIBUTION',
+      source: './agent/contributions/runtime',
+    },
+  },
 });

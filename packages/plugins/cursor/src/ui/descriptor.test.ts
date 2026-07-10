@@ -10,7 +10,7 @@ const FORBIDDEN_NO_EXECUTE_KEYS = new Set([
   'uiBehaviorOverride',
   'sessionProviderBehavior',
   'messageMetaOverride',
-  'providerSettings',
+  'agentSettings',
   'visibleMessageResolver',
   'svgIconXml',
 ]);

@@ -2,7 +2,7 @@ import {
   boundSessionWorkStateItemsV1,
   type SessionWorkStateItemV1,
   type SessionWorkStateV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/experimental/sessions/workState';
 
 export const CURSOR_TODO_WORK_STATE_OWNED_SOURCE_FAMILIES = ['todo:cursor'] as const;
 const CURSOR_TODO_WORK_STATE_ITEM_LIMIT = 100;

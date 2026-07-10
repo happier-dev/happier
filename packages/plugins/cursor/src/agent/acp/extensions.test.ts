@@ -13,14 +13,14 @@ type PermissionDecisionFixture = Readonly<{
 function createPluginContextFixture(params?: Readonly<{
   initialMetadata?: Readonly<Record<string, unknown>>;
   requestDecision?: (request: unknown) => Promise<PermissionDecisionFixture>;
-  writeMetadata?: (request: Parameters<PluginContextV1['session']['writeMetadata']>[0]) => Promise<void>;
+  writeMetadata?: (request: Parameters<PluginContextV1['sessions']['current']['writeMetadata']>[0]) => Promise<void>;
   writeStateField?: (request: Parameters<PluginContextV1['sessions']['writeStateField']>[0]) => Promise<void>;
 }>) {
   const requestDecision = vi.fn(params?.requestDecision ?? (async () => ({ decision: 'approved' as const })));
   const sent: unknown[] = [];
   let metadata: Readonly<Record<string, unknown>> = Object.freeze(params?.initialMetadata ?? {});
   const metadataWrites: unknown[] = [];
-  const writeMetadata = vi.fn(async (request: Parameters<PluginContextV1['session']['writeMetadata']>[0]) => {
+  const writeMetadata = vi.fn(async (request: Parameters<PluginContextV1['sessions']['current']['writeMetadata']>[0]) => {
     metadataWrites.push(request);
     if (params?.writeMetadata) {
       await params.writeMetadata(request);
@@ -65,6 +65,18 @@ function createPluginContextFixture(params?: Readonly<{
       writeStateField,
     },
     sessions: {
+      current: {
+        send: vi.fn(async (request: unknown) => {
+          sent.push(request);
+          return { ok: true };
+        }),
+        permissions: {
+          requestDecision,
+          getMode: vi.fn(() => 'default'),
+        },
+        writeMetadata,
+        writeStateField,
+      },
       list: vi.fn(async () => [
         {
           sessionId: HANDLER_CONTEXT.sessionId,

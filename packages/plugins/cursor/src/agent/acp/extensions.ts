@@ -6,6 +6,7 @@ import type {
   PluginContextV1,
   SessionPermissionDecisionResultV1,
 } from '@happier-dev/plugin-sdk';
+import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 import {
   mergeCursorTodos,
@@ -31,15 +32,6 @@ const APPROVED_DECISIONS = new Set([
   'approved_for_session',
   'approved_execpolicy_amendment',
 ]);
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function readString(value: unknown): string | null {
-  const trimmed = typeof value === 'string' ? value.trim() : '';
-  return trimmed.length > 0 ? trimmed : null;
-}
 
 function isApprovedDecision(decision: SessionPermissionDecisionResultV1): boolean {
   return APPROVED_DECISIONS.has(decision.decision);
@@ -221,7 +213,7 @@ export function createCursorAcpRuntimeExtensions(params: Readonly<{
     context: AcpRuntimeExtensionHandlerContextV1,
   ) => {
     const input = { questions: readAskQuestions(extensionParams) };
-    const decision = await params.ctx.session.permissions.requestDecision({
+    const decision = await params.ctx.sessions.current.permissions.requestDecision({
       provider: 'cursor',
       ...createPermissionIdentity(context, 'AskUserQuestion'),
       toolName: 'AskUserQuestion',
@@ -256,7 +248,7 @@ export function createCursorAcpRuntimeExtensions(params: Readonly<{
     const name = readPlanName(extensionParams);
     const overview = readPlanOverview(extensionParams);
     const isProject = readPlanIsProject(extensionParams);
-    const decision = await params.ctx.session.permissions.requestDecision({
+    const decision = await params.ctx.sessions.current.permissions.requestDecision({
       provider: 'cursor',
       ...createPermissionIdentity(context, 'ExitPlanMode'),
       toolName: 'ExitPlanMode',

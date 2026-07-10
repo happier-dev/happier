@@ -4,18 +4,21 @@ import type {
   AcpRuntimeHandleV1,
   AcpSessionRuntimeV1,
   PluginContextV1,
+  SessionRuntimeConfigUpdateV1,
 } from '@happier-dev/plugin-sdk';
-import type { RuntimeEventV1 } from '@happier-dev/protocol/runtime';
+import type { RuntimeEventV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 import { createCursorBackendEngine } from './engine.js';
 
-function createAcpSessionRuntimeFixture(): AcpSessionRuntimeV1 {
+function createAcpSessionRuntimeFixture(params?: Readonly<{
+  subscribeRuntimeEvents?: AcpSessionRuntimeV1['subscribeRuntimeEvents'];
+}>): AcpSessionRuntimeV1 {
   return {
     beginTurnLifecycle: vi.fn(),
     startOrLoadSession: vi.fn(async () => 'cursor-provider-session-1'),
     sendTurnPrompt: vi.fn(async () => undefined),
     waitForTurnCompletion: vi.fn(async () => undefined),
-    subscribeRuntimeEvents: vi.fn((_handler: (event: RuntimeEventV1) => void) => () => undefined),
+    subscribeRuntimeEvents: vi.fn(params?.subscribeRuntimeEvents ?? ((_handler: (event: RuntimeEventV1) => void) => () => undefined)),
     cancelTurn: vi.fn(async () => undefined),
     updateSessionRuntimeConfig: vi.fn(async () => undefined),
   };
@@ -55,15 +58,18 @@ function createPluginContextFixture(params?: Readonly<{
     },
     env: {
       get: vi.fn((name: string) => name === 'CURSOR_API_KEY' ? 'cursor-api-key' : undefined),
+      list: vi.fn(() => ({})),
     },
-    acp: {
-      createRuntime: vi.fn(async () => handle),
+    agentRuntime: {
+      acp: {
+        createRuntime: vi.fn(async () => handle),
+      },
     },
   } as unknown as PluginContextV1;
 }
 
 describe('createCursorBackendEngine', () => {
-  it('creates a host session plan whose runtime factory consumes shared ACP composition', async () => {
+  it('creates a public session runtime that consumes shared ACP composition', async () => {
     const sessionRuntime = createAcpSessionRuntimeFixture();
     const handle = {
       runtime: {
@@ -84,86 +90,39 @@ describe('createCursorBackendEngine', () => {
     const ctx = createPluginContextFixture({ handle });
     const engine = createCursorBackendEngine(ctx);
 
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const runtime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/cursor',
       sessionId: 'happier-session-1',
       permissionMode: 'safe-yolo',
     });
 
-    expect(plan).toMatchObject({
-      kind: 'hostSessionRuntimePlan',
-      providerId: 'cursor',
-      opts: {
-        directory: '/tmp/cursor',
-        backendId: 'cursor',
-      },
-    });
-    const runtime = await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{
-          directory: string;
-          session: Readonly<{ sessionId: string }>;
-          getPermissionMode: () => string;
-        }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({
-      directory: '/tmp/cursor',
-      session: { sessionId: 'happier-session-1' },
-      getPermissionMode: () => 'safe-yolo',
-    });
-
     expect(runtime).toMatchObject({
-      beginTurnLifecycle: expect.any(Function),
-      startOrLoadSession: expect.any(Function),
-      sendTurnPrompt: expect.any(Function),
-      waitForTurnCompletion: expect.any(Function),
-      subscribeRuntimeEvents: expect.any(Function),
-      cancelTurn: expect.any(Function),
-      updateSessionRuntimeConfig: expect.any(Function),
-      resetOrDisposeRuntime: expect.any(Function),
+      identity: { read: expect.any(Function) },
+      events: { subscribe: expect.any(Function) },
+      send: expect.any(Function),
+      cancel: expect.any(Function),
+      permissions: { capability: 'inline' },
+      updateConfig: expect.any(Function),
+      dispose: expect.any(Function),
     });
-    await (runtime as Readonly<{
-      startOrLoadSession(): Promise<unknown>;
-      sendTurnPrompt(prompt: string): Promise<void>;
-      cancelTurn(): Promise<void>;
-      updateSessionRuntimeConfig(update: Readonly<Record<string, unknown>>): Promise<void>;
-      resetOrDisposeRuntime(): Promise<void>;
-      waitForTurnCompletion(): Promise<void>;
-      subscribeRuntimeEvents(handler: (event: RuntimeEventV1) => void): () => void;
-    }>).startOrLoadSession();
-    (runtime as Readonly<{
-      beginTurnLifecycle(): void;
-    }>).beginTurnLifecycle();
-    await (runtime as Readonly<{
-      sendTurnPrompt(prompt: string): Promise<void>;
-    }>).sendTurnPrompt('hello cursor');
+    expect(runtime?.identity.read()).toEqual({ providerSessionId: null });
     const eventHandler = vi.fn();
-    const unsubscribe = (runtime as Readonly<{
-      subscribeRuntimeEvents(handler: (event: RuntimeEventV1) => void): () => void;
-    }>).subscribeRuntimeEvents(eventHandler);
-    await (runtime as Readonly<{
-      waitForTurnCompletion(): Promise<void>;
-    }>).waitForTurnCompletion();
+    const unsubscribe = runtime?.events.subscribe(eventHandler);
+    await expect(runtime?.send({ v: 1, text: 'hello cursor' })).resolves.toEqual({ status: 'accepted' });
+    expect(runtime?.identity.read()).toEqual({ providerSessionId: 'cursor-provider-session-1' });
     unsubscribe();
-    await (runtime as Readonly<{
-      updateSessionRuntimeConfig(update: Readonly<Record<string, unknown>>): Promise<void>;
-    }>).updateSessionRuntimeConfig({ modelId: 'composer-2.5' });
-    await (runtime as Readonly<{
-      cancelTurn(): Promise<void>;
-    }>).cancelTurn();
-    await (runtime as Readonly<{
-      resetOrDisposeRuntime(): Promise<void>;
-    }>).resetOrDisposeRuntime();
+    await expect(runtime?.updateConfig?.({ modelId: 'composer-2.5' })).resolves.toBeUndefined();
+    await expect(runtime?.cancel?.({ reason: 'user' })).resolves.toEqual({ status: 'cancelled' });
+    await expect(runtime?.dispose('session_closed')).resolves.toBeUndefined();
 
-    expect(sessionRuntime.startOrLoadSession).toHaveBeenCalledWith();
+    expect(sessionRuntime.startOrLoadSession).toHaveBeenCalledWith({ mcpServers: [] });
     expect(sessionRuntime.beginTurnLifecycle).toHaveBeenCalledWith();
     expect(sessionRuntime.sendTurnPrompt).toHaveBeenCalledWith('hello cursor');
-    expect(sessionRuntime.subscribeRuntimeEvents).toHaveBeenCalledWith(eventHandler);
-    expect(sessionRuntime.waitForTurnCompletion).toHaveBeenCalledWith();
+    expect(sessionRuntime.subscribeRuntimeEvents).toHaveBeenCalledWith(expect.any(Function));
     expect(sessionRuntime.updateSessionRuntimeConfig).toHaveBeenCalledWith({ modelId: 'composer-2.5' });
     expect(sessionRuntime.cancelTurn).toHaveBeenCalledWith();
     expect(handle.dispose).toHaveBeenCalledWith('cursor-session-runtime-disposed');
-    expect(ctx.acp.createRuntime).toHaveBeenCalledWith(
+    expect(ctx.agentRuntime.acp.createRuntime).toHaveBeenCalledWith(
       expect.objectContaining({
         backendId: 'cursor',
         transport: expect.objectContaining({
@@ -202,18 +161,14 @@ describe('createCursorBackendEngine', () => {
   it('ports Cursor ACP transport quirks through the plugin-owned message hook', async () => {
     const ctx = createPluginContextFixture();
     const engine = createCursorBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({
+    const runtime = await engine.runtimeCore?.createSessionRuntime({
       cwd: '/tmp/cursor',
       sessionId: 'happier-session-1',
     });
 
-    await (plan as Readonly<{
-      config: Readonly<{
-        createSessionRuntime(params: Readonly<{ directory: string }>): Promise<unknown>;
-      }>;
-    }>).config.createSessionRuntime({ directory: '/tmp/cursor' });
+    await runtime?.send({ v: 1, text: 'hello cursor' });
 
-    const createRuntimeMock = ctx.acp.createRuntime as unknown as Readonly<{
+    const createRuntimeMock = ctx.agentRuntime.acp.createRuntime as unknown as Readonly<{
       mock: Readonly<{
         calls: readonly (readonly [Readonly<{ transport: Readonly<{
           customHandler?: Readonly<{
@@ -267,6 +222,406 @@ describe('createCursorBackendEngine', () => {
         },
       },
     });
+  });
+
+  it('confirms provider acceptance only after Cursor ACP emits runtime evidence', async () => {
+    let runtimeEventHandler: ((event: RuntimeEventV1) => void) | null = null;
+    const sessionRuntime = createAcpSessionRuntimeFixture({
+      subscribeRuntimeEvents: (handler) => {
+        runtimeEventHandler = handler;
+        return () => {
+          if (runtimeEventHandler === handler) runtimeEventHandler = null;
+        };
+      },
+    });
+    const handle = {
+      runtime: {
+        backendId: 'cursor',
+        sessionId: 'happier-session-1',
+        client: {
+          request: vi.fn(),
+          notify: vi.fn(),
+          registerRequestHandler: vi.fn(() => () => undefined),
+          registerNotificationHandler: vi.fn(() => () => undefined),
+        },
+        request: vi.fn(),
+        notify: vi.fn(),
+      },
+      sessionRuntime,
+      dispose: vi.fn(async () => undefined),
+    } satisfies AcpRuntimeHandleV1;
+    const ctx = createPluginContextFixture({ handle });
+    const engine = createCursorBackendEngine(ctx);
+    const runtime = await engine.runtimeCore?.createSessionRuntime({
+      cwd: '/tmp/cursor',
+      sessionId: 'happier-session-1',
+    });
+    const accepted: Array<Readonly<{ userMessageSeq: number | null; userMessageSeqs?: readonly number[] }>> = [];
+    runtime?.setOnPromptAcceptedByProvider?.((info) => accepted.push(info));
+
+    await expect(runtime?.send({ v: 1, text: 'hello cursor' }, { userMessageSeq: 42 }))
+      .resolves
+      .toEqual({ status: 'accepted' });
+
+    expect(accepted).toEqual([]);
+
+    runtimeEventHandler?.({
+      kind: 'message-delta',
+      sessionId: 'happier-session-1',
+      turnId: 'cursor-turn-1',
+      delta: { text: 'hello' },
+    });
+
+    expect(accepted).toEqual([{ userMessageSeq: 42, userMessageSeqs: [42] }]);
+  });
+
+  it('publishes a provider diagnostic when Cursor completes a turn without output', async () => {
+    let runtimeEventHandler: ((event: RuntimeEventV1) => void) | null = null;
+    const sessionRuntime = createAcpSessionRuntimeFixture({
+      subscribeRuntimeEvents: (handler) => {
+        runtimeEventHandler = handler;
+        return () => {
+          if (runtimeEventHandler === handler) runtimeEventHandler = null;
+        };
+      },
+    });
+    const handle = {
+      runtime: {
+        backendId: 'cursor',
+        sessionId: 'happier-session-1',
+        client: {
+          request: vi.fn(),
+          notify: vi.fn(),
+          registerRequestHandler: vi.fn(() => () => undefined),
+          registerNotificationHandler: vi.fn(() => () => undefined),
+        },
+        request: vi.fn(),
+        notify: vi.fn(),
+      },
+      sessionRuntime,
+      dispose: vi.fn(async () => undefined),
+    } satisfies AcpRuntimeHandleV1;
+    const ctx = createPluginContextFixture({ handle });
+    const engine = createCursorBackendEngine(ctx);
+    const runtime = await engine.runtimeCore?.createSessionRuntime({
+      cwd: '/tmp/cursor',
+      sessionId: 'happier-session-1',
+    });
+    const events: RuntimeEventV1[] = [];
+    runtime?.events.subscribe((event) => events.push(event));
+
+    await expect(runtime?.send({ v: 1, text: 'hello cursor' }, { userMessageSeq: 42 }))
+      .resolves
+      .toEqual({ status: 'accepted' });
+    runtimeEventHandler?.({
+      kind: 'turn-start',
+      sessionId: 'happier-session-1',
+      emittedAtMs: 1,
+      turnId: 'cursor-turn-1',
+      startedBy: 'provider',
+    });
+    runtimeEventHandler?.({
+      kind: 'turn-complete',
+      sessionId: 'happier-session-1',
+      emittedAtMs: 2,
+      turnId: 'cursor-turn-1',
+      agentTurnId: 'cursor-provider-turn-1',
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        kind: 'turn-start',
+        turnId: 'cursor-turn-1',
+      }),
+      expect.objectContaining({
+        kind: 'turn-failed',
+        turnId: 'cursor-turn-1',
+        agentTurnId: 'cursor-provider-turn-1',
+        issue: expect.objectContaining({
+          code: 'cursor_empty_provider_response',
+          source: 'agent_session_error',
+          agentId: 'cursor',
+        }),
+      }),
+    ]);
+  });
+
+  it('does not treat Cursor lifecycle progress as user-visible output', async () => {
+    let runtimeEventHandler: ((event: RuntimeEventV1) => void) | null = null;
+    const sessionRuntime = createAcpSessionRuntimeFixture({
+      subscribeRuntimeEvents: (handler) => {
+        runtimeEventHandler = handler;
+        return () => {
+          if (runtimeEventHandler === handler) runtimeEventHandler = null;
+        };
+      },
+    });
+    const handle = {
+      runtime: {
+        backendId: 'cursor',
+        sessionId: 'happier-session-1',
+        client: {
+          request: vi.fn(),
+          notify: vi.fn(),
+          registerRequestHandler: vi.fn(() => () => undefined),
+          registerNotificationHandler: vi.fn(() => () => undefined),
+        },
+        request: vi.fn(),
+        notify: vi.fn(),
+      },
+      sessionRuntime,
+      dispose: vi.fn(async () => undefined),
+    } satisfies AcpRuntimeHandleV1;
+    const ctx = createPluginContextFixture({ handle });
+    const engine = createCursorBackendEngine(ctx);
+    const runtime = await engine.runtimeCore?.createSessionRuntime({
+      cwd: '/tmp/cursor',
+      sessionId: 'happier-session-1',
+    });
+    const events: RuntimeEventV1[] = [];
+    runtime?.events.subscribe((event) => events.push(event));
+
+    await expect(runtime?.send({ v: 1, text: 'hello cursor' }, { userMessageSeq: 42 }))
+      .resolves
+      .toEqual({ status: 'accepted' });
+    runtimeEventHandler?.({
+      kind: 'turn-start',
+      sessionId: 'happier-session-1',
+      emittedAtMs: 1,
+      turnId: 'cursor-turn-1',
+      startedBy: 'provider',
+    });
+    runtimeEventHandler?.({
+      kind: 'turn-progress',
+      sessionId: 'happier-session-1',
+      emittedAtMs: 2,
+      turnId: 'cursor-turn-1',
+    });
+    runtimeEventHandler?.({
+      kind: 'turn-agent-id-observed',
+      sessionId: 'happier-session-1',
+      emittedAtMs: 3,
+      turnId: 'cursor-turn-1',
+      agentTurnId: 'cursor-provider-turn-1',
+    });
+    runtimeEventHandler?.({
+      kind: 'turn-complete',
+      sessionId: 'happier-session-1',
+      emittedAtMs: 4,
+      turnId: 'cursor-turn-1',
+      agentTurnId: 'cursor-provider-turn-1',
+    });
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        kind: 'turn-start',
+        turnId: 'cursor-turn-1',
+      }),
+      expect.objectContaining({
+        kind: 'turn-progress',
+        turnId: 'cursor-turn-1',
+      }),
+      expect.objectContaining({
+        kind: 'turn-agent-id-observed',
+        turnId: 'cursor-turn-1',
+      }),
+      expect.objectContaining({
+        kind: 'turn-failed',
+        turnId: 'cursor-turn-1',
+        agentTurnId: 'cursor-provider-turn-1',
+        issue: expect.objectContaining({
+          code: 'cursor_empty_provider_response',
+        }),
+      }),
+    ]);
+  });
+
+  it('does not treat Cursor tool-only activity as an assistant response', async () => {
+    let runtimeEventHandler: ((event: RuntimeEventV1) => void) | null = null;
+    const sessionRuntime = createAcpSessionRuntimeFixture({
+      subscribeRuntimeEvents: (handler) => {
+        runtimeEventHandler = handler;
+        return () => {
+          if (runtimeEventHandler === handler) runtimeEventHandler = null;
+        };
+      },
+    });
+    const handle = {
+      runtime: {
+        backendId: 'cursor',
+        sessionId: 'happier-session-1',
+        client: {
+          request: vi.fn(),
+          notify: vi.fn(),
+          registerRequestHandler: vi.fn(() => () => undefined),
+          registerNotificationHandler: vi.fn(() => () => undefined),
+        },
+        request: vi.fn(),
+        notify: vi.fn(),
+      },
+      sessionRuntime,
+      dispose: vi.fn(async () => undefined),
+    } satisfies AcpRuntimeHandleV1;
+    const ctx = createPluginContextFixture({ handle });
+    const engine = createCursorBackendEngine(ctx);
+    const runtime = await engine.runtimeCore?.createSessionRuntime({
+      cwd: '/tmp/cursor',
+      sessionId: 'happier-session-1',
+    });
+    const events: RuntimeEventV1[] = [];
+    runtime?.events.subscribe((event) => events.push(event));
+
+    await expect(runtime?.send({ v: 1, text: 'hello cursor' }, { userMessageSeq: 42 }))
+      .resolves
+      .toEqual({ status: 'accepted' });
+    runtimeEventHandler?.({
+      kind: 'turn-start',
+      sessionId: 'happier-session-1',
+      emittedAtMs: 1,
+      turnId: 'cursor-turn-1',
+      startedBy: 'provider',
+    });
+    runtimeEventHandler?.({
+      kind: 'tool-call',
+      sessionId: 'happier-session-1',
+      emittedAtMs: 2,
+      turnId: 'cursor-turn-1',
+      toolCallId: 'tool-1',
+      toolName: 'change_title',
+      toolInput: { title: 'Session setup' },
+    });
+    runtimeEventHandler?.({
+      kind: 'tool-result',
+      sessionId: 'happier-session-1',
+      emittedAtMs: 3,
+      turnId: 'cursor-turn-1',
+      toolCallId: 'tool-1',
+      output: { ok: true },
+    });
+    runtimeEventHandler?.({
+      kind: 'turn-complete',
+      sessionId: 'happier-session-1',
+      emittedAtMs: 4,
+      turnId: 'cursor-turn-1',
+      agentTurnId: 'cursor-provider-turn-1',
+    });
+
+    expect(events.at(-1)).toEqual(expect.objectContaining({
+      kind: 'turn-failed',
+      turnId: 'cursor-turn-1',
+      agentTurnId: 'cursor-provider-turn-1',
+      issue: expect.objectContaining({
+        code: 'cursor_empty_provider_response',
+      }),
+    }));
+  });
+
+  it('fails empty Cursor completions even when provider terminal events use a different turn id', async () => {
+    let runtimeEventHandler: ((event: RuntimeEventV1) => void) | null = null;
+    const sessionRuntime = createAcpSessionRuntimeFixture({
+      subscribeRuntimeEvents: (handler) => {
+        runtimeEventHandler = handler;
+        return () => {
+          if (runtimeEventHandler === handler) runtimeEventHandler = null;
+        };
+      },
+    });
+    const handle = {
+      runtime: {
+        backendId: 'cursor',
+        sessionId: 'happier-session-1',
+        client: {
+          request: vi.fn(),
+          notify: vi.fn(),
+          registerRequestHandler: vi.fn(() => () => undefined),
+          registerNotificationHandler: vi.fn(() => () => undefined),
+        },
+        request: vi.fn(),
+        notify: vi.fn(),
+      },
+      sessionRuntime,
+      dispose: vi.fn(async () => undefined),
+    } satisfies AcpRuntimeHandleV1;
+    const ctx = createPluginContextFixture({ handle });
+    const engine = createCursorBackendEngine(ctx);
+    const runtime = await engine.runtimeCore?.createSessionRuntime({
+      cwd: '/tmp/cursor',
+      sessionId: 'happier-session-1',
+    });
+    const events: RuntimeEventV1[] = [];
+    runtime?.events.subscribe((event) => events.push(event));
+
+    await expect(runtime?.send({ v: 1, text: 'hello cursor' }, { userMessageSeq: 42 }))
+      .resolves
+      .toEqual({ status: 'accepted' });
+    runtimeEventHandler?.({
+      kind: 'turn-start',
+      sessionId: 'happier-session-1',
+      emittedAtMs: 1,
+      turnId: 'host-turn-1',
+      agentTurnId: 'host-provider-turn-1',
+      startedBy: 'provider',
+    });
+    runtimeEventHandler?.({
+      kind: 'tool-call',
+      sessionId: 'happier-session-1',
+      emittedAtMs: 2,
+      turnId: 'provider-turn-1',
+      toolCallId: 'tool-1',
+      toolName: 'change_title',
+      toolInput: { title: 'Session setup' },
+    });
+    runtimeEventHandler?.({
+      kind: 'turn-complete',
+      sessionId: 'happier-session-1',
+      emittedAtMs: 3,
+      turnId: 'provider-turn-1',
+      agentTurnId: 'cursor-provider-turn-1',
+    });
+
+    expect(events.at(-1)).toEqual(expect.objectContaining({
+      kind: 'turn-failed',
+      turnId: 'provider-turn-1',
+      agentTurnId: 'cursor-provider-turn-1',
+      issue: expect.objectContaining({
+        code: 'cursor_empty_provider_response',
+      }),
+    }));
+  });
+
+  it('ignores legacy plural runtime configOptions updates', async () => {
+    const sessionRuntime = createAcpSessionRuntimeFixture();
+    const handle = {
+      runtime: {
+        backendId: 'cursor',
+        sessionId: 'happier-session-1',
+        client: {
+          request: vi.fn(),
+          notify: vi.fn(),
+          registerRequestHandler: vi.fn(() => () => undefined),
+          registerNotificationHandler: vi.fn(() => () => undefined),
+        },
+        request: vi.fn(),
+        notify: vi.fn(),
+      },
+      sessionRuntime,
+      dispose: vi.fn(async () => undefined),
+    } satisfies AcpRuntimeHandleV1;
+    const ctx = createPluginContextFixture({ handle });
+    const engine = createCursorBackendEngine(ctx);
+    const runtime = await engine.runtimeCore?.createSessionRuntime({
+      cwd: '/tmp/cursor',
+      sessionId: 'happier-session-1',
+    });
+
+    const legacyUpdate = {
+      configOptions: {
+        mode: 'agent',
+      },
+    } as unknown as SessionRuntimeConfigUpdateV1; // Boundary fixture: stale JS callers can still send pre-freeze payloads.
+    await runtime?.updateConfig?.(legacyUpdate);
+
+    expect(sessionRuntime.updateSessionRuntimeConfig).toHaveBeenCalledWith({});
   });
 
   it('fails closed for execution-run creation because Cursor is session-only in v1', () => {

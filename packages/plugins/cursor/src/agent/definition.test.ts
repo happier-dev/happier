@@ -9,4 +9,11 @@ describe('Cursor agent definition', () => {
       support: 'experimental',
     });
   });
+
+  it('declares the provider-owned runtime contribution for model preflight', () => {
+    expect(AGENT_DEFINITION.runtimeContributions?.agentCatalogEntry).toEqual({
+      importName: 'CURSOR_AGENT_RUNTIME_CONTRIBUTION',
+      source: './agent/contributions/runtime',
+    });
+  });
 });

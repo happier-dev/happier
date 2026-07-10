@@ -2,7 +2,7 @@ import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
 import {
   mergeSessionWorkStateMetadataV1,
   readSessionWorkStateV1FromMetadata,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/experimental/sessions/workState';
 
 import {
   CURSOR_TODO_WORK_STATE_OWNED_SOURCE_FAMILIES,
@@ -95,7 +95,7 @@ export function mergeCursorTodos(previous: readonly CursorTodo[], next: readonly
 
 async function readCurrentSessionMetadata(ctx: PluginContextV1): Promise<Readonly<Record<string, unknown>>> {
   const currentSessions = await ctx.sessions.list({ currentOnly: true });
-  const currentSessionId = readString(ctx.session.sessionId);
+  const currentSessionId = readString(ctx.sessions.current.sessionId);
   const currentSession = currentSessionId
     ? currentSessions.find((session) => session.sessionId === currentSessionId)
     : currentSessions[0];
