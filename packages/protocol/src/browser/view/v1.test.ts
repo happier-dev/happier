@@ -37,6 +37,44 @@ describe('browser session/view vocabulary v1', () => {
       platform: 'web',
     }).success).toBe(true);
 
+    expect(mod?.BrowserViewV1Schema.safeParse({
+      viewId: 'view_2',
+      browserSessionId: 'browser_session_1',
+      target: {
+        kind: 'externalUrl',
+        targetId: 'external_1',
+        url: 'https://example.com/',
+      },
+	      state: 'ready',
+	      platform: 'desktop',
+	      currentUrl: 'https://example.com/',
+	      currentUrlExpiresAt: 1_700_000_000_000,
+	      pendingUrl: null,
+      title: 'Example',
+      faviconUrl: 'https://example.com/favicon.ico',
+      loadingState: 'ready',
+      loadingProgress: 1,
+      canGoBack: true,
+      canGoForward: false,
+      securityOrigin: 'https://example.com/',
+      lastError: null,
+      adapterKind: 'externalUrl',
+      engineKind: 'desktopWebView',
+      adapterCapabilities: {
+        adapterKind: 'externalUrl',
+        supportedTargetKinds: ['externalUrl'],
+        supportedRenderEngines: ['desktopWebView'],
+        navigation: {
+          canNavigate: true,
+          canGoBack: true,
+          canGoForward: true,
+          canReload: true,
+          canStop: true,
+        },
+      },
+      openerViewId: null,
+    }).success).toBe(true);
+
     expect(mod?.BrowserStoragePolicyV1Schema.safeParse({
       mode: 'ephemeral',
       clearOnClose: true,

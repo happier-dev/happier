@@ -49,6 +49,7 @@ export type BrowserStreamedTargetV1 = z.infer<typeof BrowserStreamedTargetV1Sche
 export const BrowserSimulatorPreviewTargetV1Schema = BrowserTargetBaseV1Schema.extend({
   kind: z.literal('simulatorPreview'),
   deviceId: z.string().trim().min(1).max(256),
+  sourceId: z.string().trim().min(1).max(256).optional(),
 }).strict();
 export type BrowserSimulatorPreviewTargetV1 = z.infer<typeof BrowserSimulatorPreviewTargetV1Schema>;
 

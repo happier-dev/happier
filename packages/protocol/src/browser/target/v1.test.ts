@@ -52,6 +52,26 @@ describe('browser view target v1 protocol', () => {
     expect(result?.success).toBe(false);
   });
 
+  it('accepts simulator preview targets with producer source identity', async () => {
+    const mod = await loadBrowserTargetModule();
+
+    const result = mod?.BrowserViewTargetV1Schema.safeParse({
+      kind: 'simulatorPreview',
+      targetId: 'simulator_123',
+      deviceId: 'emulator-5554',
+      sourceId: 'simulator:android:emulator-5554:screen',
+      display: {
+        title: 'Pixel 9',
+      },
+    });
+
+    expect(result?.success).toBe(true);
+    if (result?.success) {
+      expect(result.data.kind).toBe('simulatorPreview');
+      expect(result.data.sourceId).toBe('simulator:android:emulator-5554:screen');
+    }
+  });
+
   it('accepts local-service-backed target suggestions without duplicating identity fields', async () => {
     const mod = await loadBrowserTargetModule();
 
