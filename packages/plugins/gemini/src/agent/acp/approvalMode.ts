@@ -1,4 +1,4 @@
-import type { AcpPermissionModeArgvSpecV1 } from '@happier-dev/plugin-sdk/acp';
+import type { AcpPermissionModeArgvSpecV1 } from '@happier-dev/plugin-sdk/experimental/acp';
 
 export const GEMINI_PERMISSION_MODE_ARGV = Object.freeze({
   flag: '--approval-mode',

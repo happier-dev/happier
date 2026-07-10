@@ -10,6 +10,7 @@
     "package.json"
   ],
   "scripts": {
+    "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node ../../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
     "test": "vitest run",
     "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
@@ -35,14 +36,21 @@
       "types": "./dist/agent/acp/toolNames.d.ts",
       "default": "./dist/agent/acp/toolNames.js"
     },
+    "./agent/acp/definition": {
+      "types": "./dist/agent/acp/definition.d.ts",
+      "default": "./dist/agent/acp/definition.js"
+    },
+    "./agent/contributions/runtime": {
+      "types": "./dist/agent/contributions/runtime.d.ts",
+      "default": "./dist/agent/contributions/runtime.js"
+    },
     "./agent/promptAssets": {
       "types": "./dist/agent/promptAssets/index.d.ts",
       "default": "./dist/agent/promptAssets/index.js"
     }
   },
   "dependencies": {
-    "@happier-dev/plugin-sdk": "0.0.0",
-    "@happier-dev/protocol": "0.0.0"
+    "@happier-dev/plugin-sdk": "0.0.0"
   },
   "devDependencies": {
     "typescript": "^5.9.2",

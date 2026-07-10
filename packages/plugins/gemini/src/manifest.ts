@@ -1,16 +1,9 @@
 import {
   definePluginManifest,
-  type PluginBackendContributionV2,
   type PluginManifestV2,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/manifest';
 
 import { GEMINI_ACP_BACKEND_SPEC } from './agent/acp/definition.js';
-
-type GeminiPluginManifestV2 = Omit<PluginManifestV2, 'contributes'> & Readonly<{
-  contributes: Readonly<{
-    backends: ReadonlyArray<PluginBackendContributionV2>;
-  }>;
-}>;
 
 // Thin composition file that declares this plugin’s canonical manifest.
 // Keep unsupported media defaults explicit until a source-real media event is mapped.
@@ -21,16 +14,16 @@ export const PLUGIN_MANIFEST = definePluginManifest({
   displayName: 'gemini',
   description: undefined,
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: ['backends'] },
-  targets: {},
-  capabilities: { permissions: [] },
+  activationEvents: ['onAgent:gemini'],
+  uses: ['agents', 'hooks'],
+  entrypoints: { main: './dist/index.js' },
+  permissions: { required: [], optional: [] },
   contributes: {
-    backends: [
+    agents: [
       {
         kindVersion: 1,
         id: 'gemini',
-        agentId: 'gemini',
-        engine: {
+        runtime: {
           kind: 'acp',
           transport: GEMINI_ACP_BACKEND_SPEC.transport,
           ux: GEMINI_ACP_BACKEND_SPEC.ux,
@@ -55,5 +48,19 @@ export const PLUGIN_MANIFEST = definePluginManifest({
         },
       },
     ],
+    hooks: [
+      {
+        id: 'agent.resolvePrerequisites',
+        hookApiVersion: 1,
+        category: 'decision',
+        scope: 'agent',
+        filters: { agentId: 'gemini' },
+        executionKind: 'decide',
+        handler: {
+          target: 'plugin',
+          exportName: 'resolveGeminiDaemonSpawnPrerequisites',
+        },
+      },
+    ],
   },
-} satisfies GeminiPluginManifestV2);
+} satisfies PluginManifestV2);

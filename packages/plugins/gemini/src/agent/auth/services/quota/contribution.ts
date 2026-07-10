@@ -2,7 +2,7 @@ import type {
   ConnectedServiceCredentialRecordV1,
   ConnectedServiceQuotaMeterV1,
   ConnectedServiceQuotaSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 const GEMINI_QUOTA_STALE_AFTER_MS = 5 * 60_000;
 
@@ -27,16 +27,20 @@ export function createGeminiQuotaFetcher() {
       record: ConnectedServiceCredentialRecordV1;
       now: number;
       signal: AbortSignal;
-    }>): Promise<ConnectedServiceQuotaSnapshotV1> => ({
-      v: 1 as const,
-      serviceId: 'gemini',
-      profileId: record.profileId,
-      fetchedAt: now,
-      staleAfterMs: GEMINI_QUOTA_STALE_AFTER_MS,
-      planLabel: null,
-      accountLabel: null,
-      meters: [buildQuotaUnknownMeter()],
-    }),
+    }>): Promise<ConnectedServiceQuotaSnapshotV1 | null> => {
+      if (record.kind !== 'token') return null;
+
+      return {
+        v: 1 as const,
+        serviceId: 'gemini',
+        profileId: record.profileId,
+        fetchedAt: now,
+        staleAfterMs: GEMINI_QUOTA_STALE_AFTER_MS,
+        planLabel: null,
+        accountLabel: null,
+        meters: [buildQuotaUnknownMeter()],
+      };
+    },
   };
 }
 

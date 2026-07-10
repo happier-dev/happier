@@ -11,12 +11,9 @@ export type GeminiMcpShapingContext = Readonly<{
   fs: Pick<FsRuntimeServiceV1, 'createTempDirectory'>;
 }>;
 
-const GEMINI_SOURCE_FILE_SELECTORS = [
-  (paths: ReturnType<typeof resolveGeminiConfigPaths>) => paths.userOauthCredsPath,
+const GEMINI_ALLOWED_SOURCE_FILE_SELECTORS = [
   (paths: ReturnType<typeof resolveGeminiConfigPaths>) => paths.userConfigPath,
   (paths: ReturnType<typeof resolveGeminiConfigPaths>) => paths.xdgConfigPath,
-  (paths: ReturnType<typeof resolveGeminiConfigPaths>) => paths.userAuthPath,
-  (paths: ReturnType<typeof resolveGeminiConfigPaths>) => paths.xdgAuthPath,
   (paths: ReturnType<typeof resolveGeminiConfigPaths>) => paths.userSettingsPath,
 ] as const;
 
@@ -107,7 +104,7 @@ function copyKnownGeminiConfigFiles(params: {
   const sourcePaths = resolveGeminiConfigPaths(params.sourceEnv);
   const targetPaths = resolveGeminiConfigPaths(params.targetEnv);
 
-  for (const selectPath of GEMINI_SOURCE_FILE_SELECTORS) {
+  for (const selectPath of GEMINI_ALLOWED_SOURCE_FILE_SELECTORS) {
     const sourcePath = selectPath(sourcePaths);
     if (!existsSync(sourcePath)) continue;
     const targetPath = selectPath(targetPaths);

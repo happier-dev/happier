@@ -4,26 +4,21 @@ export const GEMINI_ACP_AUTH_METHOD_ENV = 'HAPPIER_GEMINI_ACP_AUTH_METHOD';
 export const GEMINI_ACP_AUTH_META_ENV = 'HAPPIER_GEMINI_ACP_AUTH_META';
 export const GEMINI_API_KEY_ENV = 'GEMINI_API_KEY';
 export const GOOGLE_API_KEY_ENV = 'GOOGLE_API_KEY';
+export const GOOGLE_GENAI_USE_VERTEXAI_ENV = 'GOOGLE_GENAI_USE_VERTEXAI';
+export const GOOGLE_CLOUD_PROJECT_ENV = 'GOOGLE_CLOUD_PROJECT';
+export const GOOGLE_CLOUD_LOCATION_ENV = 'GOOGLE_CLOUD_LOCATION';
 
 function isTruthyEnv(value: string | undefined): boolean {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
 }
 
-function parseGeminiAuthMeta(value: string | undefined): Record<string, unknown> | null {
-  if (typeof value !== 'string' || value.trim().length === 0) return null;
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-}
-
 export type GeminiAuthConfig = {
+  mode: 'api-key' | 'vertex';
   authMethodId: string;
-  authMeta?: Record<string, unknown>;
   shouldInjectApiKeyEnv: boolean;
+  shouldUseIsolatedMcpHome: boolean;
+  launchEnv?: Readonly<Record<string, string>>;
 };
 
 function readNonEmptyEnv(env: Readonly<Record<string, string | undefined>>, key: string): string | null {
@@ -37,25 +32,70 @@ export function resolveGeminiApiKeyFromEnv(env: Readonly<Record<string, string |
   return readNonEmptyEnv(env, GEMINI_API_KEY_ENV) ?? readNonEmptyEnv(env, GOOGLE_API_KEY_ENV);
 }
 
+export function hasGeminiAcpCredentialEnv(env: Readonly<Record<string, string | undefined>>): boolean {
+  if (resolveGeminiApiKeyFromEnv(env)) return true;
+  return isTruthyEnv(env[GOOGLE_GENAI_USE_VERTEXAI_ENV])
+    && readNonEmptyEnv(env, GOOGLE_CLOUD_PROJECT_ENV) !== null
+    && readNonEmptyEnv(env, GOOGLE_CLOUD_LOCATION_ENV) !== null;
+}
+
+function hasIncompleteVertexEnv(env: Readonly<Record<string, string | undefined>>): boolean {
+  if (!isTruthyEnv(env[GOOGLE_GENAI_USE_VERTEXAI_ENV])) return false;
+  return readNonEmptyEnv(env, GOOGLE_CLOUD_PROJECT_ENV) === null
+    || readNonEmptyEnv(env, GOOGLE_CLOUD_LOCATION_ENV) === null;
+}
+
+export function assertCompleteGeminiVertexEnv(env: Readonly<Record<string, string | undefined>>): void {
+  if (!hasIncompleteVertexEnv(env)) return;
+  throw new Error(
+    'Gemini Vertex ACP auth requires GOOGLE_GENAI_USE_VERTEXAI with GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION.',
+  );
+}
+
+function createMissingGeminiAcpCredentialError(): Error {
+  return new Error(
+    'Gemini ACP auth requires GEMINI_API_KEY, GOOGLE_API_KEY, or complete Vertex env with GOOGLE_GENAI_USE_VERTEXAI, GOOGLE_CLOUD_PROJECT, and GOOGLE_CLOUD_LOCATION.',
+  );
+}
+
 export function resolveGeminiAuthConfig(env: Readonly<Record<string, string | undefined>>, apiKey: string | null): GeminiAuthConfig {
   const configuredMethod = env[GEMINI_ACP_AUTH_METHOD_ENV]?.trim();
-  const configuredMeta = parseGeminiAuthMeta(env[GEMINI_ACP_AUTH_META_ENV]);
-  if (configuredMethod === 'gateway') {
+  if (configuredMethod === 'vertex-ai') {
+    assertCompleteGeminiVertexEnv({
+      ...env,
+      [GOOGLE_GENAI_USE_VERTEXAI_ENV]: '1',
+    });
     return {
-      authMethodId: 'gateway',
-      ...(configuredMeta ? { authMeta: configuredMeta } : {}),
+      mode: 'vertex',
+      authMethodId: 'vertex-ai',
       shouldInjectApiKeyEnv: false,
+      shouldUseIsolatedMcpHome: true,
+      launchEnv: {
+        [GOOGLE_GENAI_USE_VERTEXAI_ENV]: '1',
+      },
     };
   }
-  if (configuredMethod === 'vertex-ai') {
-    return { authMethodId: 'vertex-ai', shouldInjectApiKeyEnv: false };
+  assertCompleteGeminiVertexEnv(env);
+  if (isTruthyEnv(env[GOOGLE_GENAI_USE_VERTEXAI_ENV])) {
+    return {
+      mode: 'vertex',
+      authMethodId: 'vertex-ai',
+      shouldInjectApiKeyEnv: false,
+      shouldUseIsolatedMcpHome: true,
+      launchEnv: {
+        [GOOGLE_GENAI_USE_VERTEXAI_ENV]: '1',
+      },
+    };
   }
-  if (isTruthyEnv(env.GOOGLE_GENAI_USE_VERTEXAI)) {
-    return { authMethodId: 'vertex-ai', shouldInjectApiKeyEnv: false };
+  if (apiKey) {
+    return {
+      mode: 'api-key',
+      authMethodId: 'gemini-api-key',
+      shouldInjectApiKeyEnv: true,
+      shouldUseIsolatedMcpHome: true,
+    };
   }
-  return apiKey
-    ? { authMethodId: 'gemini-api-key', shouldInjectApiKeyEnv: true }
-    : { authMethodId: 'oauth-personal', shouldInjectApiKeyEnv: false };
+  throw createMissingGeminiAcpCredentialError();
 }
 
 export type GeminiAcpFlag = '--acp' | '--experimental-acp';
@@ -80,7 +120,7 @@ export async function resolveGeminiAcpFlag(ctx: PluginContextV1, params: {
     throw createAbortError();
   }
   try {
-    const result = await ctx.exec.run({
+    const result = await ctx.agentRuntime.exec.run({
       kind: 'agent-cli',
       agentId: 'gemini',
       args: [...(params.args ?? []), '--help'],

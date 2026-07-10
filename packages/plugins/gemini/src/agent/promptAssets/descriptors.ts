@@ -1,7 +1,7 @@
 import type {
   PluginPromptAssetContributionV1,
   PromptAssetCapabilitiesV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/manifest';
 
 export type GeminiPromptAssetConfig = Readonly<{
   assetTypeId: string;

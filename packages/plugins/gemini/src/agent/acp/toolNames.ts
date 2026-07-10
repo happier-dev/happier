@@ -1,5 +1,7 @@
-import type { AcpToolNameInferenceV1 } from '@happier-dev/plugin-sdk/acp';
-import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
+import {
+  CHANGE_TITLE_TOOL_NAME_ALIASES,
+  type AcpToolNameInferenceV1,
+} from '@happier-dev/plugin-sdk/experimental/acp';
 
 export const GEMINI_TOOL_NAME_INFERENCE = Object.freeze({
   preferLongestPattern: true,

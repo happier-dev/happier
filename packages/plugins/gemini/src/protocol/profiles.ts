@@ -1,25 +1,6 @@
-import type { AIBackendProfile } from '@happier-dev/protocol';
+import type { AIBackendProfile } from '@happier-dev/plugin-sdk/manifest';
 
 export const GEMINI_BUILT_IN_BACKEND_PROFILES = [
-  {
-    id: 'gemini',
-    name: 'Gemini (Default)',
-    authMode: 'machineLogin',
-    requiresMachineLoginTargetKey: 'agent:gemini',
-    environmentVariables: [],
-    defaultPermissionModeByTargetKey: { 'agent:gemini': 'default' },
-    defaultPermissionModeByAgent: {},
-    defaultPersistenceModeByTargetKey: {},
-    defaultPersistenceModeByAgent: {},
-    compatibilityByTargetKey: { 'agent:claude': false, 'agent:codex': false, 'agent:gemini': true },
-    compatibility: {},
-    envVarRequirements: [],
-    isBuiltIn: true,
-    defaultEnabled: true,
-    createdAt: 0,
-    updatedAt: 0,
-    version: '1.0.0',
-  },
   {
     id: 'gemini-api-key',
     name: 'Gemini (API key)',

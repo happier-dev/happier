@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 import {
   createGeminiQuotaFetcher,
@@ -26,6 +26,20 @@ function makeGeminiOauthRecord(now: number) {
   });
 }
 
+function makeGeminiTokenRecord(now: number) {
+  return buildConnectedServiceCredentialRecord({
+    now,
+    serviceId: 'gemini',
+    profileId: 'work',
+    kind: 'token',
+    token: {
+      token: 'gemini-api-key',
+      providerAccountId: null,
+      providerEmail: null,
+    },
+  });
+}
+
 describe('geminiConnectedServiceQuotaFetcherContribution', () => {
   it('exports the Gemini quota fetcher through the plugin-owned auth/services surface', () => {
     const fetcher = geminiConnectedServiceQuotaFetcherContribution.createFetcher();
@@ -34,12 +48,12 @@ describe('geminiConnectedServiceQuotaFetcherContribution', () => {
     expect(fetcher.serviceId).toBe('gemini');
   });
 
-  it('returns a quota_unknown placeholder snapshot instead of null so the UI can render quota unavailable', async () => {
+  it('returns a quota_unknown placeholder snapshot for API-key or Vertex token credentials', async () => {
     const now = 1_000_000;
     const fetcher = createGeminiQuotaFetcher();
 
     const snapshot = await fetcher.loadQuota({
-      record: makeGeminiOauthRecord(now),
+      record: makeGeminiTokenRecord(now),
       now,
       signal: new AbortController().signal,
     });
@@ -59,5 +73,16 @@ describe('geminiConnectedServiceQuotaFetcherContribution', () => {
       utilizationPct: null,
       details: { code: 'quota_unknown' },
     });
+  });
+
+  it('does not treat stale OAuth records as supported Gemini quota credentials', async () => {
+    const now = 1_000_000;
+    const fetcher = createGeminiQuotaFetcher();
+
+    await expect(fetcher.loadQuota({
+      record: makeGeminiOauthRecord(now),
+      now,
+      signal: new AbortController().signal,
+    })).resolves.toBeNull();
   });
 });

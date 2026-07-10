@@ -43,6 +43,13 @@ describe('GEMINI_ACP_BACKEND_SPEC', () => {
     expect(AGENT_DEFINITION.modelConfig.allowedModes).toContain(GEMINI_ACP_BACKEND_SPEC.ux.defaultModel);
   });
 
+  it('does not advertise deferred machine-login or OAuth auth as packet closure', () => {
+    expect(GEMINI_ACP_BACKEND_SPEC.auth).toMatchObject({
+      methodId: 'gemini-api-key',
+    });
+    expect(GEMINI_ACP_BACKEND_SPEC.auth?.config).toBeUndefined();
+  });
+
   it('keeps Gemini stderr and tool-name dialects provider-owned', () => {
     const expectedModelDetail = AGENT_DEFINITION.modelConfig.allowedModes.join(', ');
 

@@ -1,4 +1,4 @@
-import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/acp';
+import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/experimental/acp';
 
 import { AGENT_DEFINITION } from '../definition.js';
 import { getSuggestedGeminiModelsForUi } from '../models/suggestedModels.js';
@@ -37,11 +37,7 @@ export const GEMINI_ACP_BACKEND_SPEC = Object.freeze({
     supportsPromptImages: false,
   },
   auth: {
-    config: {
-      support: 'login_terminal',
-      machineLoginKey: 'gemini-cli',
-    },
-    methodId: 'oauth-personal',
+    methodId: 'gemini-api-key',
   },
   transportLifecycle: {
     initDelayMs: 3_000,

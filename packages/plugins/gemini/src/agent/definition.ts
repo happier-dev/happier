@@ -1,5 +1,38 @@
 const GEMINI_AGENT_ID = 'gemini';
 
+const GEMINI_STATIC_MODELS = [
+  {
+    id: 'gemini-2.5-pro',
+    name: 'Gemini 2.5 Pro',
+    description: 'Best for complex reasoning, coding, and longer-running tasks.',
+  },
+  {
+    id: 'gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash',
+    description: 'Fast, balanced Gemini model for general-purpose work.',
+  },
+  {
+    id: 'gemini-2.5-flash-lite',
+    name: 'Gemini 2.5 Flash Lite',
+    description: 'Lowest-latency Gemini 2.5 option for lightweight prompts.',
+  },
+  {
+    id: 'gemini-3-flash-preview',
+    name: 'Gemini 3 Flash Preview',
+    description: 'Preview flash model from the Gemini 3 generation.',
+  },
+  {
+    id: 'gemini-3-pro-preview',
+    name: 'Gemini 3 Pro Preview',
+    description: 'Preview pro model with stronger reasoning and coding depth.',
+  },
+  {
+    id: 'gemini-3.1-pro-preview',
+    name: 'Gemini 3.1 Pro Preview',
+    description: 'Latest Gemini 3.1 preview with the strongest reasoning in this static list.',
+  },
+] as const;
+
 // IMPORTANT: this must stay JSON-serializable (data-only).
 export const AGENT_DEFINITION = Object.freeze({
   id: GEMINI_AGENT_ID,
@@ -16,7 +49,7 @@ export const AGENT_DEFINITION = Object.freeze({
         supportedTransitions: ['native_to_connected', 'connected_to_connected'],
       },
       supportedKindsByServiceId: {
-        gemini: ['oauth'],
+        gemini: ['token'],
       },
     },
     resume: { vendorResume: 'supported', vendorResumeIdField: 'geminiSessionId' },
@@ -25,7 +58,7 @@ export const AGENT_DEFINITION = Object.freeze({
       sessionListing: 'unsupported',
       sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
       sessionRollback: { conversation: 'unsupported' },
-      usageLimitRecovery: { checkNow: 'supported' },
+      usageLimitRecovery: { checkNow: 'unsupported' },
     },
     handoff: { vendorStateTransfer: 'unsupported' },
     tools: { delivery: 'native_mcp', support: 'supported' },
@@ -35,44 +68,40 @@ export const AGENT_DEFINITION = Object.freeze({
   modelConfig: {
     supportsSelection: true,
     supportsFreeform: true,
+    freeformModelIdPrefixes: [
+      'gemini-',
+      'models/gemini-',
+      'publishers/google/models/gemini-',
+    ],
     nonAcpApplyScope: 'next_prompt',
     acpApplyBehavior: 'restart_session',
     acpModelConfigOptionId: 'model',
+    dynamicProbe: 'static-only',
     defaultMode: 'gemini-2.5-pro',
-    allowedModes: [
-      'gemini-2.5-pro',
-      'gemini-2.5-flash',
-      'gemini-2.5-flash-lite',
-      'gemini-3-flash-preview',
-      'gemini-3-pro-preview',
-      'gemini-3.1-pro-preview',
-    ],
+    allowedModes: GEMINI_STATIC_MODELS.map((model) => model.id),
+    staticModels: GEMINI_STATIC_MODELS,
   },
   authProbeConfig: {
     agentId: GEMINI_AGENT_ID,
     binaryNames: ['gemini'],
     statusCommand: null,
-    parser: 'geminiCredentialFiles',
+    parser: 'envOnly',
     backgroundChecks: 'safe',
-    envVars: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'],
-    credentialPaths: [
-      '~/.gemini/oauth_creds.json',
-      '~/.gemini/config.json',
-      '~/.config/gemini/config.json',
-      '~/.gemini/auth.json',
-      '~/.config/gemini/auth.json',
-      '~/.config/gcloud/application_default_credentials.json',
+    envVars: [
+      'GEMINI_API_KEY',
+      'GOOGLE_API_KEY',
+      'GOOGLE_GENAI_USE_VERTEXAI',
+      'GOOGLE_CLOUD_PROJECT',
+      'GOOGLE_CLOUD_LOCATION',
     ],
+    credentialPaths: [],
   },
   localCli: {
     agentId: GEMINI_AGENT_ID,
     detectKey: 'gemini',
-    machineLoginKey: 'gemini-cli',
-    supportKind: 'login_terminal',
-    loginLaunch: {
-      command: 'gemini',
-      args: ['auth'],
-    },
+    machineLoginKey: 'gemini',
+    supportKind: 'unsupported',
+    loginLaunch: null,
   },
   agentCliRuntime: {
     id: GEMINI_AGENT_ID,
@@ -88,11 +117,16 @@ export const AGENT_DEFINITION = Object.freeze({
     manualInstallKind: 'command',
     manualInstallRecipes: null,
     acceptsJavaScriptFileOverride: false,
+    setupRecommendation: { order: 30 },
     installGuideUrl: null,
     docsUrl: 'https://goo.gle/gemini-cli-auth-docs',
   },
-  providerSettings: null,
+  agentSettings: null,
   runtimeContributions: {
+    agentCatalogEntry: {
+      importName: 'GEMINI_AGENT_RUNTIME_CONTRIBUTION',
+      source: './agent/contributions/runtime',
+    },
     protocolBuiltInBackendProfiles: {
       kind: 'providerBuiltInBackendProfilesV1',
       providerId: GEMINI_AGENT_ID,

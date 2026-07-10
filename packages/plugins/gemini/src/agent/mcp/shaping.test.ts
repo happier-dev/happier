@@ -44,14 +44,20 @@ function createShapingContext(params: Readonly<{
 }
 
 describe('prepareGeminiMcpShaping', () => {
-  it('scrubs MCP servers from copied Gemini settings', async () => {
+  it('copies non-auth Gemini settings while leaving local OAuth and auth state behind', async () => {
     const sourceHome = createTempRoot('happier-gemini-source-home-');
     const tempHome = createTempRoot('happier-gemini-plugin-home-');
 
     try {
       const geminiDir = join(sourceHome, '.gemini');
+      const xdgGeminiDir = join(sourceHome, '.config', 'gemini');
       mkdirSync(geminiDir, { recursive: true });
+      mkdirSync(xdgGeminiDir, { recursive: true });
       writeFileSync(join(geminiDir, 'oauth_creds.json'), JSON.stringify({ access_token: 'oauth-token' }), 'utf8');
+      writeFileSync(join(geminiDir, 'auth.json'), JSON.stringify({ mode: 'interactive-login' }), 'utf8');
+      writeFileSync(join(xdgGeminiDir, 'auth.json'), JSON.stringify({ mode: 'interactive-xdg-login' }), 'utf8');
+      writeFileSync(join(geminiDir, 'config.json'), JSON.stringify({ apiEndpoint: 'https://example.invalid' }), 'utf8');
+      writeFileSync(join(xdgGeminiDir, 'config.json'), JSON.stringify({ location: 'us-central1' }), 'utf8');
       writeFileSync(
         join(geminiDir, 'settings.json'),
         JSON.stringify({
@@ -74,7 +80,11 @@ describe('prepareGeminiMcpShaping', () => {
         HOME: tempHome,
         XDG_CONFIG_HOME: join(tempHome, '.config'),
       });
-      expect(readFileSync(join(tempHome, '.gemini', 'oauth_creds.json'), 'utf8')).toContain('oauth-token');
+      expect(existsSync(join(tempHome, '.gemini', 'oauth_creds.json'))).toBe(false);
+      expect(existsSync(join(tempHome, '.gemini', 'auth.json'))).toBe(false);
+      expect(existsSync(join(tempHome, '.config', 'gemini', 'auth.json'))).toBe(false);
+      expect(readFileSync(join(tempHome, '.gemini', 'config.json'), 'utf8')).toContain('apiEndpoint');
+      expect(readFileSync(join(tempHome, '.config', 'gemini', 'config.json'), 'utf8')).toContain('us-central1');
       const settings = JSON.parse(readFileSync(join(tempHome, '.gemini', 'settings.json'), 'utf8')) as {
         theme?: string;
         mcpServers?: unknown;
