@@ -68,6 +68,73 @@ describe('createActionExecutor (review.start)', () => {
     expect(executionRunStart).not.toHaveBeenCalled();
   });
 
+  it('passes the clamped agent permission mode to inline review dependencies', async () => {
+    const executionRunStart = vi.fn(async () => ({ runId: 'run_1' }));
+    const reviewStartInline = vi.fn(async () => ({ ok: true, reviewTurnId: 'turn-review-native' }));
+
+    const executor = createActionExecutor({
+      executionRunStart,
+      executionRunList: async () => ({}),
+      executionRunGet: async () => ({}),
+      executionRunSend: async () => ({}),
+      executionRunStop: async () => ({}),
+      executionRunAction: async () => ({}),
+      executionRunWait: async () => ({}),
+      sessionOpen: async () => ({}),
+      sessionFork: async () => ({}),
+      sessionRollback: async () => ({}),
+      sessionSpawnNew: async () => ({}),
+      sessionSpawnPicker: async () => ({}),
+      pathsListRecent: async () => ({ items: [] }),
+      machinesList: async () => ({ items: [] }),
+      serversList: async () => ({ items: [] }),
+      reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+      reviewStartInline,
+      agentsBackendsList: async () => ({ items: [] }),
+      agentsModelsList: async () => ({ items: [] }),
+      sessionSendMessage: async () => ({}),
+      sessionPermissionRespond: async () => ({}),
+      sessionUserActionAnswer: async () => ({}),
+      sessionModeSet: async () => ({}),
+      sessionModesList: async () => ({ items: [] }),
+      sessionTargetPrimarySet: async () => ({}),
+      sessionTargetTrackedSet: async () => ({}),
+      sessionList: async () => ({}),
+      sessionActivityGet: async () => ({}),
+      sessionRecentMessagesGet: async () => ({}),
+      daemonMemorySearch: async () => ({ v: 1, ok: true as const, hits: [] }),
+      daemonMemoryGetWindow: async () => ({ v: 1, snippets: [], citations: [] }),
+      daemonMemoryEnsureUpToDate: async () => ({ ok: true }),
+      resetGlobalVoiceAgent: async () => {},
+    });
+
+    const res = await executor.execute(
+      'review.start' as any,
+      {
+        sessionId: 's1',
+        engineIds: ['codex'],
+        instructions: 'Review this.',
+        runLocation: 'current_session',
+        permissionMode: 'safe-yolo',
+        changeType: 'uncommitted',
+        base: { kind: 'none' },
+      },
+      {
+        surface: 'agent',
+        defaultSessionId: 's1',
+        callerPermissionMode: 'safe-yolo',
+      },
+    );
+
+    expect(res.ok).toBe(true);
+    expect(reviewStartInline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        permissionMode: 'workspace_write',
+      }),
+    }));
+    expect(executionRunStart).not.toHaveBeenCalled();
+  });
+
   it('starts resumable review runs with ioMode=streaming so sidechain progress can stream', async () => {
     const executionRunStart = vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }));
 

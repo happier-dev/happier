@@ -6,9 +6,11 @@ import { z } from 'zod';
  */
 export const ACTION_UI_PLACEMENTS = [
   'agent_input_chips',
+  'browser_context',
   'session_header',
   'session_info',
   'session_action_menu',
+  'pending_messages',
   'command_palette',
   'slash_command',
   'voice_panel',

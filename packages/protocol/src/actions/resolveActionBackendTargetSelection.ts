@@ -1,13 +1,13 @@
-import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2, type BackendTargetRefV2 } from '../backendTargets/backendTargetRefV2.js';
-import type { BackendTargetRefV1 } from '../backendTargets/backendTargetRef.js';
+import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2, type BackendTargetRefV2 } from '../backends/targets/backendTargetRefV2.js';
+import type { BackendTargetRefV1 } from '../backends/targets/backendTargetRef.js';
 import {
   hasLegacyCustomAcpConcreteBackendId,
   isLegacyConfiguredAcpCompatible,
   isLegacyConfiguredAcpFlavorCarrier,
   isLegacyCustomAcpId,
-} from '../backendTargets/compat/customAcp.js';
+} from '../backends/targets/compat/customAcp.js';
 import { isBuiltInBackendAgentId } from '../profiles/builtInBackendProfiles.js';
-import { ExternalSessionsProviderIdSchema } from '../sessions/external/sourceCatalog.js';
+import { ExternalSessionsAgentIdSchema } from '../sessions/external/sourceCatalog.js';
 
 type ActionBackendTargetSelectionInput = Readonly<{
   agentId?: string;
@@ -39,7 +39,7 @@ function normalizeValue(value: unknown): string | null {
 }
 
 function canInferRuntimeCarrierFromCanonicalBackendId(backendId: string): boolean {
-  return ExternalSessionsProviderIdSchema.safeParse(backendId).success || isBuiltInBackendAgentId(backendId);
+  return ExternalSessionsAgentIdSchema.safeParse(backendId).success || isBuiltInBackendAgentId(backendId);
 }
 
 function deriveAgentIdForConcreteBackendTarget(target: BackendTargetRefV2): string | null {

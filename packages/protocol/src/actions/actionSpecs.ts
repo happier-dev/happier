@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { ActionIdSchema, type ActionId } from './actionIds.js';
+import { ACTION_ID_FAMILIES_V1, ActionIdSchema, type ActionId } from './actionIds.js';
 import { ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
 import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
 import {
@@ -26,26 +26,37 @@ import {
   PromptRegistryConfiguredSourceV1Schema,
   PromptRegistryInstallRequestV1Schema,
   PromptRegistryScanSourceRequestV1Schema,
-} from '../promptLibrary/promptRegistriesV1.js';
+} from '../prompts/library/promptRegistriesV1.js';
 import {
   PromptAssetDeleteRequestSchema,
   PromptAssetDiscoverRequestSchema,
   PromptAssetInstallModeV1Schema,
   PromptAssetScopeV1Schema,
-} from '../promptLibrary/promptAssetsV1.js';
+} from '../prompts/library/promptAssetsV1.js';
 import {
   DaemonFilesystemListDirectoryRequestSchema,
-} from '../machineFileBrowser.js';
-import { BackendTargetKeySchema } from '../backendTargets/backendTargetRef.js';
-import { BackendTargetKeyV2Schema } from '../backendTargets/backendTargetRefV2.js';
-import { ExecutionRunListRequestSchema } from '../executionRunListRequest.js';
-import { ExecutionRunStartRequestSchema } from '../executionRunStartRequest.js';
-import { SessionWorkStateStatusV1Schema } from '../sessionWorkState/sessionWorkStateV1.js';
+} from '../machines/fileBrowser.js';
+import { BackendTargetKeySchema } from '../backends/targets/backendTargetRef.js';
+import { BackendTargetKeyV2Schema, BackendTargetRefV2Schema } from '../backends/targets/backendTargetRefV2.js';
+import { ConnectedServiceBindingsV1Schema } from '../connect/connectedServiceBindings.js';
+import { normalizeConnectedServiceSelectionInput } from '../connect/normalizeConnectedServiceSelectionInput.js';
+import { ExecutionRunListRequestSchema } from '../execution/runs/listRequest.js';
+import { ExecutionRunStartRequestSchema } from '../execution/runs/startRequest.js';
+import { SessionMcpSelectionV1Schema } from '../mcp/servers/sessionSelectionV1.js';
+import { AcpConfigOptionOverridesV1Schema } from '../sessions/metadata/metadataOverridesV1.js';
+import { RuntimeDescriptorV1Schema } from '../sessions/metadata/runtimeDescriptorV1.js';
+import { ProviderConnectionIdSchema } from '../providers/ids.js';
+import {
+  SpawnConfigOptionValueSchema,
+  findSpawnConfigOptionAliasConflicts,
+} from './sessionSpawnConfigOptions.js';
+import { SessionWorkStateStatusV1Schema } from '../sessions/work/state/sessionWorkStateV1.js';
 import {
   SessionUsageLimitCheckNowRequestV1Schema,
+  SessionUsageLimitConsumeResetCreditRequestV1Schema,
   SessionUsageLimitWaitResumeCancelRequestV1Schema,
   SessionUsageLimitWaitResumeEnableRequestV1Schema,
-} from '../sessionWorkState/sessionWorkStateRpc.js';
+} from '../sessions/work/state/sessionWorkStateRpc.js';
 import {
   ExternalSessionAttachRequestSchema,
   ExternalSessionAttachResponseSchema,
@@ -79,13 +90,13 @@ import {
   ScmPullRequestPrepareWorktreeResponseSchema,
   ScmPullRequestRunStackedRequestSchema,
   ScmPullRequestRunStackedResponseSchema,
-} from '../scmPullRequests.js';
+} from '../scm/pullRequests.js';
 import {
   ScmRepositoryCloneInputSchema,
   ScmRepositoryCloneOutputSchema,
   SourceControlCloneProtocolSchema,
   type SourceControlCloneProtocol,
-} from '../scmRepositoryClone.js';
+} from '../scm/repositoryClone.js';
 import {
   ScmHostingRepositoryDescribePublishTargetsRequestSchema,
   ScmHostingRepositoryDescribePublishTargetsResponseSchema,
@@ -95,11 +106,11 @@ import {
   ScmRepositoryInitResponseSchema,
   ScmRepositoryRemoveIndexLockRequestSchema,
   ScmRepositoryRemoveIndexLockResponseSchema,
-} from '../scmRepositoryProvisioning.js';
+} from '../scm/repositoryProvisioning.js';
 import {
   ScmDiffSummaryGenerateInputSchema,
   ScmDiffSummaryGenerateOutputSchema,
-} from '../scmDiffSummary.js';
+} from '../scm/diffSummary.js';
 import {
   SkillCatalogItemV1Schema,
   SkillCatalogV1Schema,
@@ -116,7 +127,7 @@ import {
   SubagentRefV1Schema,
   SubagentStatusV1Schema,
 } from '../sessions/subagents/subagentRefV1.js';
-import { SessionRollbackTargetSchema } from '../sessionRollback.js';
+import { SessionRollbackTargetSchema } from '../sessions/rollback.js';
 import {
   CheckpointCodeRollbackRequestSchema,
   CheckpointCodeRollbackActionRequestSchema,
@@ -129,17 +140,24 @@ import {
   SessionRestoreResultV1Schema,
 } from '../sessions/control/checkpoints/v1.js';
 import {
+  SessionTerminalComposerClearRequestV1Schema,
+  SessionTerminalComposerClearResultV1Schema,
+} from '../sessions/control/terminalComposerClearV1.js';
+import {
   SessionHandoffAbortRequestSchema,
   SessionHandoffCommitRequestSchema,
   SessionHandoffPrepareTargetResultGetRequestSchema,
   SessionHandoffPrepareTargetRequestSchema,
   SessionHandoffStatusGetRequestSchema,
   SessionHandoffWorkspaceTransferSchema,
-} from '../sessionControl/handoff/handoffSchemas.js';
-import { SessionContinueWithReplayRpcParamsSchema } from '../sessionContinueWithReplay.js';
-import { RPC_METHODS, SESSION_RPC_METHODS } from '../rpc.js';
+} from '../sessions/control/handoff/handoffSchemas.js';
+import { SessionContinueWithReplayRpcParamsSchema } from '../sessions/continueWithReplay.js';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '../rpc/index.js';
 import { resolveActionBackendTargetSelection } from './resolveActionBackendTargetSelection.js';
+import { RUNTIME_ACTION_SPECS } from './specs/index.js';
 import { ActionApprovalSchema, type ActionApproval } from './actionApprovalMetadata.js';
+
+export { resolveRuntimeActionHostEffectClass } from './safety.js';
 
 export {
   ActionApprovalFlowSchema,
@@ -160,23 +178,23 @@ const ZodSchemaLike = z.custom<z.ZodTypeAny>((value) => {
 export const ActionSurfaceSchema = z.object({
   ui: z.boolean(),
   voice: z.boolean(),
-  session_agent: z.boolean(),
+  agent: z.boolean(),
   mcp: z.boolean(),
   cli: z.boolean(),
   rpc: z.boolean(),
   sdk: z.boolean(),
-}).passthrough();
+}).strict();
 export type ActionSurfaces = z.infer<typeof ActionSurfaceSchema>;
 
 export const ActionToolExposureModeSchema = z.enum(['direct', 'discoverable_only']);
 export type ActionToolExposureMode = z.infer<typeof ActionToolExposureModeSchema>;
 
-export const ActionToolExposureSurfaceSchema = z.enum(['session_agent', 'mcp', 'cli']);
+export const ActionToolExposureSurfaceSchema = z.enum(['agent', 'mcp', 'cli']);
 export type ActionToolExposureSurface = z.infer<typeof ActionToolExposureSurfaceSchema>;
 
 export const ActionToolExposureSchema = z
   .object({
-    session_agent: ActionToolExposureModeSchema.optional(),
+    agent: ActionToolExposureModeSchema.optional(),
     mcp: ActionToolExposureModeSchema.optional(),
     cli: ActionToolExposureModeSchema.optional(),
   })
@@ -186,7 +204,17 @@ export type ActionToolExposure = z.infer<typeof ActionToolExposureSchema>;
 export const ActionSafetySchema = z.enum(['safe', 'danger']);
 export type ActionSafety = z.infer<typeof ActionSafetySchema>;
 
-export const ActionInputWidgetSchema = z.enum(['text', 'textarea', 'text_list', 'select', 'multiselect', 'toggle', 'checkbox']);
+export const RuntimeActionHostEffectClassSchema = z.enum([
+  'readOnly',
+  'mutating',
+  'destructive',
+  'recording',
+  'externalNavigation',
+  'diagnostic',
+]);
+export type RuntimeActionHostEffectClass = z.infer<typeof RuntimeActionHostEffectClassSchema>;
+
+export const ActionInputWidgetSchema = z.enum(['text', 'textarea', 'text_list', 'select', 'multiselect', 'toggle', 'checkbox', 'json']);
 export type ActionInputWidget = z.infer<typeof ActionInputWidgetSchema>;
 
 export const ActionInputOptionSchema = z
@@ -222,6 +250,12 @@ export const ActionInputFieldHintSchema = z
      * explicitly picks a value instead of auto-seeding or auto-selecting one.
      */
     requireExplicitSelection: z.boolean().optional(),
+    /**
+     * Only used for `widget='multiselect'`.
+     *
+     * This is UI/elicitation metadata only; canonical validation remains the action `inputSchema`.
+     */
+    maxSelections: z.number().int().positive().optional(),
     options: z.array(ActionInputOptionSchema).optional(),
     optionsSourceId: z.string().min(1).optional(),
     visibleWhen: ActionInputPredicateSchema.optional(),
@@ -255,6 +289,14 @@ export const ActionInputFieldHintSchema = z
           path: ['listSeparator'],
         });
       }
+    }
+
+    if (typeof (value as any).maxSelections !== 'undefined' && widget !== 'multiselect') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'maxSelections is only valid for multiselect fields',
+        path: ['maxSelections'],
+      });
     }
   });
 export type ActionInputFieldHint = z.infer<typeof ActionInputFieldHintSchema>;
@@ -385,7 +427,7 @@ export type ActionSpec = z.infer<typeof ActionSpecSchema> & Readonly<{
   placements: ActionUiPlacement[];
 }>;
 type ParsedActionSpec = z.infer<typeof ActionSpecSchema>;
-type ActionSpecWithoutApproval = Readonly<{
+export type ActionSpecWithoutApproval = Readonly<{
   id: ParsedActionSpec['id'];
   title: ParsedActionSpec['title'];
   description?: ParsedActionSpec['description'];
@@ -407,7 +449,7 @@ type ActionSpecWithoutApproval = Readonly<{
 const DAEMON_ADMIN_RPC_SURFACES = Object.freeze({
   ui: false,
   voice: false,
-  session_agent: false,
+  agent: false,
   mcp: false,
   cli: false,
   rpc: true,
@@ -463,6 +505,7 @@ const SessionPermissionModeSetInputSchema = z.object({
 const SessionModelSetInputSchema = z.object({
   sessionId: z.string().min(1),
   modelId: z.string().trim().min(1),
+  providerConnectionId: ProviderConnectionIdSchema.nullable().optional(),
 }).passthrough();
 
 const SessionStatusGetInputSchema = z.object({
@@ -624,14 +667,43 @@ const SessionSkillCatalogListOutputSchema = z.object({
   diagnostic: z.string().min(1).optional(),
 }).passthrough();
 
+const BackendTargetKeyInputSchema = z.union([BackendTargetKeySchema, BackendTargetKeyV2Schema]);
+
 const IntentStartCommonSchema = z.object({
   sessionId: z.string().min(1).optional(),
-  backendTargetKeys: z.array(BackendTargetKeySchema).min(1),
+  backendTargetKeys: z.array(BackendTargetKeyInputSchema).min(1),
   instructions: z.string().trim().min(1),
   permissionMode: z.string().min(1).optional(),
   retentionPolicy: z.enum(['ephemeral', 'resumable']).optional(),
   runClass: z.enum(['bounded', 'long_lived']).optional(),
   ioMode: z.enum(['request_response', 'streaming']).optional(),
+  /**
+   * Optional model selection applied to EVERY started run, reusing the canonical session-spawn
+   * `modelId` vocabulary. Omitted ⇒ each backend's default model.
+   */
+  modelId: z.string().min(1).optional(),
+  /**
+   * Optional canonical agent config-option overrides (e.g. reasoning effort) applied to every
+   * started run — the SAME `AcpConfigOptionOverridesV1` shape session spawn uses.
+   */
+  sessionConfigOptionOverrides: AcpConfigOptionOverridesV1Schema.optional(),
+  /**
+   * Ergonomic shorthand for `sessionConfigOptionOverrides` (id → value). Merged into the canonical
+   * overrides at the action boundary; a value conflicting with `sessionConfigOptionOverrides`
+   * fails with `invalid_parameters`.
+   */
+  configOptions: z.record(z.string(), SpawnConfigOptionValueSchema).optional(),
+  /**
+   * Optional per-backend-target connected-services selection, keyed by the SAME backend target
+   * key strings passed in `backendTargetKeys`. Each value may be an agent-friendly simple string
+   * (`"<service>:group:<id>"`, `"<service>:<profileId>"`, `"<service>:native"`), an array of those,
+   * or the full `ConnectedServiceBindingsV1` object — normalized at the action boundary. Targets
+   * without an entry apply the session-spawn account-settings defaulting; connected selections fail
+   * closed at run start.
+   */
+  connectedServicesByBackendTargetKey: z
+    .record(z.string(), z.unknown())
+    .optional(),
 }).passthrough();
 
 const PlanStartInputSchema = IntentStartCommonSchema.extend({
@@ -660,9 +732,34 @@ const ExecutionRunIdInputSchema = z.object({
   runId: z.string().min(1),
 }).passthrough();
 
-const ExecutionRunStartInputSchema = ExecutionRunStartRequestSchema.extend({
-  sessionId: z.string().min(1).optional(),
-}).passthrough();
+/**
+ * Normalize the agent-friendly `connectedServices` simple-form (string / array) into the canonical
+ * `ConnectedServiceBindingsV1` object BEFORE the strict run-request schema validates it. A malformed
+ * value is left untouched so the strict schema rejects it (→ `invalid_parameters`). Non-simple
+ * (already-object) values pass through unchanged. This keeps the run REQUEST schema strict while the
+ * action input accepts the ergonomic forms an agent can produce from the spec alone.
+ */
+function preprocessRunStartConnectedServicesInput(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const record = raw as Record<string, unknown>;
+  const selection = record.connectedServices;
+  if (typeof selection !== 'string' && !Array.isArray(selection)) return raw;
+  const normalized = normalizeConnectedServiceSelectionInput(selection);
+  if (!normalized.ok) return raw;
+  return { ...record, connectedServices: normalized.bindings };
+}
+
+const ExecutionRunStartInputSchema = z.preprocess(
+  preprocessRunStartConnectedServicesInput,
+  ExecutionRunStartRequestSchema.extend({
+    sessionId: z.string().min(1).optional(),
+    /**
+     * Ergonomic shorthand for `sessionConfigOptionOverrides` (id → value). Merged into the canonical
+     * overrides at the action boundary; conflicting values fail with `invalid_parameters`.
+     */
+    configOptions: z.record(z.string(), SpawnConfigOptionValueSchema).optional(),
+  }).passthrough(),
+);
 
 const ExecutionRunGetInputSchema = ExecutionRunIdInputSchema.extend({
   includeStructured: z.boolean().optional(),
@@ -748,23 +845,80 @@ const SessionSpawnNewInputSchema = z.object({
   tag: z.string().min(1).optional(),
   agentId: z.string().min(1).optional(),
   modelId: z.string().min(1).optional(),
+  providerConnectionId: ProviderConnectionIdSchema.nullable().optional(),
   backendTargetKey: z.union([BackendTargetKeySchema, BackendTargetKeyV2Schema]).optional(),
+  backendTarget: BackendTargetRefV2Schema.optional(),
   title: z.string().min(1).optional(),
   path: z.string().min(1).optional(),
+  directory: z.string().min(1).optional(),
   host: z.string().min(1).optional(),
+  machineId: z.string().min(1).optional(),
+  serverId: z.string().min(1).optional(),
   initialMessage: z.string().min(1).optional(),
+  initialPrompt: z.string().min(1).optional(),
+  permissionMode: z.string().min(1).optional(),
+  permissionModeUpdatedAt: z.number().finite().optional(),
+  agentModeId: z.string().min(1).optional(),
+  agentModeUpdatedAt: z.number().finite().optional(),
+  modelUpdatedAt: z.number().finite().optional(),
+  sessionConfigOptionOverrides: AcpConfigOptionOverridesV1Schema.optional(),
+  configOptions: z.record(z.string(), SpawnConfigOptionValueSchema).optional(),
+  profileId: z.string().optional(),
+  environmentVariables: z.record(z.string(), z.string()).optional(),
+  connectedServices: ConnectedServiceBindingsV1Schema.optional(),
+  connectedServicesUpdatedAt: z.number().finite().optional(),
+  mcpSelection: SessionMcpSelectionV1Schema.optional(),
+  transcriptStorage: z.enum(['persisted', 'direct']).optional(),
+  terminal: z.unknown().optional(),
+  windowsRemoteSessionLaunchMode: z.enum(['hidden', 'windows_terminal', 'console']).optional(),
+  windowsRemoteSessionConsole: z.enum(['hidden', 'visible']).optional(),
+  windowsTerminalWindowName: z.string().min(1).optional(),
+  runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
 }).passthrough().superRefine((value, ctx) => {
   validateAgentIdAndBackendTargetKeySelection(value, ctx);
+  if (value.providerConnectionId !== undefined && !value.modelId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['providerConnectionId'],
+      message: 'providerConnectionId requires an explicit modelId',
+    });
+  }
+  validateStringAliasPair(value, ctx, {
+    primary: 'path',
+    alias: 'directory',
+  });
+  validateStringAliasPair(value, ctx, {
+    primary: 'initialMessage',
+    alias: 'initialPrompt',
+  });
+  for (const conflict of findSpawnConfigOptionAliasConflicts({
+    sessionConfigOptionOverrides: value.sessionConfigOptionOverrides,
+    configOptions: value.configOptions,
+  })) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `configOptions.${conflict.id} conflicts with sessionConfigOptionOverrides.${conflict.id}`,
+      path: ['configOptions', conflict.id],
+    });
+  }
 });
 
 const SessionSpawnPickerInputSchema = z.object({
   tag: z.string().min(1).optional(),
   agentId: z.string().min(1).optional(),
   modelId: z.string().min(1).optional(),
+  providerConnectionId: ProviderConnectionIdSchema.nullable().optional(),
   backendTargetKey: z.union([BackendTargetKeySchema, BackendTargetKeyV2Schema]).optional(),
   initialMessage: z.string().min(1).optional(),
 }).passthrough().superRefine((value, ctx) => {
   validateAgentIdAndBackendTargetKeySelection(value, ctx);
+  if (value.providerConnectionId !== undefined && !value.modelId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['providerConnectionId'],
+      message: 'providerConnectionId requires an explicit modelId',
+    });
+  }
 });
 
 function validateAgentIdAndBackendTargetKeySelection(
@@ -779,6 +933,22 @@ function validateAgentIdAndBackendTargetKeySelection(
       path: [resolved.path],
     });
   }
+}
+
+function validateStringAliasPair(
+  value: Readonly<Record<string, unknown>>,
+  ctx: z.RefinementCtx,
+  params: Readonly<{ primary: string; alias: string }>,
+): void {
+  const primaryValue = value[params.primary];
+  const aliasValue = value[params.alias];
+  if (typeof primaryValue !== 'string' || typeof aliasValue !== 'string') return;
+  if (primaryValue.trim() === aliasValue.trim()) return;
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    message: `${params.primary} and ${params.alias} must match when both are provided`,
+    path: [params.alias],
+  });
 }
 
 const PathsListRecentInputSchema = z.object({
@@ -808,6 +978,69 @@ const AgentsModelsListInputSchema = z.object({
   agentId: z.string().min(1).optional(),
   backendTargetKey: z.union([BackendTargetKeySchema, BackendTargetKeyV2Schema]).optional(),
   machineId: z.string().min(1).optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+}).passthrough().superRefine((value, ctx) => {
+  if (!value.agentId && !value.backendTargetKey) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'agentId or backendTargetKey is required',
+      path: ['agentId'],
+    });
+  }
+  validateAgentIdAndBackendTargetKeySelection(value, ctx);
+});
+
+const AgentSpawnOptionsListInputBaseSchema = z.object({
+  agentId: z.string().min(1).optional(),
+  backendTargetKey: z.union([BackendTargetKeySchema, BackendTargetKeyV2Schema]).optional(),
+  machineId: z.string().min(1).optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+
+const AgentSpawnOptionsListInputSchema = AgentSpawnOptionsListInputBaseSchema.passthrough().superRefine((value, ctx) => {
+  if (!value.agentId && !value.backendTargetKey) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'agentId or backendTargetKey is required',
+      path: ['agentId'],
+    });
+  }
+  validateAgentIdAndBackendTargetKeySelection(value, ctx);
+});
+
+const AgentsConfigOptionsListInputSchema = AgentSpawnOptionsListInputBaseSchema.extend({
+  modelId: z.string().min(1).optional(),
+}).passthrough().superRefine((value, ctx) => {
+  if (!value.agentId && !value.backendTargetKey) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'agentId or backendTargetKey is required',
+      path: ['agentId'],
+    });
+  }
+  validateAgentIdAndBackendTargetKeySelection(value, ctx);
+});
+
+const SpawnConnectedServicesListInputSchema = AgentSpawnOptionsListInputBaseSchema.extend({
+  includeUnavailable: z.boolean().optional(),
+}).passthrough().superRefine((value, ctx) => {
+  if (!value.agentId && !value.backendTargetKey) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'agentId or backendTargetKey is required',
+      path: ['agentId'],
+    });
+  }
+  validateAgentIdAndBackendTargetKeySelection(value, ctx);
+});
+
+const SpawnMcpServersPreviewInputSchema = z.object({
+  agentId: z.string().min(1).optional(),
+  backendTargetKey: z.union([BackendTargetKeySchema, BackendTargetKeyV2Schema]).optional(),
+  machineId: z.string().min(1).optional(),
+  directory: z.string().min(1).optional(),
+  path: z.string().min(1).optional(),
+  selection: SessionMcpSelectionV1Schema.optional(),
   limit: z.number().int().min(1).max(200).optional(),
 }).passthrough().superRefine((value, ctx) => {
   if (!value.agentId && !value.backendTargetKey) {
@@ -854,9 +1087,20 @@ const SessionSendMessageInputSchema = z.object({
   message: z.string().min(1),
   permissionModeOverride: z.string().trim().min(1).optional(),
   modelOverride: z.union([z.string().trim().min(1), z.null()]).optional(),
+  providerConnectionId: ProviderConnectionIdSchema.nullable().optional(),
   wait: z.boolean().optional(),
   timeoutSeconds: z.number().int().min(1).max(3600).optional(),
-}).passthrough();
+}).passthrough().superRefine((value, ctx) => {
+  if (value.providerConnectionId !== undefined
+    && value.providerConnectionId !== null
+    && typeof value.modelOverride !== 'string') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['modelOverride'],
+      message: 'modelOverride must be a concrete model id when providerConnectionId is set',
+    });
+  }
+});
 
 const SessionPermissionRespondInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
@@ -971,6 +1215,7 @@ const TranscriptFollowInputSchema = TranscriptReadAfterInputSchema.extend({
 
 const TranscriptImportInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
+  importId: z.string().trim().min(1).optional(),
   items: z.array(z.unknown()).min(1).max(500),
   maxItems: z.number().int().min(1).max(500).optional(),
 }).passthrough();
@@ -1186,10 +1431,17 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'review.engines.list',
   'agents.backends.list',
   'agents.models.list',
+  'agents.config_options.list',
+  'agents.session_modes.list',
+  'sessions.spawn.profiles.list',
+  'sessions.spawn.connected_services.list',
+  'sessions.spawn.mcp_servers.preview',
   'session.status.get',
   'session.work_state.get',
   'session.goal.get',
   'session.usageLimit.checkNow',
+  'session.usageLimit.consumeResetCredit',
+  'session.terminalComposer.clear',
   'session.vendor_plugin_catalog.list',
   'session.skill_catalog.list',
   'session.history.get',
@@ -1213,6 +1465,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'bugreport.getLogTail',
   'approval.request.list',
   'approval.request.get',
+  'plugins.list',
   'plugins.permissions.grants.list',
   'session.log.tail',
   'transcript.page',
@@ -1228,6 +1481,110 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'scm.pullRequest.openCompose',
   'scm.hostingRepository.describePublishTargets',
   'scm.diffSummary.generate',
+  'browser.session.create',
+  'browser.session.close',
+  'browser.view.open',
+  'browser.view.close',
+  'browser.view.focus',
+  'browser.target.set',
+  'browser.navigate',
+  'browser.reload',
+  'browser.goBack',
+  'browser.goForward',
+  'browser.stop',
+  'browser.diagnostics.snapshot',
+  'browser.diagnostics.clear',
+  'browser.diagnostics.pause',
+  'browser.diagnostics.resume',
+  'browser.diagnostics.eval',
+  'browser.diagnostics.getProperties',
+  'browser.diagnostics.releaseObjectGroup',
+  'browser.diagnostics.elementPicker.start',
+  'browser.diagnostics.elementPicker.cancel',
+  'browser.context.capturePage',
+  'browser.context.captureScreenshot',
+  'browser.context.captureSelectedElement',
+  'browser.context.captureNetworkSummary',
+  'browser.context.captureConsoleSummary',
+  'browser.context.annotation.start',
+  'browser.context.annotation.cancel',
+  'browser.context.annotation.captureRegion',
+  'browser.context.annotation.captureElement',
+  'browser.context.annotation.attachComment',
+  'browser.context.annotation.attachStroke',
+  'browser.context.annotation.attachStyleIntent',
+  'browser.context.attachToComposer',
+  'browser.context.attachToAgentTurn',
+  'browser.context.clear',
+  'browser.automation.status',
+  'browser.automation.snapshot',
+  'browser.automation.semanticSnapshot',
+  'browser.automation.queryElements',
+  'browser.automation.waitFor',
+  'browser.automation.timeline.get',
+  'browser.automation.cancelActive',
+  'browser.automation.navigate',
+  'browser.automation.reload',
+  'browser.automation.goBack',
+  'browser.automation.goForward',
+  'browser.automation.click',
+  'browser.automation.tap',
+  'browser.automation.type',
+  'browser.automation.press',
+  'browser.automation.scroll',
+  'browser.automation.hover',
+  'browser.automation.focus',
+  'browser.automation.select',
+  'browser.automation.setValue',
+  'browser.recording.start',
+  'browser.recording.stop',
+  'browser.recording.cancel',
+  'browser.recording.status',
+  'browser.recording.listForView',
+  'browser.recording.discard',
+  'browser.recording.cleanupExpired',
+  'browser.recording.attachToComposer',
+  'localServices.inventory.list',
+  'localServices.inventory.refresh',
+  'localServices.launcher.snapshot',
+  'localServices.launcher.start',
+  'localServices.launcher.openPreview',
+  'localServices.launcher.registerPreview',
+  'localServices.launcher.history.clear',
+  'localServices.preview.openOrCreate',
+  'localServices.preview.status',
+  'localServices.preview.revoke',
+  'localServices.publicPreview.create',
+  'localServices.publicPreview.status',
+  'localServices.publicPreview.revoke',
+  'localServices.publicPreview.copyUrl',
+  'localServices.actions.copyUrl',
+  'localServices.actions.openPreview',
+  'localServices.actions.forget',
+  'localServices.actions.stopManaged',
+  'localServices.actions.restartManaged',
+  'localServices.actions.terminateDetected',
+  'peerMediation.observability.snapshot',
+  'peerMediation.observability.subscribe',
+  'peerMediation.observability.unsubscribe',
+  'devices.simulator.list',
+  'devices.simulator.stream.keyframe',
+  'devices.simulator.stream.snapshot',
+  'devices.simulator.stream.quality.set',
+  'devices.simulator.stream.fps.set',
+  'devices.simulator.stream.scale.set',
+  'devices.simulator.lease.acquire',
+  'devices.simulator.lease.renew',
+  'devices.simulator.lease.release',
+  'devices.simulator.input.tap',
+  'devices.simulator.input.swipe',
+  'devices.simulator.input.text',
+  'devices.simulator.input.key',
+  'devices.simulator.input.button',
+  'devices.simulator.input.orientation',
+  'devices.simulator.input.pinch',
+  'devices.simulator.input.rotate',
+  'devices.simulator.sideband.request',
 ] as const satisfies readonly ActionId[];
 
 const RESULT_NONE_APPROVAL_ACTION_IDS = [
@@ -1308,6 +1665,10 @@ const RESULT_OPTIONAL_DEFERRED_APPROVAL_ACTION_IDS = [
   'scm.repository.init',
   'scm.repository.removeIndexLock',
   'scm.hostingRepository.publish',
+  'plugins.scaffold',
+  'plugins.install',
+  'plugins.uninstall',
+  'plugins.reload',
 ] as const satisfies readonly ActionId[];
 
 const RESULT_REQUIRED_APPROVAL_ACTION_ID_SET = new Set<ActionId>(RESULT_REQUIRED_APPROVAL_ACTION_IDS);
@@ -1352,6 +1713,19 @@ const REVIEW_COMMENT_ACTION_SDK_METHODS: Readonly<Record<ReviewCommentActionIdV1
   'reviews.comments.bulkTransition': 'reviews.comments.bulkTransition',
 });
 
+const REVIEW_COMMENT_ACTION_RPC_METHODS: Readonly<Record<ReviewCommentActionIdV1, string>> = Object.freeze({
+  'reviews.comments.create': RPC_METHODS.REVIEW_COMMENTS_CREATE,
+  'reviews.comments.list': RPC_METHODS.REVIEW_COMMENTS_LIST,
+  'reviews.comments.get': RPC_METHODS.REVIEW_COMMENTS_GET,
+  'reviews.comments.transition': RPC_METHODS.REVIEW_COMMENTS_TRANSITION,
+  'reviews.comments.edit': RPC_METHODS.REVIEW_COMMENTS_EDIT,
+  'reviews.comments.reply': RPC_METHODS.REVIEW_COMMENTS_REPLY,
+  'reviews.comments.redact': RPC_METHODS.REVIEW_COMMENTS_REDACT,
+  'reviews.comments.setDisposition': RPC_METHODS.REVIEW_COMMENTS_SET_DISPOSITION,
+  'reviews.comments.attachEvidence': RPC_METHODS.REVIEW_COMMENTS_ATTACH_EVIDENCE,
+  'reviews.comments.bulkTransition': RPC_METHODS.REVIEW_COMMENTS_BULK_TRANSITION,
+});
+
 const PLUGIN_PERMISSION_GRANT_ACTION_TITLES: Readonly<Record<PluginPermissionGrantActionIdV1, string>> = Object.freeze({
   'plugins.permissions.grants.list': 'List plugin permission grants',
   'plugins.permissions.grants.request': 'Request plugin permission grant',
@@ -1359,6 +1733,105 @@ const PLUGIN_PERMISSION_GRANT_ACTION_TITLES: Readonly<Record<PluginPermissionGra
   'plugins.permissions.grants.revoke': 'Revoke plugin permission',
   'plugins.permissions.grants.dismissRequest': 'Dismiss plugin permission request',
 });
+
+const PLUGIN_PERMISSION_GRANT_ACTION_RPC_METHODS: Readonly<Record<PluginPermissionGrantActionIdV1, string>> = Object.freeze({
+  'plugins.permissions.grants.list': RPC_METHODS.PLUGIN_PERMISSION_GRANTS_LIST,
+  'plugins.permissions.grants.request': RPC_METHODS.PLUGIN_PERMISSION_GRANTS_REQUEST,
+  'plugins.permissions.grants.grant': RPC_METHODS.PLUGIN_PERMISSION_GRANTS_GRANT,
+  'plugins.permissions.grants.revoke': RPC_METHODS.PLUGIN_PERMISSION_GRANTS_REVOKE,
+  'plugins.permissions.grants.dismissRequest': RPC_METHODS.PLUGIN_PERMISSION_GRANTS_DISMISS_REQUEST,
+});
+
+const PLUGIN_DEV_LOOP_ACTION_IDS = [
+  'plugins.scaffold',
+  'plugins.install',
+  'plugins.uninstall',
+  'plugins.reload',
+  'plugins.list',
+] as const satisfies readonly ActionId[];
+type PluginDevLoopActionId = typeof PLUGIN_DEV_LOOP_ACTION_IDS[number];
+
+const PluginScaffoldActionInputSchema = z.object({
+  targetDir: z.string().trim().min(1),
+  id: z.string().trim().min(1),
+  name: z.string().trim().min(1),
+  ui: z.enum(['hostedWeb']).optional(),
+}).strict();
+
+const PluginInstallActionInputSchema = z.object({
+  path: z.string().trim().min(1),
+  dev: z.boolean().optional(),
+  dryRun: z.boolean().optional(),
+  force: z.boolean().optional(),
+}).strict();
+
+const PluginUninstallActionInputSchema = z.object({
+  pluginId: z.string().trim().min(1),
+}).strict();
+
+const PluginReloadActionInputSchema = z.object({
+  pluginId: z.string().trim().min(1).optional(),
+}).strict();
+
+const PluginListActionInputSchema = z.object({}).strict();
+
+const PluginDevLoopActionOutputSchema = z.object({
+  ok: z.boolean().optional(),
+}).passthrough();
+
+const PLUGIN_DEV_LOOP_ACTION_TITLES: Readonly<Record<PluginDevLoopActionId, string>> = Object.freeze({
+  'plugins.scaffold': 'Scaffold plugin',
+  'plugins.install': 'Install plugin',
+  'plugins.uninstall': 'Uninstall plugin',
+  'plugins.reload': 'Reload plugin',
+  'plugins.list': 'List plugins',
+});
+
+const PLUGIN_DEV_LOOP_ACTION_DESCRIPTIONS: Readonly<Record<PluginDevLoopActionId, string>> = Object.freeze({
+  'plugins.scaffold': 'Create a local plugin scaffold from the first-party template.',
+  'plugins.install': 'Install a local plugin source and optionally enable the dev reload loop.',
+  'plugins.uninstall': 'Remove a local installed plugin and reload plugin runtime contributions.',
+  'plugins.reload': 'Reload plugin runtime contributions and return diagnostics.',
+  'plugins.list': 'List installed plugins with source and load diagnostics.',
+});
+
+function createPluginDevLoopActionSpec(actionId: PluginDevLoopActionId): ActionSpecWithoutApproval {
+  const isRead = actionId === 'plugins.list';
+  const isInspectorUiAction = actionId === 'plugins.list' || actionId === 'plugins.reload';
+  const inputSchema = actionId === 'plugins.scaffold'
+    ? PluginScaffoldActionInputSchema
+    : actionId === 'plugins.install'
+      ? PluginInstallActionInputSchema
+      : actionId === 'plugins.uninstall'
+        ? PluginUninstallActionInputSchema
+        : actionId === 'plugins.reload'
+          ? PluginReloadActionInputSchema
+          : PluginListActionInputSchema;
+
+  return {
+    id: actionId,
+    title: PLUGIN_DEV_LOOP_ACTION_TITLES[actionId],
+    description: PLUGIN_DEV_LOOP_ACTION_DESCRIPTIONS[actionId],
+    safety: isRead ? 'safe' : 'danger',
+    placements: [],
+    bindings: {
+      mcpToolName: actionId.replaceAll('.', '_'),
+    },
+    surfaces: {
+      ui: isInspectorUiAction,
+      voice: false,
+      agent: true,
+      mcp: true,
+      cli: true,
+      rpc: false,
+      sdk: false,
+    },
+    sideEffectClass: actionId === 'plugins.uninstall' ? 'danger' : isRead ? 'read' : 'write',
+    outputSchema: PluginDevLoopActionOutputSchema,
+    inputSchema,
+    inputHints: { fields: [] },
+  };
+}
 
 function createPluginPermissionGrantActionSpec(actionId: PluginPermissionGrantActionIdV1): ActionSpecWithoutApproval {
   const isRead = actionId === 'plugins.permissions.grants.list';
@@ -1369,13 +1842,13 @@ function createPluginPermissionGrantActionSpec(actionId: PluginPermissionGrantAc
     safety: isRead ? 'safe' : 'danger',
     placements: [],
     bindings: {
-      rpcMethod: actionId,
+      rpcMethod: PLUGIN_PERMISSION_GRANT_ACTION_RPC_METHODS[actionId],
       sdkMethod: actionId,
     },
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -1397,13 +1870,13 @@ function createReviewCommentActionSpec(actionId: ReviewCommentActionIdV1): Actio
     safety: isRead ? 'safe' : 'danger',
     placements: [],
     bindings: {
-      rpcMethod: actionId,
+      rpcMethod: REVIEW_COMMENT_ACTION_RPC_METHODS[actionId],
       sdkMethod: REVIEW_COMMENT_ACTION_SDK_METHODS[actionId],
     },
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -1425,8 +1898,10 @@ function resolveApprovalMetadataForActionId(actionId: ActionId): ActionApproval 
 }
 
 const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Object.freeze([
+  ...PLUGIN_DEV_LOOP_ACTION_IDS.map(createPluginDevLoopActionSpec),
   ...PLUGIN_PERMISSION_GRANT_ACTION_IDS_V1.map(createPluginPermissionGrantActionSpec),
   ...REVIEW_COMMENT_ACTION_IDS_V1.map(createReviewCommentActionSpec),
+  ...RUNTIME_ACTION_SPECS,
   {
     id: 'action.spec.search',
     title: 'Search action specs',
@@ -1441,7 +1916,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: false,
       rpc: false,
@@ -1472,7 +1947,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: false,
       rpc: false,
@@ -1501,7 +1976,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: false,
       rpc: false,
@@ -1597,8 +2072,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     },
     surfaces: {
       ui: true,
-      voice: false,
-      session_agent: true,
+      voice: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -1626,6 +2101,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
           widget: 'multiselect',
           required: true,
           optionsSourceId: 'execution.backends.enabled',
+          maxSelections: 1,
         },
         {
           path: 'instructions',
@@ -1633,6 +2109,27 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
           description: 'What you want the planner(s) to do.',
           widget: 'textarea',
           required: true,
+        },
+        {
+          path: 'modelId',
+          title: 'Model id',
+          description: 'Optional model applied to every started run (same vocabulary as session spawn). Omit for the backend default.',
+          widget: 'text',
+          optionsSourceId: 'agents.models.available',
+        },
+        {
+          path: 'configOptions',
+          title: 'Config options (e.g. reasoning effort)',
+          description: 'Optional agent config-option overrides applied to every started run, e.g. {"reasoning_effort":"high"}. Merged canonically; a conflict with sessionConfigOptionOverrides fails.',
+          widget: 'json',
+          optionsSourceId: 'agents.config_options.available',
+        },
+        {
+          path: 'connectedServicesByBackendTargetKey',
+          title: 'Connected services per target (json)',
+          description: 'Optional connected-services selection per backend target key. Accepts a simple string ("<service>:group:<id>", "<service>:<profileId>", "<service>:native"), an array, or the full object; omitted targets use session-spawn defaulting (literal). Enumerate valid selections via the shared session-spawn options source.',
+          widget: 'textarea',
+          optionsSourceId: 'sessions.spawn.connected_services.available',
         },
       ],
     },
@@ -1642,7 +2139,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
 	    surfaces: {
 	      ui: true,
 	      voice: true,
-	      session_agent: true,
+	      agent: true,
 	      mcp: true,
 	      cli: true,
 	      rpc: false,
@@ -1670,6 +2167,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
           widget: 'multiselect',
           required: true,
           optionsSourceId: 'execution.backends.enabled',
+          maxSelections: 1,
         },
         {
           path: 'instructions',
@@ -1677,6 +2175,27 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
           description: 'What you want the delegate(s) to do.',
           widget: 'textarea',
           required: true,
+        },
+        {
+          path: 'modelId',
+          title: 'Model id',
+          description: 'Optional model applied to every started run (same vocabulary as session spawn). Omit for the backend default.',
+          widget: 'text',
+          optionsSourceId: 'agents.models.available',
+        },
+        {
+          path: 'configOptions',
+          title: 'Config options (e.g. reasoning effort)',
+          description: 'Optional agent config-option overrides applied to every started run, e.g. {"reasoning_effort":"high"}. Merged canonically; a conflict with sessionConfigOptionOverrides fails.',
+          widget: 'json',
+          optionsSourceId: 'agents.config_options.available',
+        },
+        {
+          path: 'connectedServicesByBackendTargetKey',
+          title: 'Connected services per target (json)',
+          description: 'Optional connected-services selection per backend target key. Accepts a simple string ("<service>:group:<id>", "<service>:<profileId>", "<service>:native"), an array, or the full object; omitted targets use session-spawn defaulting (literal). Enumerate valid selections via the shared session-spawn options source.',
+          widget: 'textarea',
+          optionsSourceId: 'sessions.spawn.connected_services.available',
         },
       ],
     },
@@ -1686,7 +2205,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
 	    surfaces: {
 	      ui: true,
 	      voice: true,
-	      session_agent: true,
+	      agent: true,
 	      mcp: true,
 	      cli: true,
 	      rpc: false,
@@ -1713,6 +2232,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
           widget: 'multiselect',
           required: true,
           optionsSourceId: 'execution.backends.enabled',
+          maxSelections: 1,
         },
         {
           path: 'instructions',
@@ -1729,7 +2249,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -1749,7 +2269,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: true,
       mcp: false,
       cli: false,
       rpc: true,
@@ -1778,7 +2298,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -1805,7 +2325,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -1833,7 +2353,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -1863,7 +2383,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -1892,7 +2412,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -1926,7 +2446,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: true,
@@ -1944,6 +2464,27 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'runClass', title: 'Run class', widget: 'text', required: true },
         { path: 'ioMode', title: 'IO mode', widget: 'text', required: true },
         { path: 'initialContextMode', title: 'Initial context mode', widget: 'text' },
+        {
+          path: 'modelId',
+          title: 'Model id',
+          description: 'Optional model for the run backend (same vocabulary as session spawn). Omit for the backend default.',
+          widget: 'text',
+          optionsSourceId: 'agents.models.available',
+        },
+        {
+          path: 'configOptions',
+          title: 'Config options (e.g. reasoning effort)',
+          description: 'Optional agent config-option overrides, e.g. {"reasoning_effort":"high"}. Merged into sessionConfigOptionOverrides at the boundary; a conflict fails with invalid_parameters.',
+          widget: 'json',
+          optionsSourceId: 'agents.config_options.available',
+        },
+        {
+          path: 'connectedServices',
+          title: 'Connected services (json)',
+          description: 'Optional connected-services selection for the run backend. Accepts a simple string ("<service>:group:<id>", "<service>:<profileId>", "<service>:native"), an array, or the full object; omitted = session-spawn defaulting (literal). Enumerate valid selections via the shared session-spawn options source.',
+          widget: 'textarea',
+          optionsSourceId: 'sessions.spawn.connected_services.available',
+        },
       ],
     },
     outputSchema: z.unknown(),
@@ -1984,7 +2525,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
 	    surfaces: {
 	      ui: true,
 	      voice: true,
-	      session_agent: true,
+	      agent: true,
 	      mcp: true,
 	      cli: true,
 	      rpc: true,
@@ -2009,7 +2550,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: true,
@@ -2038,7 +2579,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: true,
@@ -2066,7 +2607,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: false,
       cli: false,
       rpc: true,
@@ -2094,7 +2635,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: false,
       cli: false,
       rpc: true,
@@ -2123,7 +2664,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: false,
       cli: false,
       rpc: true,
@@ -2153,7 +2694,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: false,
       cli: false,
       rpc: true,
@@ -2183,7 +2724,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: false,
       cli: false,
       rpc: true,
@@ -2213,7 +2754,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
 	    surfaces: {
 	      ui: true,
 	      voice: true,
-	      session_agent: true,
+	      agent: true,
 	      mcp: true,
 	      cli: true,
 	      rpc: true,
@@ -2239,7 +2780,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: true,
@@ -2269,7 +2810,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -2299,7 +2840,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: false,
@@ -2329,7 +2870,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -2353,7 +2894,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -2375,12 +2916,12 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     title: 'Rollback conversation',
     description: 'Roll back conversation state in the selected session.',
     safety: 'danger',
-    placements: ['session_action_menu', 'session_info'],
+    placements: [],
     bindings: { rpcMethod: 'session.rollback' },
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -2402,9 +2943,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     placements: [],
     bindings: { rpcMethod: SESSION_RPC_METHODS.SESSION_CHECKPOINT_CODE_ROLLBACK },
     surfaces: {
-      ui: false,
+      ui: true,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -2427,12 +2968,12 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     title: 'Create checkpoint',
     description: 'Create a source-qualified checkpoint for the selected session.',
     safety: 'danger',
-    placements: ['session_action_menu', 'session_info'],
+    placements: [],
     bindings: { rpcMethod: SESSION_RPC_METHODS.SESSION_CHECKPOINT },
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -2454,12 +2995,12 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     title: 'Restore checkpoint',
     description: 'Restore a selected session checkpoint source.',
     safety: 'danger',
-    placements: ['session_action_menu', 'session_info'],
+    placements: [],
     bindings: { rpcMethod: SESSION_RPC_METHODS.SESSION_RESTORE },
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -2490,7 +3031,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -2517,7 +3058,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -2544,7 +3085,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -2567,7 +3108,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -2590,7 +3131,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -2616,7 +3157,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -2639,26 +3180,38 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     examples: {
       voice: { argsExample: '{"tag":"voice-qa","agentId":"claude","modelId":"default","initialMessage":"Help me inspect this workspace."}' },
     },
-	    surfaces: {
-	      ui: true,
-	      voice: true,
-	      session_agent: false,
-	      mcp: true,
-	      cli: true,
-	      rpc: true,
-	      sdk: false,
-	      },
-	    inputHints: {
-	      title: 'Create a new session',
-	      fields: [
-	        { path: 'tag', title: 'Tag', widget: 'text' },
+    surfaces: {
+      ui: true,
+      voice: true,
+      agent: true,
+      mcp: true,
+      cli: true,
+      rpc: true,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Create a new session',
+      fields: [
+        { path: 'tag', title: 'Tag', widget: 'text' },
         { path: 'agentId', title: 'Agent id', widget: 'text' },
-        { path: 'modelId', title: 'Model id', widget: 'text' },
-        { path: 'backendTargetKey', title: 'Backend target key', widget: 'text' },
+        { path: 'modelId', title: 'Model id', widget: 'text', optionsSourceId: 'agents.models.available' },
+        { path: 'providerConnectionId', title: 'Provider connection id', widget: 'text' },
+        { path: 'backendTargetKey', title: 'Backend target key', widget: 'text', optionsSourceId: 'agents.backends.enabled' },
         { path: 'title', title: 'Title', widget: 'text' },
-        { path: 'path', title: 'Path', widget: 'text' },
+        { path: 'path', title: 'Path', widget: 'text', optionsSourceId: 'sessions.spawn.paths.recent' },
+        { path: 'directory', title: 'Directory', widget: 'text', optionsSourceId: 'sessions.spawn.paths.recent' },
         { path: 'host', title: 'Host', widget: 'text' },
+        { path: 'machineId', title: 'Machine id', widget: 'text', optionsSourceId: 'sessions.spawn.machines.available' },
+        { path: 'serverId', title: 'Server id', widget: 'text', optionsSourceId: 'sessions.spawn.servers.available' },
+        { path: 'permissionMode', title: 'Permission mode', widget: 'text' },
+        { path: 'agentModeId', title: 'Agent mode', widget: 'text', optionsSourceId: 'agents.session_modes.available' },
+        { path: 'sessionConfigOptionOverrides', title: 'Config option overrides', widget: 'json', optionsSourceId: 'agents.config_options.available' },
+        { path: 'configOptions', title: 'Config options', widget: 'json', optionsSourceId: 'agents.config_options.available' },
+        { path: 'profileId', title: 'Profile id', widget: 'text', optionsSourceId: 'sessions.spawn.profiles.available' },
+        { path: 'connectedServices', title: 'Connected services', widget: 'json', optionsSourceId: 'sessions.spawn.connected_services.available' },
+        { path: 'mcpSelection', title: 'MCP selection', widget: 'json', optionsSourceId: 'sessions.spawn.mcp_servers.preview' },
         { path: 'initialMessage', title: 'Initial message', widget: 'textarea' },
+        { path: 'initialPrompt', title: 'Initial prompt', widget: 'textarea' },
       ],
     },
     outputSchema: z.unknown(),
@@ -2678,7 +3231,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: false,
+      agent: false,
       mcp: true,
       cli: true,
       rpc: false,
@@ -2690,6 +3243,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'tag', title: 'Tag', widget: 'text' },
         { path: 'agentId', title: 'Agent id', widget: 'text' },
         { path: 'modelId', title: 'Model id', widget: 'text' },
+        { path: 'providerConnectionId', title: 'Provider connection id', widget: 'text' },
         { path: 'backendTargetKey', title: 'Backend target key', widget: 'text' },
         { path: 'initialMessage', title: 'Initial message', widget: 'textarea' },
       ],
@@ -2710,7 +3264,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: false,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -2739,7 +3293,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: false,
+      agent: true,
       mcp: false,
       cli: false,
       rpc: false,
@@ -2765,7 +3319,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: false,
+      agent: true,
       mcp: false,
       cli: false,
       rpc: false,
@@ -2791,7 +3345,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: false,
@@ -2821,7 +3375,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -2852,7 +3406,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -2871,6 +3425,168 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     inputSchema: AgentsModelsListInputSchema,
   },
   {
+    id: 'agents.config_options.list',
+    title: 'List agent config options',
+    description: 'List configurable option definitions for an agent backend without exposing current values.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    prompting: { voiceHotPath: true },
+    bindings: { voiceClientToolName: 'listAgentConfigOptions', mcpToolName: 'agents_config_options_list' },
+    examples: {
+      voice: { argsExample: '{"agentId":"claude","backendTargetKey":"backend:claude","machineId":"{{machineId}}","limit":10}' },
+    },
+    surfaces: {
+      ui: true,
+      voice: true,
+      agent: true,
+      mcp: true,
+      cli: true,
+      rpc: false,
+      sdk: false,
+      },
+    inputHints: {
+      title: 'List agent config options',
+      fields: [
+        { path: 'agentId', title: 'Runtime agent id', widget: 'text' },
+        { path: 'backendTargetKey', title: 'Backend target key', widget: 'text' },
+        { path: 'modelId', title: 'Model id', widget: 'text' },
+        { path: 'machineId', title: 'Machine id (optional)', widget: 'text' },
+        { path: 'limit', title: 'Max results', widget: 'text' },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: AgentsConfigOptionsListInputSchema,
+  },
+  {
+    id: 'agents.session_modes.list',
+    title: 'List agent session modes',
+    description: 'List session modes available for an agent backend.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    prompting: { voiceHotPath: true },
+    bindings: { voiceClientToolName: 'listAgentSessionModes', mcpToolName: 'agents_session_modes_list' },
+    examples: {
+      voice: { argsExample: '{"agentId":"codex","backendTargetKey":"backend:codex","machineId":"{{machineId}}","limit":10}' },
+    },
+    surfaces: {
+      ui: true,
+      voice: true,
+      agent: true,
+      mcp: true,
+      cli: true,
+      rpc: false,
+      sdk: false,
+      },
+    inputHints: {
+      title: 'List agent session modes',
+      fields: [
+        { path: 'agentId', title: 'Runtime agent id', widget: 'text' },
+        { path: 'backendTargetKey', title: 'Backend target key', widget: 'text' },
+        { path: 'machineId', title: 'Machine id (optional)', widget: 'text' },
+        { path: 'limit', title: 'Max results', widget: 'text' },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: AgentSpawnOptionsListInputSchema,
+  },
+  {
+    id: 'sessions.spawn.profiles.list',
+    title: 'List spawn profiles',
+    description: 'List backend profile references available for new sessions without exposing secret bindings.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    prompting: { voiceHotPath: true },
+    bindings: { voiceClientToolName: 'listSpawnProfiles', mcpToolName: 'sessions_spawn_profiles_list' },
+    examples: {
+      voice: { argsExample: '{"agentId":"codex","backendTargetKey":"backend:codex","limit":10}' },
+    },
+    surfaces: {
+      ui: true,
+      voice: true,
+      agent: true,
+      mcp: true,
+      cli: true,
+      rpc: false,
+      sdk: false,
+      },
+    inputHints: {
+      title: 'List spawn profiles',
+      fields: [
+        { path: 'agentId', title: 'Runtime agent id', widget: 'text' },
+        { path: 'backendTargetKey', title: 'Backend target key', widget: 'text' },
+        { path: 'limit', title: 'Max results', widget: 'text' },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: AgentSpawnOptionsListInputSchema,
+  },
+  {
+    id: 'sessions.spawn.connected_services.list',
+    title: 'List spawn connected services',
+    description: 'List connected-service references available for new sessions without exposing credentials.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    prompting: { voiceHotPath: true },
+    bindings: { voiceClientToolName: 'listSpawnConnectedServices', mcpToolName: 'sessions_spawn_connected_services_list' },
+    examples: {
+      voice: { argsExample: '{"agentId":"codex","backendTargetKey":"backend:codex","includeUnavailable":false}' },
+    },
+    surfaces: {
+      ui: true,
+      voice: true,
+      agent: true,
+      mcp: true,
+      cli: true,
+      rpc: false,
+      sdk: false,
+      },
+    inputHints: {
+      title: 'List spawn connected services',
+      fields: [
+        { path: 'agentId', title: 'Runtime agent id', widget: 'text' },
+        { path: 'backendTargetKey', title: 'Backend target key', widget: 'text' },
+        { path: 'includeUnavailable', title: 'Include unavailable', widget: 'toggle' },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: SpawnConnectedServicesListInputSchema,
+  },
+  {
+    id: 'sessions.spawn.mcp_servers.preview',
+    title: 'Preview spawn MCP servers',
+    description: 'Preview MCP servers that would be available to a new session.',
+    safety: 'safe',
+    placements: ['voice_panel'],
+    prompting: { voiceHotPath: true },
+    bindings: { voiceClientToolName: 'previewSpawnMcpServers', mcpToolName: 'sessions_spawn_mcp_servers_preview' },
+    examples: {
+      voice: { argsExample: '{"agentId":"codex","machineId":"{{machineId}}","directory":"{{path}}"}' },
+    },
+    surfaces: {
+      ui: true,
+      voice: true,
+      agent: true,
+      mcp: true,
+      cli: true,
+      rpc: false,
+      sdk: false,
+      },
+    inputHints: {
+      title: 'Preview spawn MCP servers',
+      fields: [
+        { path: 'agentId', title: 'Runtime agent id', widget: 'text' },
+        { path: 'backendTargetKey', title: 'Backend target key', widget: 'text' },
+        { path: 'machineId', title: 'Machine id', widget: 'text' },
+        { path: 'directory', title: 'Directory', widget: 'text' },
+        { path: 'path', title: 'Path', widget: 'text' },
+        { path: 'selection', title: 'Selection', widget: 'json' },
+        { path: 'limit', title: 'Max results', widget: 'text' },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: SpawnMcpServersPreviewInputSchema,
+  },
+  {
     id: 'session.message.send',
     title: 'Send a message to a session',
     description: 'Send a user message to the AI coding assistant inside the specified session.',
@@ -2884,7 +3600,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -2897,6 +3613,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
         { path: 'message', title: 'Message', widget: 'textarea', required: true },
         { path: 'permissionModeOverride', title: 'Permission mode override (optional)', widget: 'text' },
         { path: 'modelOverride', title: 'Model override (optional)', widget: 'text' },
+        { path: 'providerConnectionId', title: 'Provider connection id (optional)', widget: 'text' },
         { path: 'wait', title: 'Wait for idle (optional)', widget: 'toggle' },
         { path: 'timeoutSeconds', title: 'Timeout seconds (optional)', widget: 'text' },
       ],
@@ -2917,7 +3634,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: true,
@@ -2929,6 +3646,39 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     },
     outputSchema: z.unknown(),
     inputSchema: SessionIdRequiredInputSchema,
+  },
+  {
+    id: 'session.terminalComposer.clear',
+    title: 'Clear terminal composer',
+    description: 'Clear the pending terminal composer draft for a session runtime.',
+    safety: 'danger',
+    sideEffectClass: 'danger',
+    placements: ['pending_messages'],
+    bindings: {
+      mcpToolName: 'session_terminal_composer_clear',
+      rpcMethod: SESSION_RPC_METHODS.SESSION_TERMINAL_COMPOSER_CLEAR,
+    },
+    examples: {
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}"}' },
+    },
+    surfaces: {
+      ui: true,
+      voice: false,
+      agent: false,
+      mcp: true,
+      cli: true,
+      rpc: true,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Clear terminal composer',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        { path: 'expectedStateAtMs', title: 'Expected state timestamp', widget: 'text' },
+      ],
+    },
+    outputSchema: SessionTerminalComposerClearResultV1Schema,
+    inputSchema: SessionTerminalComposerClearRequestV1Schema,
   },
   {
     id: 'session.title.set',
@@ -2943,7 +3693,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -2972,7 +3722,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: true,
@@ -3001,7 +3751,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3012,6 +3762,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
         { path: 'modelId', title: 'Model id', widget: 'text', required: true },
+        { path: 'providerConnectionId', title: 'Provider connection id', widget: 'text' },
       ],
     },
     outputSchema: z.unknown(),
@@ -3030,7 +3781,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3056,7 +3807,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3082,7 +3833,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3111,7 +3862,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3137,7 +3888,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3163,7 +3914,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3194,7 +3945,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3220,7 +3971,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3260,7 +4011,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3289,7 +4040,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3330,6 +4081,50 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     inputSchema: SessionUsageLimitCheckNowRequestV1Schema,
   },
   {
+    id: 'session.usageLimit.consumeResetCredit',
+    title: 'Apply usage-limit reset credit',
+    description: 'Ask the session runtime to spend a connected-service reset credit for usage-limit recovery.',
+    safety: 'danger',
+    placements: [],
+    bindings: { mcpToolName: 'session_usage_limit_consume_reset_credit' },
+    examples: {
+      mcp: { argsExample: '{"sessionId":"{{sessionId}}"}' },
+    },
+    surfaces: {
+      ui: true,
+      voice: false,
+      agent: true,
+      mcp: true,
+      cli: true,
+      rpc: false,
+      sdk: false,
+    },
+    inputHints: {
+      title: 'Apply reset credit',
+      fields: [
+        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+        {
+          path: 'provider',
+          title: 'Provider',
+          description: 'Optional provider id for provider-scoped recovery controls.',
+          widget: 'text',
+        },
+        {
+          path: 'resumePromptMode',
+          title: 'Resume prompt mode',
+          widget: 'select',
+          options: [
+            { value: 'standard', label: 'Standard' },
+            { value: 'off', label: 'Off' },
+            { value: 'custom', label: 'Custom' },
+          ],
+        },
+      ],
+    },
+    outputSchema: z.unknown(),
+    inputSchema: SessionUsageLimitConsumeResetCreditRequestV1Schema,
+  },
+  {
     id: 'session.vendor_plugin_catalog.list',
     title: 'List session vendor plugins',
     description: 'List provider-owned vendor plugins available to the session.',
@@ -3342,7 +4137,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3371,7 +4166,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3400,7 +4195,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3441,7 +4236,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3477,7 +4272,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3507,7 +4302,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3537,7 +4332,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: true,
@@ -3580,7 +4375,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: true,
@@ -3653,7 +4448,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3690,7 +4485,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: false,
+      agent: false,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3719,7 +4514,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: false,
+      agent: false,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3746,7 +4541,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3776,7 +4571,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3805,7 +4600,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -3842,7 +4637,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: false,
@@ -3866,7 +4661,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: false,
@@ -3893,7 +4688,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: false,
@@ -3949,7 +4744,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: true,
+      agent: true,
       mcp: false,
       cli: false,
       rpc: false,
@@ -3978,7 +4773,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: true,
+      agent: true,
       mcp: false,
       cli: false,
       rpc: false,
@@ -4009,7 +4804,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: true,
-      session_agent: true,
+      agent: true,
       mcp: false,
       cli: false,
       rpc: false,
@@ -4032,7 +4827,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: false,
@@ -4060,7 +4855,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: false,
@@ -4088,7 +4883,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: false,
@@ -4136,7 +4931,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: false,
@@ -4354,7 +5149,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -4394,7 +5189,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -4420,7 +5215,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: true,
+      agent: true,
       mcp: true,
       cli: true,
       rpc: true,
@@ -4449,7 +5244,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: true,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: true,
       cli: true,
       rpc: true,
@@ -4485,7 +5280,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -4513,7 +5308,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -4542,7 +5337,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -4571,7 +5366,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -4602,7 +5397,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -4615,6 +5410,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
       title: 'Import session transcript rows',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'importId', title: 'Import id', widget: 'text' },
         { path: 'items', title: 'Transcript rows', widget: 'textarea', required: true },
         { path: 'maxItems', title: 'Maximum items', widget: 'text' },
       ],
@@ -4630,7 +5426,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -4665,7 +5461,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -4699,7 +5495,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -4733,7 +5529,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -4768,7 +5564,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -4799,7 +5595,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -4833,7 +5629,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -4867,7 +5663,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -4907,7 +5703,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -4946,7 +5742,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -4984,7 +5780,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -5028,7 +5824,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -5060,7 +5856,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -5094,7 +5890,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -5126,7 +5922,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -5158,7 +5954,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -5200,7 +5996,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -5260,7 +6056,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -5304,7 +6100,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -5334,7 +6130,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -5365,7 +6161,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -5406,7 +6202,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -5491,7 +6287,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly ActionSpecWithoutApproval[] = Obje
     surfaces: {
       ui: false,
       voice: false,
-      session_agent: false,
+      agent: false,
       mcp: false,
       cli: false,
       rpc: true,
@@ -5544,6 +6340,27 @@ export function getActionSpec(id: ActionId): ActionSpec {
     throw new Error(`Unknown action spec: ${id}`);
   }
   return spec;
+}
+
+function actionInputSchemaHasSessionId(spec: Pick<ActionSpec, 'inputSchema'>): boolean {
+  if (!(spec.inputSchema instanceof z.ZodObject)) return false;
+  const shape = spec.inputSchema.shape as Record<string, unknown>;
+  return Object.prototype.hasOwnProperty.call(shape, 'sessionId');
+}
+
+function actionInputHintsDeclareSessionId(spec: Pick<ActionSpec, 'inputHints'>): boolean {
+  return spec.inputHints?.fields.some((field) => field.path === 'sessionId') === true;
+}
+
+export function actionAcceptsContextualSessionId(action: ActionId | string | ActionSpec): boolean {
+  const spec = typeof action === 'string'
+    ? (() => {
+      const parsed = ActionIdSchema.safeParse(action);
+      return parsed.success ? getActionSpec(parsed.data) : null;
+    })()
+    : action;
+  if (!spec) return false;
+  return actionInputSchemaHasSessionId(spec) || actionInputHintsDeclareSessionId(spec);
 }
 
 export function isActionSpecSurfacedOn(spec: ActionSpec, surface: keyof ActionSurfaces | null | undefined): boolean {

@@ -4,29 +4,35 @@ import { searchSerializedActionSpecsForSurface } from './actionCatalog.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { getActionSpec } from './actionSpecs.js';
 import {
+  ACTION_SURFACE_POLICIES,
+  getActionSurfacePolicy,
+  listActionSurfacePolicies,
+  resolveActionSurfaceAvailability,
+} from './actionSurfaceAvailability.js';
+import {
   isActionDirectToolExposedOn,
   isActionDiscoverableOnToolSurface,
   resolveActionToolExposureMode,
 } from './actionToolExposure.js';
 
 describe('actionToolExposure', () => {
-  it('defaults first-party session-agent action-backed tools to discoverable-only unless allow-listed', () => {
+  it('defaults first-party agent action-backed tools to discoverable-only unless allow-listed', () => {
     for (const id of ['review.start', 'subagents.delegate.start', 'execution.run.start', 'session.status.get'] as const) {
       const spec = getActionSpec(id);
 
-      expect(resolveActionToolExposureMode(spec, 'session_agent')).toBe('discoverable_only');
-      expect(isActionDirectToolExposedOn(spec, 'session_agent')).toBe(false);
-      expect(isActionDiscoverableOnToolSurface(spec, 'session_agent')).toBe(true);
+      expect(resolveActionToolExposureMode(spec, 'agent')).toBe('discoverable_only');
+      expect(isActionDirectToolExposedOn(spec, 'agent')).toBe(false);
+      expect(isActionDiscoverableOnToolSurface(spec, 'agent')).toBe(true);
     }
   });
 
-  it('keeps session-agent action discovery bootstrap specs directly exposed', () => {
+  it('keeps agent action discovery bootstrap specs directly exposed', () => {
     for (const id of ['action.spec.search', 'action.spec.get', 'action.options.resolve'] as const) {
       const spec = getActionSpec(id);
 
-      expect(resolveActionToolExposureMode(spec, 'session_agent')).toBe('direct');
-      expect(isActionDirectToolExposedOn(spec, 'session_agent')).toBe(true);
-      expect(isActionDiscoverableOnToolSurface(spec, 'session_agent')).toBe(true);
+      expect(resolveActionToolExposureMode(spec, 'agent')).toBe('direct');
+      expect(isActionDirectToolExposedOn(spec, 'agent')).toBe(true);
+      expect(isActionDiscoverableOnToolSurface(spec, 'agent')).toBe(true);
     }
   });
 
@@ -45,7 +51,7 @@ describe('actionToolExposure', () => {
       actions: {
         'subagents.delegate.start': {
           toolExposureModes: {
-            session_agent: 'direct',
+            agent: 'direct',
             mcp: 'discoverable_only',
           },
         },
@@ -53,8 +59,8 @@ describe('actionToolExposure', () => {
     });
     const spec = getActionSpec('subagents.delegate.start');
 
-    expect(resolveActionToolExposureMode(spec, 'session_agent', { settings })).toBe('direct');
-    expect(isActionDirectToolExposedOn(spec, 'session_agent', { settings })).toBe(true);
+    expect(resolveActionToolExposureMode(spec, 'agent', { settings })).toBe('direct');
+    expect(isActionDirectToolExposedOn(spec, 'agent', { settings })).toBe(true);
     expect(resolveActionToolExposureMode(spec, 'mcp', { settings })).toBe('discoverable_only');
     expect(isActionDirectToolExposedOn(spec, 'mcp', { settings })).toBe(false);
     expect(isActionDiscoverableOnToolSurface(spec, 'mcp', { settings })).toBe(true);
@@ -66,22 +72,102 @@ describe('actionToolExposure', () => {
       v: 1,
       actions: {
         'subagents.delegate.start': {
-          disabledSurfaces: ['session_agent'],
+          disabledSurfaces: ['agent'],
           toolExposureModes: {
-            session_agent: 'direct',
+            agent: 'direct',
           },
         },
       },
     });
     const spec = getActionSpec('subagents.delegate.start');
 
-    expect(isActionDirectToolExposedOn(spec, 'session_agent', { settings })).toBe(false);
-    expect(isActionDiscoverableOnToolSurface(spec, 'session_agent', { settings })).toBe(false);
+    expect(isActionDirectToolExposedOn(spec, 'agent', { settings })).toBe(false);
+    expect(isActionDiscoverableOnToolSurface(spec, 'agent', { settings })).toBe(false);
   });
 
-  it('keeps discoverable-only session-agent actions in action search results', () => {
+  it('returns structured first-party availability reasons for settings, surface, and policy denials', () => {
+    const settings = ActionsSettingsV1Schema.parse({
+      v: 1,
+      actions: {
+        'session.title.set': {
+          disabledSurfaces: ['agent'],
+        },
+      },
+    });
+
+    expect(resolveActionSurfaceAvailability({
+      actionId: 'session.spawn_new',
+      surface: 'agent',
+    })).toEqual(expect.objectContaining({
+      available: true,
+      reason: 'available',
+      actionId: 'session.spawn_new',
+      surface: 'agent',
+      defaultToolExposureMode: 'discoverable_only',
+      effectiveToolExposureMode: 'discoverable_only',
+    }));
+    expect(resolveActionSurfaceAvailability({
+      actionId: 'session.spawn_picker',
+      surface: 'agent',
+    })).toEqual(expect.objectContaining({
+      available: false,
+      reason: 'unsupported_surface',
+      availableSurfaces: expect.arrayContaining(['mcp', 'cli']),
+    }));
+    expect(resolveActionSurfaceAvailability({
+      actionId: 'session.title.set',
+      surface: 'agent',
+      settings,
+    })).toEqual(expect.objectContaining({
+      available: false,
+      reason: 'disabled_by_settings',
+      settingsState: 'disabled',
+    }));
+    expect(resolveActionSurfaceAvailability({
+      actionId: 'session.title.set',
+      surface: 'agent',
+      isActionEnabled: () => false,
+    })).toEqual(expect.objectContaining({
+      available: false,
+      reason: 'disabled_by_policy',
+    }));
+  });
+
+  it('keeps direct tool binding checks separate from discoverable availability', () => {
+    expect(resolveActionSurfaceAvailability({
+      actionId: 'execution.run.ensure',
+      surface: 'agent',
+      requireToolBinding: true,
+    })).toEqual(expect.objectContaining({
+      available: false,
+      reason: 'missing_tool_binding',
+    }));
+  });
+
+  it('explicitly classifies every action surface for settings configurability', () => {
+    expect(listActionSurfacePolicies().map((policy) => policy.surface)).toEqual([
+      'ui',
+      'voice',
+      'agent',
+      'mcp',
+      'cli',
+      'rpc',
+      'sdk',
+    ]);
+    expect(getActionSurfacePolicy('rpc')).toEqual(expect.objectContaining({
+      settingsConfigurable: false,
+      classification: 'internal',
+    }));
+    expect(getActionSurfacePolicy('sdk')).toEqual(expect.objectContaining({
+      settingsConfigurable: false,
+      classification: 'internal',
+    }));
+    expect(ACTION_SURFACE_POLICIES.every((policy) => typeof policy.settingsConfigurable === 'boolean')).toBe(true);
+  });
+
+  it('keeps discoverable-only agent actions in action search results', () => {
     const results = searchSerializedActionSpecsForSurface({
-      surface: 'session_agent',
+      surface: 'agent',
       query: 'delegate',
       limit: 10,
     });

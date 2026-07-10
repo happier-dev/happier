@@ -16,12 +16,12 @@ describe('ActionsSettingsV1Schema', () => {
           disabledPlacements: ['command_palette'],
           approvalRequiredSurfaces: ['cli'],
           toolExposureModes: {
-            session_agent: 'direct',
+            agent: 'direct',
             mcp: 'discoverable_only',
           },
         },
         'subagents.delegate.start': {
-          disabledSurfaces: ['session_agent'],
+          disabledSurfaces: ['agent'],
           enabledPlacements: ['agent_input_chips'],
         },
         'unknown.action': {
@@ -42,14 +42,14 @@ describe('ActionsSettingsV1Schema', () => {
     // Opt-in placement: disabled by default unless explicitly enabled.
     expect(isActionEnabledByActionsSettings('subagents.delegate.start' as any, parsed, { placement: 'agent_input_chips' } as any)).toBe(true);
 
-    // Per-surface disablement should support the session agent surface.
-    expect(isActionEnabledByActionsSettings('subagents.delegate.start' as any, parsed, { surface: 'session_agent' } as any)).toBe(false);
+    // Per-surface disablement should support the agent surface.
+    expect(isActionEnabledByActionsSettings('subagents.delegate.start' as any, parsed, { surface: 'agent' } as any)).toBe(false);
 
     // Ensure action ids remain the canonical ActionId schema.
     expect(() => ActionIdSchema.parse('review.start')).not.toThrow();
 
     expect(parsed.actions['subagents.plan.start' as keyof typeof parsed.actions].toolExposureModes).toEqual({
-      session_agent: 'direct',
+      agent: 'direct',
       mcp: 'discoverable_only',
     });
   });
@@ -115,7 +115,7 @@ describe('ActionsSettingsV1Schema', () => {
       actions: {
         'subagents.delegate.start': {
           toolExposureModes: {
-            session_agent: 'direct',
+            agent: 'direct',
             mcp: 'discoverable_only',
             cli: 'direct',
             ui: 'direct',
@@ -129,7 +129,7 @@ describe('ActionsSettingsV1Schema', () => {
     });
 
     expect(parsed.actions['subagents.delegate.start' as keyof typeof parsed.actions].toolExposureModes).toEqual({
-      session_agent: 'direct',
+      agent: 'direct',
       mcp: 'discoverable_only',
       cli: 'direct',
     });

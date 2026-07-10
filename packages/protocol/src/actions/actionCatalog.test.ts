@@ -44,7 +44,7 @@ describe('actionCatalog action-definition adapter', () => {
       surfaces: {
         ui: false,
         voice: false,
-        session_agent: true,
+        agent: true,
         mcp: true,
         cli: false,
         rpc: true,

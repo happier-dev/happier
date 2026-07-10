@@ -50,7 +50,7 @@ describe('createActionExecutor (prompt library actions)', () => {
       title: 'Review prompt',
       markdown: '# Review',
       tags: ['review'],
-    });
+    }, { surface: 'ui' });
 
     expect(res).toEqual({ ok: true, result: { ok: true, artifactId: 'doc-1' } });
     expect(promptDocUpdate).toHaveBeenCalledWith({

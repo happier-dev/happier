@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildBackendTargetKeyV2 } from '../backendTargets/backendTargetRefV2.js';
+import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 import { resolveActionBackendTargetSelection } from './resolveActionBackendTargetSelection.js';
 
 describe('resolveActionBackendTargetSelection (RU-02 customAcp ingress-only)', () => {
@@ -84,6 +84,35 @@ describe('resolveActionBackendTargetSelection (RU-02 customAcp ingress-only)', (
       ok: false,
       message: 'agentId is required when backendTargetKey needs an explicit runtime carrier',
       path: 'agentId',
+    });
+  });
+
+  it('infers the runtime carrier for first-party Antigravity backend keys', () => {
+    const backendTargetKey = buildBackendTargetKeyV2({
+      kind: 'backend',
+      backendId: 'antigravity',
+      sourceKind: 'built_in',
+    });
+
+    const res = resolveActionBackendTargetSelection({
+      backendTargetKey,
+    });
+
+    expect(res).toEqual({
+      ok: true,
+      selection: {
+        agentId: 'antigravity',
+        backendTargetKey,
+        backendTarget: {
+          kind: 'builtInAgent',
+          agentId: 'antigravity',
+        },
+        canonicalBackendTarget: {
+          kind: 'backend',
+          backendId: 'antigravity',
+          sourceKind: 'built_in',
+        },
+      },
     });
   });
 });

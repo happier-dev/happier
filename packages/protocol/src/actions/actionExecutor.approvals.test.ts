@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ApprovalRequestV1 } from '../approvals/approvalRequestV1.js';
 import { getActionSpec } from './actionSpecs.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
+import { ActionsSettingsV1Schema } from './actionSettings.js';
+
+const defaultActionsSettings = ActionsSettingsV1Schema.parse({ v: 1 });
 
 function createApprovalRequest(
   status: ApprovalRequestV1['status'] = 'open',
@@ -86,6 +90,38 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor (approvals)', () => {
+  it('routes plugin dev-loop actions through one executor dependency on the agent surface', async () => {
+    const pluginsDevLoopAction = vi.fn(async ({ actionId }) => ({
+      kind: actionId,
+      ok: true,
+    }));
+    const executor = createExecutor({ pluginsDevLoopAction } as any);
+
+    for (const [actionId, input] of [
+      ['plugins.list', {}],
+      ['plugins.uninstall', { pluginId: 'acme.dev-loop' }],
+    ] as const) {
+      const result = await executor.execute(
+        actionId as any,
+        input,
+        { surface: 'agent' as any, bypassApprovals: true },
+      );
+
+      expect(result).toEqual({
+        ok: true,
+        result: {
+          kind: actionId,
+          ok: true,
+        },
+      });
+      expect(pluginsDevLoopAction).toHaveBeenCalledWith({
+        actionId,
+        input,
+        context: expect.objectContaining({ surface: 'agent' }),
+      });
+    }
+  });
+
   it('lists approval requests through the bounded approval artifact store dependency', async () => {
     const approvalsList = vi.fn(async () => ({
       items: [
@@ -176,7 +212,16 @@ describe('createActionExecutor (approvals)', () => {
       { surface: 'mcp' },
     );
 
-    expect(res).toEqual({ ok: false, errorCode: 'action_disabled', error: 'action_disabled' });
+    expect(res).toEqual(expect.objectContaining({
+      ok: false,
+      errorCode: 'action_disabled',
+      error: 'action_disabled',
+      details: expect.objectContaining({
+        actionId: 'ui.voice_global.reset',
+        surface: 'mcp',
+        reason: 'unsupported_surface',
+      }),
+    }));
     expect(approvalsCreate).not.toHaveBeenCalled();
   });
 
@@ -209,6 +254,68 @@ describe('createActionExecutor (approvals)', () => {
     expect((res as any).result?.artifactId).toBe('a1');
   });
 
+  it('uses host-provided approval preview metadata for plugin installs', async () => {
+    const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
+    const buildApprovalPreview = vi.fn(async ({ actionId, input, defaultPreview }) => ({
+      ...defaultPreview,
+      pluginInstall: {
+        actionId,
+        path: (input as any).path,
+        plugin: {
+          id: 'acme.dev-loop',
+          version: '1.0.0',
+          title: 'Acme Dev Loop',
+        },
+        provenance: {
+          sourceKind: 'path',
+          manifestDigest: 'sha256:manifest',
+        },
+        permissions: {
+          required: ['network'],
+          optional: ['filesystem.read'],
+        },
+      },
+    }));
+    const executor = createExecutor({
+      approvalsCreate,
+      buildApprovalPreview,
+      isActionApprovalRequired: (actionId, ctx) => actionId === 'plugins.install' && ctx.surface === 'agent',
+    } as any);
+
+    const res = await executor.execute(
+      'plugins.install' as any,
+      { path: '/tmp/acme-dev-loop', dev: true },
+      { surface: 'agent' as any },
+    );
+
+    expect(res.ok).toBe(true);
+    expect(buildApprovalPreview).toHaveBeenCalledWith({
+      actionId: 'plugins.install',
+      input: { path: '/tmp/acme-dev-loop', dev: true },
+      context: expect.objectContaining({ surface: 'agent' }),
+      defaultPreview: { actionId: 'plugins.install', actionArgs: { path: '/tmp/acme-dev-loop', dev: true } },
+    });
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        actionId: 'plugins.install',
+        preview: expect.objectContaining({
+          pluginInstall: expect.objectContaining({
+            plugin: {
+              id: 'acme.dev-loop',
+              version: '1.0.0',
+              title: 'Acme Dev Loop',
+            },
+            provenance: expect.objectContaining({ manifestDigest: 'sha256:manifest' }),
+            permissions: {
+              required: ['network'],
+              optional: ['filesystem.read'],
+            },
+          }),
+        }),
+      }),
+    }));
+  });
+
   it('records transcript tool-call origin metadata on policy-created approvals', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
     const sessionSendMessage = vi.fn(async () => ({ ok: true }));
@@ -216,14 +323,14 @@ describe('createActionExecutor (approvals)', () => {
     const executor = createExecutor({
       approvalsCreate,
       sessionSendMessage,
-      isActionApprovalRequired: (actionId, ctx) => actionId === 'session.message.send' && ctx.surface === 'session_agent',
+      isActionApprovalRequired: (actionId, ctx) => actionId === 'session.message.send' && ctx.surface === 'agent',
     } as any);
 
     const res = await executor.execute(
       'session.message.send' as any,
       { sessionId: 's1', message: 'hello' },
       {
-        surface: 'session_agent',
+        surface: 'agent',
         defaultSessionId: 's1',
         approvalOrigin: {
           kind: 'transcript_tool_call',
@@ -258,14 +365,14 @@ describe('createActionExecutor (approvals)', () => {
     const executor = createExecutor({
       approvalsCreate,
       sessionSendMessage,
-      isActionApprovalRequired: (actionId, ctx) => actionId === 'session.message.send' && ctx.surface === 'session_agent',
+      isActionApprovalRequired: (actionId, ctx) => actionId === 'session.message.send' && ctx.surface === 'agent',
     } as any);
 
     const res = await executor.execute(
       'session.message.send' as any,
       { sessionId: 'target-session', message: 'hello target' },
       {
-        surface: 'session_agent',
+        surface: 'agent',
         defaultSessionId: 'requesting-session',
         approvalOrigin: {
           kind: 'transcript_tool_call',
@@ -284,7 +391,7 @@ describe('createActionExecutor (approvals)', () => {
         actionId: 'session.message.send',
         actionArgs: expect.objectContaining({ sessionId: 'target-session' }),
         createdBy: expect.objectContaining({
-          surface: 'session_agent',
+          surface: 'agent',
           sessionId: 'requesting-session',
         }),
         origin: expect.objectContaining({
@@ -685,7 +792,7 @@ describe('createActionExecutor (approvals)', () => {
       summary: 'Send message',
       createdBy: { surface: 'system' },
     }, {
-      surface: 'session_agent',
+      surface: 'agent',
       defaultSessionId: 's1',
       approvalOrigin: {
         kind: 'transcript_tool_call',
@@ -1115,8 +1222,8 @@ describe('createActionExecutor (approvals)', () => {
 
   it('does not bypass per-surface disablement when executing approved actions', async () => {
     const approvalsGet = vi.fn(async () => createApprovalRequest('open', {
-      createdBy: { surface: 'session_agent', sessionId: 's1' },
-      requestedSurface: 'session_agent',
+      createdBy: { surface: 'system', sessionId: 's1' },
+      requestedSurface: 'agent',
     }));
     const approvalsUpdate = vi.fn(async () => ({ ok: true as const }));
     const sessionSendMessage = vi.fn(async () => ({ ok: true }));
@@ -1125,7 +1232,7 @@ describe('createActionExecutor (approvals)', () => {
       approvalsGet,
       approvalsUpdate,
       sessionSendMessage,
-      isActionEnabled: (_id, ctx) => ctx.surface !== 'session_agent',
+      isActionEnabled: (_id, ctx) => ctx.surface !== 'agent',
     });
 
     const res = await executor.execute('approval.request.decide' as any, {
@@ -1298,5 +1405,147 @@ describe('createActionExecutor (approvals)', () => {
     });
     expect(sessionSendMessage).toHaveBeenCalledTimes(1);
     expect(approvalsUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  // FINALIZATION-PLAN §3.2 activation proof: after the per-family `RUNTIME_ACTION_DISABLED_SURFACES`
+  // flip, a dangerous AGENT-initiated runtime action now passes the enablement gate and REACHES the
+  // surface-keyed approval floor (`AGENT_INITIATED_APPROVAL_REQUIRED_ACTION_IDS`, wired through the
+  // real `isApprovalRequiredByActionsSettings`) — it is no longer short-circuited by `action_disabled`
+  // (finding #31). User-initiated forms execute the runtime directly with no prompt.
+  describe('§3.2 agent-approval activation (runtime families flipped on agent)', () => {
+    // `browser.context.capturePage` is approval-floored for `agent` AND in
+    // RESULT_REQUIRED → a `blocking` approval flow, so the executor waits for a decision. We
+    // resolve the decision deterministically per-test to prove the routing path.
+    const wireApprovalFloor = (
+      runtimeActionExecute: ReturnType<typeof vi.fn>,
+      approvalsCreate: ReturnType<typeof vi.fn>,
+      decision: 'approve' | 'reject' = 'reject',
+    ) =>
+      createExecutor({
+        runtimeActionExecute,
+        approvalsCreate,
+        approvalsWaitForDecision: vi.fn(async ({ request }: any) => ({
+          decision,
+          request: {
+            ...request,
+            status: decision === 'approve' ? 'approved' : 'rejected',
+            decision: { kind: decision === 'approve' ? 'approve' : 'reject', decidedAtMs: 2 },
+          },
+        })),
+        approvalsUpdate: vi.fn(async () => ({ ok: true })),
+        // Wire the REAL surface-keyed approval floor exactly as the production default executor
+        // does, with no persisted overrides — the dangerous agent subset must still be gated.
+        isActionApprovalRequired: (actionId, ctx) =>
+          isApprovalRequiredByActionsSettings(actionId, defaultActionsSettings, ctx),
+      } as any);
+
+    it('routes an agent-initiated dangerous capture to the approval gate (not action_disabled)', async () => {
+      const runtimeActionExecute = vi.fn(async () => ({ captured: true }));
+      const approvalsCreate = vi.fn(async () => ({ artifactId: 'cap-1' }));
+      const executor = wireApprovalFloor(runtimeActionExecute, approvalsCreate, 'reject');
+
+      const res = await executor.execute(
+        'browser.context.capturePage' as any,
+        { browserSessionId: 'bs1', viewId: 'v1' },
+        { surface: 'agent', defaultSessionId: 's1' },
+      );
+
+      // Reaches the APPROVAL gate (NOT the disabled gate); rejected → runtime never runs. This is
+      // the §3.2 activation proof: pre-flip this would have short-circuited to `action_disabled`.
+      expect((res as any).errorCode).toBe('approval_rejected');
+      expect(approvalsCreate).toHaveBeenCalledTimes(1);
+      expect(runtimeActionExecute).not.toHaveBeenCalled();
+    });
+
+    it('runs the runtime executor for an agent capture once approval is granted', async () => {
+      const runtimeActionExecute = vi.fn(async () => ({ captured: true }));
+      const approvalsCreate = vi.fn(async () => ({ artifactId: 'cap-3' }));
+      const executor = wireApprovalFloor(runtimeActionExecute, approvalsCreate, 'approve');
+
+      const res = await executor.execute(
+        'browser.context.capturePage' as any,
+        { browserSessionId: 'bs1', viewId: 'v1' },
+        { surface: 'agent', defaultSessionId: 's1' },
+      );
+
+      expect(res).toEqual({ ok: true, result: { captured: true } });
+      expect(approvalsCreate).toHaveBeenCalledTimes(1);
+      expect(runtimeActionExecute).toHaveBeenCalledTimes(1);
+    });
+
+    it('executes the same capture user-initiated (ui) with no approval prompt', async () => {
+      const runtimeActionExecute = vi.fn(async () => ({ captured: true }));
+      const approvalsCreate = vi.fn(async () => ({ artifactId: 'cap-2' }));
+      const executor = wireApprovalFloor(runtimeActionExecute, approvalsCreate, 'reject');
+
+      const res = await executor.execute(
+        'browser.context.capturePage' as any,
+        { browserSessionId: 'bs1', viewId: 'v1' },
+        { surface: 'ui', defaultSessionId: 's1' },
+      );
+
+      expect(res).toEqual({ ok: true, result: { captured: true } });
+      expect(runtimeActionExecute).toHaveBeenCalledTimes(1);
+      expect(approvalsCreate).not.toHaveBeenCalled();
+    });
+
+    it('routes agent-initiated browser context attach to approvals by default', async () => {
+      const runtimeActionExecute = vi.fn(async () => ({ attached: true }));
+      const approvalsCreate = vi.fn(async () => ({ artifactId: 'attach-1' }));
+      const executor = wireApprovalFloor(runtimeActionExecute, approvalsCreate, 'reject');
+
+      const res = await executor.execute(
+        'browser.context.attachToComposer' as any,
+        { browserSessionId: 'bs1', viewId: 'v1' },
+        { surface: 'agent', defaultSessionId: 's1' },
+      );
+
+      expect((res as any).errorCode).toBe('approval_rejected');
+      expect(approvalsCreate).toHaveBeenCalledTimes(1);
+      expect(runtimeActionExecute).not.toHaveBeenCalled();
+    });
+
+    it('keeps user-initiated browser context attach unprompted', async () => {
+      const runtimeActionExecute = vi.fn(async () => ({ attached: true }));
+      const approvalsCreate = vi.fn(async () => ({ artifactId: 'attach-2' }));
+      const executor = wireApprovalFloor(runtimeActionExecute, approvalsCreate, 'reject');
+
+      const res = await executor.execute(
+        'browser.context.attachToComposer' as any,
+        { browserSessionId: 'bs1', viewId: 'v1' },
+        { surface: 'ui', defaultSessionId: 's1' },
+      );
+
+      expect(res).toEqual({ ok: true, result: { attached: true } });
+      expect(runtimeActionExecute).toHaveBeenCalledTimes(1);
+      expect(approvalsCreate).not.toHaveBeenCalled();
+    });
+
+    it('still fail-closes an unsurfaced runtime action on agent (devices.simulator.input.orientation)', async () => {
+      const runtimeActionExecute = vi.fn(async () => ({ ok: true }));
+      const approvalsCreate = vi.fn(async () => ({ artifactId: 'd-1' }));
+      const executor = wireApprovalFloor(runtimeActionExecute, approvalsCreate, 'reject');
+
+      const res = await executor.execute(
+        'devices.simulator.input.orientation' as any,
+        { type: 'simulator.input.orientation', orientation: 'landscapeLeft' },
+        { surface: 'agent', defaultSessionId: 's1' },
+      );
+
+      // Statically-unbacked (no producer) → UNSURFACED on every surface; the approval gate is never
+      // reached. (The browser-diagnostics interaction verbs are now executor-backed and surfaced.)
+      expect(res).toEqual(expect.objectContaining({
+        ok: false,
+        errorCode: 'action_disabled',
+        error: 'action_disabled',
+        details: expect.objectContaining({
+          actionId: 'devices.simulator.input.orientation',
+          surface: 'agent',
+          reason: 'unsupported_surface',
+        }),
+      }));
+      expect(approvalsCreate).not.toHaveBeenCalled();
+      expect(runtimeActionExecute).not.toHaveBeenCalled();
+    });
   });
 });

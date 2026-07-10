@@ -14,7 +14,7 @@ const ActionSurfaceKeySchema = ActionSurfaceSchema.keyof();
 export type ActionSurfaceKey = z.infer<typeof ActionSurfaceKeySchema>;
 export const ACTION_SETTINGS_OPT_IN_PLACEMENTS = ['agent_input_chips'] as const satisfies readonly ActionUiPlacement[];
 const ACTION_SETTINGS_OPT_IN_PLACEMENT_SET = new Set<ActionUiPlacement>(ACTION_SETTINGS_OPT_IN_PLACEMENTS);
-const ACTION_TOOL_EXPOSURE_MODE_KEYS = ['session_agent', 'mcp', 'cli'] as const satisfies readonly ActionToolExposureSurface[];
+const ACTION_TOOL_EXPOSURE_MODE_KEYS = ['agent', 'mcp', 'cli'] as const satisfies readonly ActionToolExposureSurface[];
 const ACTION_TOOL_EXPOSURE_MODE_KEY_SET = new Set<string>(ACTION_TOOL_EXPOSURE_MODE_KEYS);
 const BROAD_ACTION_SURFACE_KEYS = new Set<ActionSurfaceKey>(ActionSurfaceKeySchema.options);
 // A.6 tolerant read-on-load shim for pre-broad-surface persisted settings.
@@ -66,7 +66,7 @@ const ActionSettingsToolExposureModesSchema = z.preprocess(
   normalizeActionToolExposureModes,
   z
     .object({
-      session_agent: ActionToolExposureModeSchema.optional(),
+      agent: ActionToolExposureModeSchema.optional(),
       mcp: ActionToolExposureModeSchema.optional(),
       cli: ActionToolExposureModeSchema.optional(),
     })

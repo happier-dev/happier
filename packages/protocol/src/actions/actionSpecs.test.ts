@@ -2,11 +2,126 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import * as protocol from '../index.js';
-import { RPC_METHODS, SESSION_RPC_METHODS } from '../rpc.js';
-import { ExecutionRunIntentSchema } from '../executionRuns.js';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '../rpc/index.js';
+import { ExecutionRunIntentSchema } from '../execution/runs/index.js';
 import { serializeActionSpec } from './actionCatalog.js';
-import { ActionSpecSchema, ActionSurfaceSchema, getActionSpec, isActionSpecSurfacedOn, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs } from './actionSpecs.js';
-import type { ActionId } from './actionIds.js';
+import { ActionSpecSchema, ActionSurfaceSchema, actionAcceptsContextualSessionId, getActionSpec, isActionSpecSurfacedOn, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs, resolveRuntimeActionHostEffectClass } from './actionSpecs.js';
+import { ActionIdSchema, RuntimeActionIdV1Schema, type ActionId } from './actionIds.js';
+
+const RETIRED_UNBACKED_RUNTIME_ACTION_IDS = [
+  'browser.automation.evaluate',
+  'browser.automation.elementPicker.start',
+  'browser.automation.elementPicker.cancel',
+  'devices.simulator.stream.open',
+  'devices.simulator.stream.close',
+] as const;
+
+const RUNTIME_ACTION_IDS = [
+  'browser.session.create',
+  'browser.session.close',
+  'browser.view.open',
+  'browser.view.close',
+  'browser.view.focus',
+  'browser.target.set',
+  'browser.navigate',
+  'browser.reload',
+  'browser.goBack',
+  'browser.goForward',
+  'browser.stop',
+  'browser.diagnostics.snapshot',
+  'browser.diagnostics.clear',
+  'browser.diagnostics.pause',
+  'browser.diagnostics.resume',
+  'browser.diagnostics.eval',
+  'browser.diagnostics.getProperties',
+  'browser.diagnostics.releaseObjectGroup',
+  'browser.diagnostics.elementPicker.start',
+  'browser.diagnostics.elementPicker.cancel',
+  'browser.context.capturePage',
+  'browser.context.captureScreenshot',
+  'browser.context.captureSelectedElement',
+  'browser.context.captureNetworkSummary',
+  'browser.context.captureConsoleSummary',
+  'browser.context.annotation.start',
+  'browser.context.annotation.cancel',
+  'browser.context.annotation.captureRegion',
+  'browser.context.annotation.captureElement',
+  'browser.context.annotation.attachComment',
+  'browser.context.annotation.attachStroke',
+  'browser.context.annotation.attachStyleIntent',
+  'browser.context.attachToComposer',
+  'browser.context.attachToAgentTurn',
+  'browser.context.clear',
+  'browser.automation.status',
+  'browser.automation.snapshot',
+  'browser.automation.semanticSnapshot',
+  'browser.automation.queryElements',
+  'browser.automation.waitFor',
+  'browser.automation.timeline.get',
+  'browser.automation.cancelActive',
+  'browser.automation.navigate',
+  'browser.automation.reload',
+  'browser.automation.goBack',
+  'browser.automation.goForward',
+  'browser.automation.click',
+  'browser.automation.tap',
+  'browser.automation.type',
+  'browser.automation.press',
+  'browser.automation.scroll',
+  'browser.automation.hover',
+  'browser.automation.focus',
+  'browser.automation.select',
+  'browser.automation.setValue',
+  'browser.recording.start',
+  'browser.recording.stop',
+  'browser.recording.cancel',
+  'browser.recording.status',
+  'browser.recording.listForView',
+  'browser.recording.discard',
+  'browser.recording.cleanupExpired',
+  'browser.recording.attachToComposer',
+  'localServices.inventory.list',
+  'localServices.inventory.refresh',
+  'localServices.launcher.snapshot',
+  'localServices.launcher.start',
+  'localServices.launcher.openPreview',
+  'localServices.launcher.registerPreview',
+  'localServices.launcher.history.clear',
+  'localServices.preview.openOrCreate',
+  'localServices.preview.status',
+  'localServices.preview.revoke',
+  'localServices.publicPreview.create',
+  'localServices.publicPreview.status',
+  'localServices.publicPreview.revoke',
+  'localServices.publicPreview.copyUrl',
+  'localServices.actions.copyUrl',
+  'localServices.actions.openPreview',
+  'localServices.actions.forget',
+  'localServices.actions.stopManaged',
+  'localServices.actions.restartManaged',
+  'localServices.actions.terminateDetected',
+  'peerMediation.observability.snapshot',
+  'peerMediation.observability.subscribe',
+  'peerMediation.observability.unsubscribe',
+  'devices.simulator.list',
+  'devices.simulator.stream.keyframe',
+  'devices.simulator.stream.snapshot',
+  'devices.simulator.stream.quality.set',
+  'devices.simulator.stream.fps.set',
+  'devices.simulator.stream.scale.set',
+  'devices.simulator.lease.acquire',
+  'devices.simulator.lease.renew',
+  'devices.simulator.lease.release',
+  'devices.simulator.input.tap',
+  'devices.simulator.input.swipe',
+  'devices.simulator.input.text',
+  'devices.simulator.input.key',
+  'devices.simulator.input.button',
+  'devices.simulator.input.orientation',
+  'devices.simulator.input.pinch',
+  'devices.simulator.input.rotate',
+  'devices.simulator.sideband.request',
+] as const;
 
 const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'action.spec.search',
@@ -27,10 +142,14 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'review.engines.list',
   'agents.backends.list',
   'agents.models.list',
+  'agents.config_options.list',
+  'agents.session_modes.list',
   'session.status.get',
   'session.work_state.get',
   'session.goal.get',
   'session.usageLimit.checkNow',
+  'session.usageLimit.consumeResetCredit',
+  'session.terminalComposer.clear',
   'session.vendor_plugin_catalog.list',
   'session.skill_catalog.list',
   'session.history.get',
@@ -55,6 +174,7 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'approval.request.list',
   'approval.request.get',
   'plugins.permissions.grants.list',
+  'plugins.list',
   'session.log.tail',
   'transcript.page',
   'transcript.readAfter',
@@ -64,11 +184,15 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'sessions.external.status.get',
   'sessions.external.transcript.page',
   'sessions.external.transcript.readAfter',
+  'sessions.spawn.profiles.list',
+  'sessions.spawn.connected_services.list',
+  'sessions.spawn.mcp_servers.preview',
   'scm.pullRequest.list',
   'scm.pullRequest.get',
   'scm.pullRequest.openCompose',
   'scm.hostingRepository.describePublishTargets',
   'scm.diffSummary.generate',
+  ...RUNTIME_ACTION_IDS,
 ] as const;
 
 const RESULT_NONE_DEFERRED_ACTION_IDS = [
@@ -160,6 +284,10 @@ const RESULT_OPTIONAL_DEFERRED_ACTION_IDS = [
   'scm.repository.init',
   'scm.repository.removeIndexLock',
   'scm.hostingRepository.publish',
+  'plugins.scaffold',
+  'plugins.install',
+  'plugins.uninstall',
+  'plugins.reload',
 ] as const;
 
 function sorted(values: readonly string[]): string[] {
@@ -172,22 +300,74 @@ function resolveExpectedApprovalFlow(approval: { flow?: 'blocking' | 'deferred';
 }
 
 describe('Action Spec Registry', () => {
+  it('registers plugin dev-loop actions on agent, cli, and mcp surfaces', () => {
+    const expectations = [
+      ['plugins.scaffold', 'danger'],
+      ['plugins.install', 'danger'],
+      ['plugins.uninstall', 'danger'],
+      ['plugins.reload', 'danger'],
+      ['plugins.list', 'safe'],
+    ] as const;
+
+    for (const [actionId, safety] of expectations) {
+      const spec = getActionSpec(actionId as ActionId);
+      expect(spec.safety).toBe(safety);
+      expect(spec.surfaces.agent).toBe(true);
+      expect((spec.surfaces as Record<string, unknown>).session_agent).toBeUndefined();
+      expect(spec.surfaces.cli).toBe(true);
+      expect(spec.surfaces.mcp).toBe(true);
+      expect(spec.bindings?.mcpToolName).toBe(actionId.replaceAll('.', '_'));
+      expect(spec.outputSchema).toBeDefined();
+    }
+  });
+
+  it('surfaces plugin inspect actions to UI without exposing scaffold/install', () => {
+    expect(getActionSpec('plugins.list').surfaces.ui).toBe(true);
+    expect(getActionSpec('plugins.reload').surfaces.ui).toBe(true);
+    expect(getActionSpec('plugins.scaffold').surfaces.ui).toBe(false);
+    expect(getActionSpec('plugins.install').surfaces.ui).toBe(false);
+    expect(getActionSpec('plugins.uninstall').surfaces.ui).toBe(false);
+  });
+
+  it('requires a plugin id for plugin uninstall', () => {
+    const schema = getActionSpec('plugins.uninstall').inputSchema;
+
+    expect(schema.safeParse({ pluginId: 'acme.dev-loop' }).success).toBe(true);
+    expect(schema.safeParse({}).success).toBe(false);
+  });
+
   it('supports broad final action surfaces and rejects implementation-specific surface keys', () => {
     const parsed = ActionSurfaceSchema.parse({
       ui: false,
       voice: false,
       mcp: false,
       cli: false,
-      session_agent: true,
+      agent: true,
       rpc: false,
       sdk: true,
     });
 
-    expect(parsed.session_agent).toBe(true);
+    expect(parsed.agent).toBe(true);
     expect(parsed.sdk).toBe(true);
     expect(() => ActionSurfaceSchema.parse({
       [`ui_${'button'}`]: true,
+      agent: true,
+      mcp: false,
+      cli: false,
+    })).toThrow();
+    expect(() => ActionSurfaceSchema.parse({
+      ui: false,
+      voice: false,
+      agent: true,
+      mcp: false,
+      cli: false,
+      rpc: false,
+      sdk: true,
+      // Retired R7 spelling must stay rejected; no compatibility alias.
       session_agent: true,
+    })).toThrow();
+    expect(() => ActionSurfaceSchema.parse({
+      agent: true,
       mcp: false,
       cli: false,
     })).toThrow();
@@ -203,7 +383,7 @@ describe('Action Spec Registry', () => {
       surfaces: {
         ui: true,
         voice: true,
-        session_agent: true,
+        agent: true,
         mcp: true,
         cli: true,
         rpc: false,
@@ -217,12 +397,12 @@ describe('Action Spec Registry', () => {
     expect(ActionSpecSchema.parse({
       ...base,
       toolExposure: {
-        session_agent: 'discoverable_only',
+        agent: 'discoverable_only',
         mcp: 'direct',
         cli: 'direct',
       },
     }).toolExposure).toEqual({
-      session_agent: 'discoverable_only',
+      agent: 'discoverable_only',
       mcp: 'direct',
       cli: 'direct',
     });
@@ -230,7 +410,7 @@ describe('Action Spec Registry', () => {
     expect(ActionSpecSchema.safeParse({
       ...base,
       toolExposure: {
-        session_agent: 'hidden',
+        agent: 'hidden',
       },
     }).success).toBe(false);
     expect(ActionSpecSchema.safeParse({
@@ -305,7 +485,7 @@ describe('Action Spec Registry', () => {
       surfaces: {
         ui: true,
         voice: true,
-        session_agent: false,
+        agent: false,
         mcp: true,
         cli: true,
         rpc: false,
@@ -345,7 +525,7 @@ describe('Action Spec Registry', () => {
       surfaces: {
         ui: true,
         voice: true,
-        session_agent: true,
+        agent: true,
         mcp: true,
         cli: true,
         rpc: false,
@@ -355,12 +535,12 @@ describe('Action Spec Registry', () => {
       outputSchema: z.unknown(),
       inputSchema: z.object({}).strict(),
       toolExposure: {
-        session_agent: 'discoverable_only',
+        agent: 'discoverable_only',
       },
     });
 
     expect(serializeActionSpec(parsed).toolExposure).toEqual({
-      session_agent: 'discoverable_only',
+      agent: 'discoverable_only',
     });
   });
 
@@ -386,7 +566,7 @@ describe('Action Spec Registry', () => {
       surfaces: {
         ui: false,
         voice: false,
-        session_agent: false,
+        agent: false,
         mcp: false,
         cli: false,
         rpc: false,
@@ -409,9 +589,9 @@ describe('Action Spec Registry', () => {
     expect(spec.surfaces.voice).toBe(true);
   });
 
-  it('surfaces action discovery tools on both session_agent and external mcp', () => {
+  it('surfaces action discovery tools on both agent and external mcp', () => {
     const spec = getActionSpec('action.spec.search');
-    expect(spec.surfaces.session_agent).toBe(true);
+    expect(spec.surfaces.agent).toBe(true);
     expect(spec.surfaces.mcp).toBe(true);
   });
 
@@ -556,23 +736,30 @@ describe('Action Spec Registry', () => {
     expect(() => skillOutputSchema.parse({ skills: [{ v: 1, origin: 'vendor' }] })).toThrow();
   });
 
-  it('declares usage-limit recovery action specs with conservative session-agent settings', () => {
+  it('declares usage-limit recovery action specs with conservative agent settings', () => {
     const enable = getActionSpec('session.usageLimit.waitResume.enable' as any);
     const cancel = getActionSpec('session.usageLimit.waitResume.cancel' as any);
     const checkNow = getActionSpec('session.usageLimit.checkNow' as any);
+    const consumeResetCredit = getActionSpec('session.usageLimit.consumeResetCredit' as any);
 
     expect(enable.inputSchema).toBe((protocol as any).SessionUsageLimitWaitResumeEnableRequestV1Schema);
     expect(cancel.inputSchema).toBe((protocol as any).SessionUsageLimitWaitResumeCancelRequestV1Schema);
     expect(checkNow.inputSchema).toBe((protocol as any).SessionUsageLimitCheckNowRequestV1Schema);
+    expect(consumeResetCredit.inputSchema).toBe((protocol as any).SessionUsageLimitConsumeResetCreditRequestV1Schema);
     expect(enable.bindings?.mcpToolName).toBe('session_usage_limit_wait_resume_enable');
     expect(cancel.bindings?.mcpToolName).toBe('session_usage_limit_wait_resume_cancel');
     expect(checkNow.bindings?.mcpToolName).toBe('session_usage_limit_check_now');
+    expect(consumeResetCredit.bindings?.mcpToolName).toBe('session_usage_limit_consume_reset_credit');
     expect(enable.approval).toEqual({ result: 'none', flow: 'deferred' });
     expect(cancel.approval).toEqual({ result: 'none', flow: 'deferred' });
     expect(checkNow.approval.result).toBe('required');
-    expect(enable.surfaces.session_agent).toBe(true);
-    expect(cancel.surfaces.session_agent).toBe(true);
-    expect(checkNow.surfaces.session_agent).toBe(true);
+    expect(consumeResetCredit.approval.result).toBe('required');
+    expect(checkNow.safety).toBe('safe');
+    expect(consumeResetCredit.safety).toBe('danger');
+    expect(enable.surfaces.agent).toBe(true);
+    expect(cancel.surfaces.agent).toBe(true);
+    expect(checkNow.surfaces.agent).toBe(true);
+    expect(consumeResetCredit.surfaces.agent).toBe(true);
     expect(enable.inputHints?.fields.find((field) => field.path === 'resumePromptMode')).toMatchObject({
       options: expect.arrayContaining([
         expect.objectContaining({ value: 'custom' }),
@@ -584,12 +771,29 @@ describe('Action Spec Registry', () => {
     });
     expect(checkNow.inputHints?.fields.find((field) => field.path === 'operation')).toMatchObject({
       widget: 'select',
+        options: expect.arrayContaining([
+          expect.objectContaining({ value: 'check_now' }),
+          expect.objectContaining({ value: 'switch_account_now' }),
+        ]),
+    });
+    expect(checkNow.inputHints?.fields.find((field) => field.path === 'operation')).not.toMatchObject({
       options: expect.arrayContaining([
-        expect.objectContaining({ value: 'check_now' }),
-        expect.objectContaining({ value: 'switch_account_now' }),
+        expect.objectContaining({ value: 'consume_reset_credit' }),
       ]),
     });
     expect(checkNow.inputHints?.fields.find((field) => field.path === 'resumePromptMode')).toMatchObject({
+      widget: 'select',
+      options: expect.arrayContaining([
+        expect.objectContaining({ value: 'standard' }),
+        expect.objectContaining({ value: 'off' }),
+        expect.objectContaining({ value: 'custom' }),
+      ]),
+    });
+    expect(consumeResetCredit.inputHints?.fields.find((field) => field.path === 'provider')).toMatchObject({
+      path: 'provider',
+      widget: 'text',
+    });
+    expect(consumeResetCredit.inputHints?.fields.find((field) => field.path === 'resumePromptMode')).toMatchObject({
       widget: 'select',
       options: expect.arrayContaining([
         expect.objectContaining({ value: 'standard' }),
@@ -628,6 +832,258 @@ describe('Action Spec Registry', () => {
       sessionId: 's1',
       issueFingerprint: null,
     });
+  });
+
+  it('declares runtime-unification action specs without exposing raw daemon transports', () => {
+    // Per-family/per-action surface enablement keyed to EXECUTOR REALITY (FINALIZATION-PLAN
+    // §2.3/§3.2/§10 "per-family, never blanket"). A runtime action is surfaced on `ui` AND
+    // `agent` ONLY where a real executor routes it through the ActionExecutor front door,
+    // so the surface-keyed agent-approval floor becomes observable end-to-end (finding #31).
+    // Families/actions without a real executor stay fully fail-closed.
+    //
+    // Statically-unbacked simulator runtime actions stay disabled on every surface. Derived from the
+    // canonical `classifySimulatorRuntimeActionBackingV1` so this closure test tracks the live
+    // backing classifier (resource-gated stream controls flip to surfaced once a producer backs
+    // them) instead of drifting against a hand-maintained list.
+    const UNBACKED_SIMULATOR_RUNTIME_ACTION_IDS = new Set<string>(
+      [...protocol.ACTION_ID_FAMILIES_V1.devices_simulator].filter(
+        (id) => protocol.classifySimulatorRuntimeActionBackingV1(id) === 'statically-unbacked',
+      ),
+    );
+    // Browser context surface truth is keyed to the runtime action front door: every real browser
+    // context action is surfaced on both UI and agent. The daemon route backs capture,
+    // attach/clear, and metadata-only annotation mutation results; BrowserShell uses the same
+    // annotation action-result contract for the in-app UI surface.
+    const AGENT_CONTEXT_ACTION_IDS = new Set<string>([
+      'browser.context.capturePage',
+      'browser.context.captureScreenshot',
+      'browser.context.captureSelectedElement',
+      'browser.context.captureNetworkSummary',
+      'browser.context.captureConsoleSummary',
+      'browser.context.annotation.start',
+      'browser.context.annotation.cancel',
+      'browser.context.annotation.captureRegion',
+      'browser.context.annotation.captureElement',
+      'browser.context.annotation.attachComment',
+      'browser.context.annotation.attachStroke',
+      'browser.context.annotation.attachStyleIntent',
+      'browser.context.attachToComposer',
+      'browser.context.attachToAgentTurn',
+      'browser.context.clear',
+    ]);
+    const UI_CONTEXT_ACTION_IDS = AGENT_CONTEXT_ACTION_IDS;
+    // browser.diagnostics is fully executor-backed now: the READ leaves are store-backed (snapshot ->
+    // store.getSnapshot, clear -> store.clearView) and the INTERACTION verbs (pause/resume/eval/
+    // getProperties/releaseObjectGroup/elementPicker.*) ride the live managed-Chromium sidecar CDP
+    // interaction transport (DIAG-INTERACTION). The whole family is surfaced + executor-real.
+    const REAL_DIAGNOSTICS_ACTION_IDS = new Set<string>([
+      'browser.diagnostics.snapshot',
+      'browser.diagnostics.clear',
+      'browser.diagnostics.pause',
+      'browser.diagnostics.resume',
+      'browser.diagnostics.eval',
+      'browser.diagnostics.getProperties',
+      'browser.diagnostics.releaseObjectGroup',
+      'browser.diagnostics.elementPicker.start',
+      'browser.diagnostics.elementPicker.cancel',
+    ]);
+    const isRuntimeActionRealOnUi = (id: string): boolean => {
+      if (
+        id.startsWith('localServices.launcher.')
+        || id.startsWith('localServices.actions.')
+        || id.startsWith('localServices.publicPreview.')
+        || id.startsWith('localServices.preview.')
+        || id.startsWith('browser.session.')
+        || id.startsWith('browser.view.')
+        || id.startsWith('browser.target.')
+        || id.startsWith('browser.automation.')
+        || id.startsWith('browser.recording.')
+        || id.startsWith('peerMediation.observability.')
+      ) {
+        return true;
+      }
+      if (
+        id === 'browser.navigate'
+        || id === 'browser.reload'
+        || id === 'browser.goBack'
+        || id === 'browser.goForward'
+        || id === 'browser.stop'
+      ) {
+        return true;
+      }
+      if (UI_CONTEXT_ACTION_IDS.has(id)) return true;
+      if (REAL_DIAGNOSTICS_ACTION_IDS.has(id)) return true;
+      if (id.startsWith('devices.simulator.')) return !UNBACKED_SIMULATOR_RUNTIME_ACTION_IDS.has(id);
+      return false;
+    };
+    const isRuntimeActionRealOnAgent = (id: string): boolean => {
+      if (AGENT_CONTEXT_ACTION_IDS.has(id)) return true;
+      return isRuntimeActionRealOnUi(id);
+    };
+
+    for (const id of RUNTIME_ACTION_IDS) {
+      const spec = getActionSpec(id as ActionId);
+      expect(spec.id).toBe(id);
+      const uiReal = isRuntimeActionRealOnUi(id);
+      const agentReal = isRuntimeActionRealOnAgent(id);
+      expect(spec.surfaces).toEqual({
+        ui: uiReal,
+        voice: false,
+        agent: agentReal,
+        mcp: false,
+        cli: false,
+        rpc: false,
+        sdk: false,
+      });
+      expect(spec.bindings).toBeUndefined();
+    }
+
+    // Spot-check the only remaining fail-closed leaf stays disabled on every surface.
+    for (const id of [
+      // Absolute-orientation input has no producer (stock scrcpy rotate is relative) → stays
+      // statically-unbacked / UNSURFACED. (Resource-gated stream controls like keyframe/snapshot are
+      // backed by the Android server-restart producer and surface when advertised, so they are NOT
+      // spot-checked as unconditionally disabled here.)
+      'devices.simulator.input.orientation',
+    ]) {
+      expect(getActionSpec(id as ActionId).surfaces.agent).toBe(false);
+      expect(getActionSpec(id as ActionId).surfaces.ui).toBe(false);
+    }
+    // Spot-check the dangerous agent-initiated subset is now reachable on `agent` (incl. the
+    // newly-surfaced recording.start danger leaf — its approval floor was required in place first).
+    for (const id of [
+      'browser.context.capturePage',
+      'browser.context.captureScreenshot',
+      'browser.context.annotation.captureRegion',
+      'browser.context.annotation.captureElement',
+      'browser.recording.start',
+      // browser.diagnostics INTERACTION verbs — now backed by the live sidecar CDP interaction
+      // transport (DIAG-INTERACTION) and surfaced. `eval` stays danger-floored for consent.
+      'browser.diagnostics.eval',
+      'browser.diagnostics.pause',
+      'browser.diagnostics.resume',
+      'browser.diagnostics.getProperties',
+      'browser.diagnostics.releaseObjectGroup',
+      'browser.diagnostics.elementPicker.start',
+      'browser.diagnostics.elementPicker.cancel',
+      'localServices.publicPreview.create',
+      'localServices.actions.stopManaged',
+      'devices.simulator.input.tap',
+      'devices.simulator.input.pinch',
+    ]) {
+      expect(getActionSpec(id as ActionId).surfaces.agent).toBe(true);
+      expect(getActionSpec(id as ActionId).surfaces.ui).toBe(true);
+    }
+
+    expect(getActionSpec('browser.diagnostics.eval' as ActionId)).toMatchObject({
+      safety: 'danger',
+      sideEffectClass: 'danger',
+    });
+    expect(getActionSpec('localServices.publicPreview.create' as ActionId)).toMatchObject({
+      safety: 'danger',
+      sideEffectClass: 'danger',
+    });
+    expect(getActionSpec('localServices.publicPreview.revoke' as ActionId)).toMatchObject({
+      safety: 'danger',
+      sideEffectClass: 'danger',
+    });
+    expect(getActionSpec('devices.simulator.input.tap' as ActionId)).toMatchObject({
+      safety: 'danger',
+      sideEffectClass: 'external',
+    });
+
+    expect(() => getActionSpec('daemon.browser.recording.start' as ActionId)).toThrow();
+    expect(() => getActionSpec('daemon.localServices.preview.snapshot' as ActionId)).toThrow();
+    expect(() => getActionSpec('daemon.devices.simulator.preview.action' as ActionId)).toThrow();
+  });
+
+  it('does not declare retired unbacked runtime actions', () => {
+    for (const id of RETIRED_UNBACKED_RUNTIME_ACTION_IDS) {
+      expect(ActionIdSchema.safeParse(id).success).toBe(false);
+      expect(RuntimeActionIdV1Schema.options).not.toContain(id);
+      expect(() => getActionSpec(id as ActionId)).toThrow();
+    }
+
+    // Distinct diagnostics picker verbs have real CLI/UI producers and must stay surfaced.
+    for (const id of [
+      'browser.diagnostics.elementPicker.start',
+      'browser.diagnostics.elementPicker.cancel',
+    ] as const) {
+      expect(ActionIdSchema.safeParse(id).success).toBe(true);
+      expect(RuntimeActionIdV1Schema.options).toContain(id);
+      expect(getActionSpec(id).surfaces.ui).toBe(true);
+      expect(getActionSpec(id).surfaces.agent).toBe(true);
+    }
+  });
+
+  it('derives runtime host action effects from the canonical ActionSpec side-effect owner', () => {
+    expect(resolveRuntimeActionHostEffectClass('localServices.launcher.start')).toBe('destructive');
+    expect(resolveRuntimeActionHostEffectClass('localServices.actions.stopManaged')).toBe('destructive');
+    expect(resolveRuntimeActionHostEffectClass('localServices.actions.restartManaged')).toBe('destructive');
+    expect(resolveRuntimeActionHostEffectClass('localServices.publicPreview.create')).toBe('destructive');
+    expect(resolveRuntimeActionHostEffectClass('localServices.publicPreview.revoke')).toBe('destructive');
+    expect(resolveRuntimeActionHostEffectClass('localServices.publicPreview.copyUrl')).toBeNull();
+    expect(resolveRuntimeActionHostEffectClass('browser.navigate')).toBe('externalNavigation');
+    expect(resolveRuntimeActionHostEffectClass('devices.simulator.input.tap')).toBeNull();
+  });
+
+  it('uses the daemon launcher start request and response schemas for launcher start runtime actions', () => {
+    const spec = getActionSpec('localServices.launcher.start');
+
+    expect(spec.inputSchema.parse({
+      machineId: 'machine-a',
+      targetId: 'managed:web',
+      sessionId: 'session-a',
+    })).toEqual({
+      machineId: 'machine-a',
+      targetId: 'managed:web',
+      sessionId: 'session-a',
+    });
+    expect(spec.inputSchema.safeParse({
+      targetId: 'managed:web',
+    }).success).toBe(false);
+    expect(spec.outputSchema?.parse({
+      protocolVersion: 1,
+      machineId: 'machine-a',
+      targetId: 'managed:web',
+      status: 'succeeded',
+      snapshot: {
+        v: 1,
+        machineId: 'machine-a',
+        updatedAt: 4_000,
+        targets: [],
+      },
+    })).toMatchObject({
+      status: 'succeeded',
+      targetId: 'managed:web',
+    });
+  });
+
+  it('uses the browser command dispatch result schema for browser control runtime actions', () => {
+    const spec = getActionSpec('browser.navigate');
+
+    expect(spec.outputSchema.parse({
+      v: 1,
+      commandId: 'command_1',
+      status: 'dispatched',
+      adapterKind: 'chromiumSidecar',
+      events: [],
+    })).toMatchObject({
+      commandId: 'command_1',
+      status: 'dispatched',
+      adapterKind: 'chromiumSidecar',
+    });
+
+    expect(() => spec.outputSchema.parse({
+      v: 1,
+      commandId: 'command_2',
+      status: 'failed',
+      adapterKind: 'chromiumSidecar',
+      error: {
+        code: 'not_a_browser_error',
+        message: 'Nope.',
+      },
+    })).toThrow();
   });
 
   it('declares session events MCP examples with provider event kind filters', () => {
@@ -796,7 +1252,7 @@ describe('Action Spec Registry', () => {
     expect(spec.surfaces.ui).toBe(false);
     expect(spec.surfaces.mcp).toBe(false);
     expect(spec.surfaces.voice).toBe(false);
-    expect(spec.surfaces.session_agent).toBe(false);
+    expect(spec.surfaces.agent).toBe(false);
     expect(spec.sideEffectClass).toBe('external');
     expect(spec.safety).toBe('safe');
 
@@ -923,9 +1379,10 @@ describe('Action Spec Registry', () => {
 
     expect(getActionSpec('transcript.import' as ActionId).inputSchema.parse({
       sessionId: 'session-1',
+      importId: 'import-operation-1',
       items: [{ id: 'item-1', role: 'user', content: { t: 'plain', v: { text: 'hello' } } }],
       maxItems: 1,
-    })).toMatchObject({ sessionId: 'session-1', maxItems: 1 });
+    })).toMatchObject({ sessionId: 'session-1', importId: 'import-operation-1', maxItems: 1 });
 
     expect(getActionSpec('transcript.search' as ActionId).inputSchema.parse({
       sessionId: 'session-1',
@@ -1049,6 +1506,20 @@ describe('Action Spec Registry', () => {
     ).toThrow();
   });
 
+  it('accepts canonical built-in backendTargetKey values when listing models', () => {
+    const spec = getActionSpec('agents.models.list');
+
+    expect(spec.inputSchema.parse({
+      backendTargetKey: 'backend:codex',
+      machineId: 'machine-1',
+      limit: 10,
+    })).toMatchObject({
+      backendTargetKey: 'backend:codex',
+      machineId: 'machine-1',
+      limit: 10,
+    });
+  });
+
   it('accepts a canonical plugin backendTargetKey with an explicit runtime carrier when listing models', () => {
     const spec = getActionSpec('agents.models.list');
 
@@ -1099,6 +1570,24 @@ describe('Action Spec Registry', () => {
     const spec = getActionSpec('session.spawn_new');
     expect(spec.surfaces.mcp).toBe(true);
     expect(spec.bindings?.mcpToolName).toBe('session_spawn_new');
+  });
+
+  it('treats default as a reset sentinel only when no provider connection is selected', () => {
+    const spec = getActionSpec('session.model.set');
+    expect(spec.inputSchema.safeParse({
+      sessionId: 'session-1',
+      modelId: 'default',
+      providerConnectionId: 'pc_work',
+    }).success).toBe(true);
+    expect(spec.inputSchema.safeParse({
+      sessionId: 'session-1',
+      modelId: 'default',
+    }).success).toBe(true);
+    expect(spec.inputSchema.safeParse({
+      sessionId: 'session-1',
+      modelId: 'provider-model',
+      providerConnectionId: 'pc_work',
+    }).success).toBe(true);
   });
 
   it('requires backendTargetKey when spawning a customAcp session directly', () => {
@@ -1182,6 +1671,88 @@ describe('Action Spec Registry', () => {
     });
 
     expect(parsed.success).toBe(true);
+  });
+
+  it('requires an explicit model when a provider connection is selected for spawn', () => {
+    const spec = getActionSpec('session.spawn_new');
+
+    expect(spec.inputSchema.safeParse({
+      backendTargetKey: 'backend:claude',
+      providerConnectionId: 'pc_work',
+      path: '/tmp/project',
+    }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({
+      backendTargetKey: 'backend:claude',
+      modelId: 'default',
+      providerConnectionId: 'pc_work',
+      path: '/tmp/project',
+    }).success).toBe(true);
+    expect(spec.inputSchema.safeParse({
+      backendTargetKey: 'backend:claude',
+      modelId: 'provider-model',
+      providerConnectionId: 'pc_work',
+      path: '/tmp/project',
+    }).success).toBe(true);
+  });
+
+  it('accepts first-party Antigravity backendTargetKey values that rely on inferred runtime carriers', () => {
+    const spec = getActionSpec('session.spawn_new');
+    const parsed = spec.inputSchema.safeParse({
+      backendTargetKey: 'backend:antigravity',
+      path: '/tmp/project',
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it('advertises dynamic option sources for rich session.spawn_new fields', () => {
+    const spec = getActionSpec('session.spawn_new');
+    const fieldsByPath = new Map((spec.inputHints?.fields ?? []).map((field) => [field.path, field]));
+
+    expect(fieldsByPath.get('backendTargetKey')).toMatchObject({
+      optionsSourceId: 'agents.backends.enabled',
+    });
+    expect(fieldsByPath.get('modelId')).toMatchObject({
+      optionsSourceId: 'agents.models.available',
+    });
+    expect(fieldsByPath.get('agentModeId')).toMatchObject({
+      optionsSourceId: 'agents.session_modes.available',
+    });
+    expect(fieldsByPath.get('sessionConfigOptionOverrides')).toMatchObject({
+      optionsSourceId: 'agents.config_options.available',
+    });
+    expect(fieldsByPath.get('path')).toMatchObject({
+      optionsSourceId: 'sessions.spawn.paths.recent',
+    });
+    expect(fieldsByPath.get('directory')).toMatchObject({
+      optionsSourceId: 'sessions.spawn.paths.recent',
+    });
+    expect(fieldsByPath.get('machineId')).toMatchObject({
+      optionsSourceId: 'sessions.spawn.machines.available',
+    });
+    expect(fieldsByPath.get('profileId')).toMatchObject({
+      optionsSourceId: 'sessions.spawn.profiles.available',
+    });
+    expect(fieldsByPath.get('connectedServices')).toMatchObject({
+      optionsSourceId: 'sessions.spawn.connected_services.available',
+    });
+    expect(fieldsByPath.get('mcpSelection')).toMatchObject({
+      optionsSourceId: 'sessions.spawn.mcp_servers.preview',
+    });
+  });
+
+  it.each([
+    'paths.list_recent',
+    'machines.list',
+    'servers.list',
+    'agents.config_options.list',
+    'agents.session_modes.list',
+    'sessions.spawn.profiles.list',
+    'sessions.spawn.connected_services.list',
+    'sessions.spawn.mcp_servers.preview',
+  ] as const)('surfaces %s for agent spawn option discovery', (actionId) => {
+    const spec = getActionSpec(actionId as any);
+    expect(spec.surfaces.agent).toBe(true);
   });
 
   it('requires backendTargetKey when spawning a customAcp picker session directly', () => {
@@ -1293,14 +1864,15 @@ describe('Action Spec Registry', () => {
     const spec = getActionSpec('session.rollback' as any);
     expect(spec.id).toBe('session.rollback');
     expect(spec.surfaces.ui).toBe(true);
-    expect(spec.placements).toContain('session_action_menu');
+    expect(spec.surfaces.rpc).toBe(true);
+    expect(spec.placements).toEqual([]);
   });
 
   it('exposes checkpoint code rollback through RPC without raw menu placement', () => {
     const spec = getActionSpec('session.checkpoint_code_rollback' as any);
 
     expect(spec.id).toBe('session.checkpoint_code_rollback');
-    expect(spec.surfaces.ui).toBe(false);
+    expect(spec.surfaces.ui).toBe(true);
     expect(spec.surfaces.rpc).toBe(true);
     expect(spec.placements).toEqual([]);
     expect(spec.safety).toBe('danger');
@@ -1334,6 +1906,12 @@ describe('Action Spec Registry', () => {
 
     expect(checkpoint.bindings?.rpcMethod).toBe('session.checkpoint');
     expect(restore.bindings?.rpcMethod).toBe('session.restore');
+    expect(checkpoint.surfaces.ui).toBe(true);
+    expect(restore.surfaces.ui).toBe(true);
+    expect(checkpoint.surfaces.rpc).toBe(true);
+    expect(restore.surfaces.rpc).toBe(true);
+    expect(checkpoint.placements).toEqual([]);
+    expect(restore.placements).toEqual([]);
     expect(checkpoint.safety).toBe('danger');
     expect(restore.safety).toBe('danger');
     expect(restore.inputSchema.safeParse({
@@ -1354,6 +1932,35 @@ describe('Action Spec Registry', () => {
       scopes: ['workspace'],
       checkpointId: 'checkpoint-1',
     }).success).toBe(false);
+  });
+
+  it('declares terminal composer clear as a confirmed destructive session-control action', () => {
+    const spec = getActionSpec('session.terminalComposer.clear' as any);
+
+    expect(spec.inputSchema).toBe((protocol as any).SessionTerminalComposerClearRequestV1Schema);
+    expect(spec.outputSchema).toBe((protocol as any).SessionTerminalComposerClearResultV1Schema);
+    expect(spec.bindings?.rpcMethod).toBe((SESSION_RPC_METHODS as any).SESSION_TERMINAL_COMPOSER_CLEAR);
+    expect(spec.bindings?.mcpToolName).toBe('session_terminal_composer_clear');
+    expect(spec.safety).toBe('danger');
+    expect(spec.sideEffectClass).toBe('danger');
+    expect(spec.approval.result).toBe('required');
+    expect(spec.surfaces.ui).toBe(true);
+    expect(spec.surfaces.agent).toBe(false);
+    expect(spec.surfaces.mcp).toBe(true);
+    expect(spec.surfaces.cli).toBe(true);
+    expect(spec.surfaces.rpc).toBe(true);
+    expect(spec.placements).toEqual(['pending_messages']);
+    expect(spec.inputHints?.fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: 'sessionId', required: true }),
+      expect.objectContaining({ path: 'expectedStateAtMs' }),
+    ]));
+  });
+
+  it('identifies actions that accept contextual session ids', () => {
+    expect(actionAcceptsContextualSessionId('session.terminalComposer.clear')).toBe(true);
+    expect(actionAcceptsContextualSessionId('review.start')).toBe(true);
+    expect(actionAcceptsContextualSessionId('session.list')).toBe(false);
+    expect(actionAcceptsContextualSessionId('not.real.action')).toBe(false);
   });
 
   it('exposes session open action spec', () => {
@@ -1490,7 +2097,7 @@ describe('Action Spec Registry', () => {
         surfaces: {
           ui: true,
           voice: true,
-          session_agent: false,
+          agent: false,
           mcp: true,
           cli: true,
           rpc: false,
@@ -1522,7 +2129,7 @@ describe('Action Spec Registry', () => {
       surfaces: {
         ui: true,
         voice: true,
-        session_agent: false,
+        agent: false,
         mcp: true,
         cli: true,
         rpc: false,
@@ -1552,6 +2159,39 @@ describe('Action Spec Registry', () => {
     ]);
   });
 
+  it('accepts JSON object fields in input hints', () => {
+    const parsed = ActionSpecSchema.parse({
+      id: 'session.spawn_new',
+      title: 'Create session',
+      safety: 'safe',
+      approval: { result: 'none' },
+      placements: [],
+      surfaces: {
+        ui: true,
+        voice: true,
+        agent: true,
+        mcp: true,
+        cli: true,
+        rpc: true,
+        sdk: false,
+      },
+      bindings: { mcpToolName: 'session_spawn_new', rpcMethod: 'spawn-happy-session' },
+      outputSchema: z.unknown(),
+      inputSchema: z.object({}).passthrough(),
+      inputHints: {
+        fields: [
+          {
+            path: 'sessionConfigOptionOverrides',
+            title: 'Config option overrides',
+            widget: 'json',
+          },
+        ],
+      },
+    });
+
+    expect(parsed.inputHints?.fields[0]?.widget).toBe('json');
+  });
+
   it('requires select/multiselect hints to declare options or optionsSourceId', () => {
     expect(() =>
       ActionSpecSchema.parse({
@@ -1563,7 +2203,7 @@ describe('Action Spec Registry', () => {
         surfaces: {
           ui: true,
           voice: true,
-          session_agent: false,
+          agent: false,
           mcp: true,
           cli: true,
           rpc: false,
@@ -1594,7 +2234,7 @@ describe('Action Spec Registry', () => {
         surfaces: {
           ui: true,
           voice: true,
-          session_agent: false,
+          agent: false,
           mcp: true,
           cli: true,
           rpc: false,
@@ -1627,7 +2267,7 @@ describe('Action Spec Registry', () => {
         surfaces: {
           ui: true,
           voice: true,
-          session_agent: false,
+          agent: false,
           mcp: true,
           cli: true,
           rpc: false,
@@ -1666,6 +2306,9 @@ describe('Action Spec Registry', () => {
     expect(planFields.map((f: any) => f.path)).toContain('instructions');
     expect(delegateFields.map((f: any) => f.path)).toContain('backendTargetKeys');
     expect(delegateFields.map((f: any) => f.path)).toContain('instructions');
+    expect(planFields.find((f: any) => f.path === 'backendTargetKeys')?.maxSelections).toBe(1);
+    expect(delegateFields.find((f: any) => f.path === 'backendTargetKeys')?.maxSelections).toBe(1);
+    expect((getActionSpec('voice_agent.start') as any).inputHints?.fields?.find((f: any) => f.path === 'backendTargetKeys')?.maxSelections).toBe(1);
   });
 
   it('describes backendTargetKeys as provider/backend selection, not parallel capacity', () => {

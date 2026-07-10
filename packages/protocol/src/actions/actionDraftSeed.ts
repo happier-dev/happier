@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { buildBackendTargetKey, isBuiltInAgentTarget, type BackendTargetRefV1 } from '../backendTargets/backendTargetRef.js';
+import { buildBackendTargetKey, isBuiltInAgentTarget, type BackendTargetRefV1 } from '../backends/targets/backendTargetRef.js';
 import type { ActionInputFieldHint, ActionSpec } from './actionSpecs.js';
 
 function setByPath(obj: Record<string, any>, path: string, value: unknown): void {

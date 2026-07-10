@@ -52,6 +52,7 @@ describe('createActionExecutor (session control)', () => {
         message: 'Hello',
         permissionModeOverride: 'read_only',
         modelOverride: 'gpt-4o',
+        providerConnectionId: 'pc_work',
         wait: true,
         timeoutSeconds: 42,
       },
@@ -64,9 +65,50 @@ describe('createActionExecutor (session control)', () => {
       message: 'Hello',
       permissionModeOverride: 'read_only',
       modelOverride: 'gpt-4o',
+      providerConnectionId: 'pc_work',
       wait: true,
       timeoutSeconds: 42,
     }));
+  });
+
+  it('rejects provider identity without a concrete model override', async () => {
+    const sessionSendMessage = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionSendMessage });
+
+    const res = await executor.execute(
+      'session.message.send' as any,
+      {
+        sessionId: 's1',
+        message: 'Hello',
+        providerConnectionId: 'pc_work',
+      },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(sessionSendMessage).not.toHaveBeenCalled();
+  });
+
+  it('preserves message from session.message.send failure envelopes', async () => {
+    const sessionSendMessage = vi.fn(async () => ({
+      ok: false,
+      errorCode: 'session_inactive',
+      error: 'session_inactive',
+      message: 'Session is inactive. Resume it before sending a message.',
+    }));
+    const executor = createExecutor({ sessionSendMessage });
+
+    const res = await executor.execute(
+      'session.message.send' as any,
+      { sessionId: 's1', message: 'Hello' },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({
+      ok: false,
+      errorCode: 'session_inactive',
+      error: 'Session is inactive. Resume it before sending a message.',
+    });
   });
 
   it('executes session.title.set via deps.sessionTitleSet', async () => {
@@ -98,6 +140,52 @@ describe('createActionExecutor (session control)', () => {
 
     expect(res).toEqual({ ok: true, result: { ok: true, stopped: true } });
     expect(sessionStop).toHaveBeenCalledWith({ sessionId: 's1', serverId: 'server-a' });
+  });
+
+  it('executes session.terminalComposer.clear via deps.sessionTerminalComposerClear', async () => {
+    const sessionTerminalComposerClear = vi.fn(async () => ({
+      ok: true,
+      status: 'cleared',
+      sessionId: 's1',
+    }));
+    const executor = createExecutor({
+      sessionTerminalComposerClear,
+      resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'server-a' : null,
+    } as Partial<ActionExecutorDeps>);
+
+    const res = await executor.execute(
+      'session.terminalComposer.clear' as any,
+      { sessionId: 's1', expectedStateAtMs: 42 },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({
+      ok: true,
+      result: {
+        ok: true,
+        status: 'cleared',
+        sessionId: 's1',
+      },
+    });
+    expect(sessionTerminalComposerClear).toHaveBeenCalledWith({
+      sessionId: 's1',
+      expectedStateAtMs: 42,
+      serverId: 'server-a',
+    });
+  });
+
+  it('fails closed when session.terminalComposer.clear is unsupported by the executor deps', async () => {
+    const executor = createExecutor();
+
+    await expect(executor.execute(
+      'session.terminalComposer.clear' as any,
+      { sessionId: 's1' },
+      { surface: 'cli', defaultSessionId: null },
+    )).resolves.toEqual({
+      ok: false,
+      errorCode: 'unsupported_action',
+      error: 'unsupported_action:session.terminalComposer.clear',
+    });
   });
 
   it('executes session.permission_mode.set via deps.sessionPermissionModeSet', async () => {
@@ -136,6 +224,42 @@ describe('createActionExecutor (session control)', () => {
 
     expect(res).toEqual({ ok: true, result: { ok: true } });
     expect(sessionModelSet).toHaveBeenCalledWith({ sessionId: 's1', modelId: 'default', serverId: 'server-a' });
+  });
+
+  it('preserves provider connection identity through session.model.set', async () => {
+    const sessionModelSet = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionModelSet });
+
+    const res = await executor.execute(
+      'session.model.set' as any,
+      { sessionId: 's1', modelId: 'model-a', providerConnectionId: 'pc_work' },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({ ok: true, result: { ok: true } });
+    expect(sessionModelSet).toHaveBeenCalledWith({
+      sessionId: 's1',
+      modelId: 'model-a',
+      providerConnectionId: 'pc_work',
+    });
+  });
+
+  it('preserves a literal provider model id named default', async () => {
+    const sessionModelSet = vi.fn(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionModelSet });
+
+    const res = await executor.execute(
+      'session.model.set' as any,
+      { sessionId: 's1', modelId: 'default', providerConnectionId: 'pc_work' },
+      { surface: 'cli', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({ ok: true, result: { ok: true } });
+    expect(sessionModelSet).toHaveBeenCalledWith({
+      sessionId: 's1',
+      modelId: 'default',
+      providerConnectionId: 'pc_work',
+    });
   });
 
   it('executes session.archive via deps.sessionArchiveSet', async () => {
@@ -369,11 +493,13 @@ describe('createActionExecutor (session control)', () => {
     const sessionUsageLimitWaitResumeCancel = vi.fn(async () => ({ ok: true }));
     const sessionUsageLimitCheckNow = vi.fn(async () => ({ ok: true }));
     const sessionUsageLimitSwitchAccountNow = vi.fn(async () => ({ ok: true, status: 'waiting' }));
+    const sessionUsageLimitConsumeResetCredit = vi.fn(async () => ({ ok: true, status: 'waiting' }));
     const executor = createExecutor({
       sessionUsageLimitWaitResumeEnable,
       sessionUsageLimitWaitResumeCancel,
       sessionUsageLimitCheckNow,
       sessionUsageLimitSwitchAccountNow,
+      sessionUsageLimitConsumeResetCredit,
       resolveServerIdForSessionId: (sessionId) => sessionId === 's1' ? 'server-a' : null,
     });
 
@@ -398,6 +524,16 @@ describe('createActionExecutor (session control)', () => {
       { sessionId: 's1', provider: ' codex ', operation: 'switch_account_now', resumePromptMode: 'custom' },
       { surface: 'cli' },
     );
+    const consumeResult = await executor.execute(
+      'session.usageLimit.consumeResetCredit' as any,
+      {
+        sessionId: 's1',
+        provider: ' codex ',
+        issueFingerprint: ' usage-limit:codex:turn-1 ',
+        resumePromptMode: 'custom',
+      },
+      { surface: 'cli' },
+    );
 
     expect(sessionUsageLimitWaitResumeEnable).toHaveBeenCalledWith({
       sessionId: 's1',
@@ -419,17 +555,43 @@ describe('createActionExecutor (session control)', () => {
     });
     expect(sessionUsageLimitCheckNow).toHaveBeenCalledWith({
       sessionId: 's1',
-      provider: 'codex',
+      agentId: 'codex',
       serverId: 'server-a',
     });
     expect(switchResult).toEqual({ ok: true, result: { ok: true, status: 'waiting' } });
     expect(sessionUsageLimitSwitchAccountNow).toHaveBeenCalledWith({
       sessionId: 's1',
-      provider: 'codex',
+      agentId: 'codex',
+      resumePromptMode: 'custom',
+      serverId: 'server-a',
+    });
+    expect(consumeResult).toEqual({ ok: true, result: { ok: true, status: 'waiting' } });
+    expect(sessionUsageLimitConsumeResetCredit).toHaveBeenCalledWith({
+      sessionId: 's1',
+      agentId: 'codex',
+      issueFingerprint: 'usage-limit:codex:turn-1',
       resumePromptMode: 'custom',
       serverId: 'server-a',
     });
     expect(sessionUsageLimitCheckNow).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not route mutating reset-credit spend through the safe check-now action', async () => {
+    const sessionUsageLimitConsumeResetCredit = vi.fn(async () => ({ ok: true, status: 'waiting' }));
+    const executor = createExecutor({ sessionUsageLimitConsumeResetCredit });
+
+    const result = await executor.execute(
+      'session.usageLimit.checkNow' as any,
+      { sessionId: 's1', provider: 'codex', operation: 'consume_reset_credit' },
+      { surface: 'cli' },
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'invalid_parameters',
+      errorCode: 'invalid_parameters',
+    });
+    expect(sessionUsageLimitConsumeResetCredit).not.toHaveBeenCalled();
   });
 
   it('executes session.spawn_new via deps.sessionSpawnNew (including backendTargetKey/title)', async () => {
@@ -444,6 +606,8 @@ describe('createActionExecutor (session control)', () => {
         title: 'My title',
         tag: 'tag-1',
         initialMessage: 'Hello',
+        modelId: 'provider-model',
+        providerConnectionId: 'pc_work',
       },
       { surface: 'cli', defaultSessionId: null },
     );
@@ -455,7 +619,39 @@ describe('createActionExecutor (session control)', () => {
       title: 'My title',
       tag: 'tag-1',
       initialMessage: 'Hello',
+      modelId: 'provider-model',
+      providerConnectionId: 'pc_work',
     }));
+  });
+
+  it('preserves structured session.spawn_new policy failure details from returned envelopes', async () => {
+    const sessionSpawnNew = vi.fn(async () => ({
+      type: 'error',
+      errorCode: 'spawn_policy_denied',
+      errorMessage: 'spawn_policy_denied',
+      field: 'path',
+      surface: 'agent',
+    }));
+    const executor = createExecutor({ sessionSpawnNew });
+
+    const res = await executor.execute(
+      'session.spawn_new' as any,
+      {
+        path: '/tmp/other-repo',
+        backendTargetKey: 'agent:claude',
+      },
+      { surface: 'agent', defaultSessionId: null },
+    );
+
+    expect(res).toEqual({
+      ok: false,
+      errorCode: 'spawn_policy_denied',
+      error: 'spawn_policy_denied',
+      details: {
+        field: 'path',
+        surface: 'agent',
+      },
+    });
   });
 
   it('executes session.spawn_new for a canonical built-in backend key without requiring agentId', async () => {
@@ -489,6 +685,8 @@ describe('createActionExecutor (session control)', () => {
       {
         backendTargetKey: 'backend:claude',
         initialMessage: 'Inspect this workspace',
+        modelId: 'provider-model',
+        providerConnectionId: 'pc_work',
       },
       { surface: 'cli', defaultSessionId: null },
     );
@@ -497,6 +695,8 @@ describe('createActionExecutor (session control)', () => {
     expect(sessionSpawnPicker).toHaveBeenCalledWith(expect.objectContaining({
       backendTargetKey: 'backend:claude',
       initialMessage: 'Inspect this workspace',
+      modelId: 'provider-model',
+      providerConnectionId: 'pc_work',
     }));
   });
 

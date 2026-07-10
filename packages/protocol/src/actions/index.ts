@@ -2,8 +2,12 @@ export {
   ACTION_ID_FAMILIES_V1,
   ACTION_IDS,
   ActionIdSchema,
+  RUNTIME_ACTION_IDS_V1,
+  RuntimeActionIdV1Schema,
+  isRuntimeActionIdV1,
   type ActionId,
   type ActionIdFamilyV1,
+  type RuntimeActionIdV1,
 } from './actionIds.js';
 export { ACTION_UI_PLACEMENTS, ActionUiPlacementSchema, type ActionUiPlacement } from './actionUiPlacements.js';
 export {
@@ -14,8 +18,11 @@ export {
   type ActionsSettingsV1,
 } from './actionSettings.js';
 export {
+  isAgentInitiatedApprovalRequiredByDefault,
   isApprovalRequiredByActionsSettings,
   resolveActionApprovalRouting,
+  AGENT_INITIATED_APPROVAL_REQUIRED_ACTION_IDS,
+  EGRESS_SENSITIVE_AGENT_FLOOR,
   type ActionApprovalRoutingDecision,
   type ResolveActionApprovalRoutingArgs,
 } from './actionApprovalPolicy.js';
@@ -37,6 +44,7 @@ export {
   SessionEventsGetInputSchema,
   SessionTranscriptGetInputSchema,
   getActionSpec,
+  actionAcceptsContextualSessionId,
   isVoicePromptHotPathSpec,
   isActionSpecSurfacedOn,
   listActionSpecs,
@@ -69,12 +77,25 @@ export {
 
 export {
   ACTION_TOOL_EXPOSURE_SURFACES,
-  SESSION_AGENT_DIRECT_ACTION_TOOL_ALLOW_LIST,
+  AGENT_DIRECT_ACTION_TOOL_ALLOW_LIST,
   isActionDirectToolExposedOn,
   isActionDiscoverableOnToolSurface,
   resolveActionToolExposureMode,
   type ActionToolExposureResolutionContext,
 } from './actionToolExposure.js';
+export {
+  ACTION_SURFACE_POLICIES,
+  getActionSurfacePolicy,
+  getDefaultActionToolExposureMode,
+  isActionToolExposureSurface,
+  listActionSurfacePolicies,
+  resolveActionSurfaceAvailability,
+  resolveActionToolExposureModeForSurface,
+  type ActionSurfaceAvailability,
+  type ActionSurfaceAvailabilityReason,
+  type ActionSurfacePolicy,
+  type ActionSurfaceSettingsState,
+} from './actionSurfaceAvailability.js';
 
 export {
   createActionExecutor,
@@ -85,8 +106,42 @@ export {
   type ApprovalQueueListResultV1,
   type ApprovalQueueQueryPlanV1,
 } from './actionExecutor.js';
+export {
+  createRuntimeActionDisabledResult,
+  createUnavailableRuntimeActionExecutor,
+  dispatchRuntimeAction,
+  resolveRuntimeActionExecutionFamily,
+  type RuntimeActionDisabledReason,
+  type RuntimeActionExecute,
+  type RuntimeActionExecuteArgs,
+  type RuntimeActionExecuteArgsFor,
+  type RuntimeActionExecutionFamily,
+  type RuntimeActionInputById,
+  type RuntimeActionResultById,
+} from './executor/index.js';
 
-export { resolveEffectiveActionInputFields, type EffectiveActionInputField } from './actionInputHintsRuntime.js';
+export {
+  assertNonEscalatingPermissionMode,
+  resolveNearestPermissionModeAtOrBelow,
+  resolvePermissionPrivilegeOrdinal,
+  type PermissionEscalationDecision,
+  type PermissionPrivilegeOrdinal,
+} from './permissionPrivilege.js';
+
+export {
+  SpawnConfigOptionValueSchema,
+  buildAcpConfigOptionOverridesV1FromConfigOptions,
+  findSpawnConfigOptionAliasConflicts,
+  mergeSpawnConfigOptionAliases,
+  type SpawnConfigOptionValue,
+  type SpawnConfigOptionsAliasConflict,
+} from './sessionSpawnConfigOptions.js';
+
+export {
+  normalizeActionInputByFieldHints,
+  resolveEffectiveActionInputFields,
+  type EffectiveActionInputField,
+} from './actionInputHintsRuntime.js';
 export { buildActionDraftSeedInput } from './actionDraftSeed.js';
 export {
   describeActionInputFieldForVoice,
