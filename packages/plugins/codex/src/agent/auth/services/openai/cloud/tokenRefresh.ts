@@ -1,7 +1,7 @@
 import {
   ConnectedServiceCredentialRecordV1Schema,
   type ConnectedServiceCredentialRecordV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 export type CodexChatGptTokensRefreshBridgeResponse = Readonly<{
   accessToken: string;

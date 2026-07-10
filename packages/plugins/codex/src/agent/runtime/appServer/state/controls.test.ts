@@ -4,7 +4,7 @@ import {
     SESSION_CONFIG_OPTIONS_STATE_KEY,
     SESSION_MODELS_STATE_KEY,
     SESSION_MODES_STATE_KEY,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk/sessions';
 
 import {
     buildCodexAppServerSessionControlsMetadataStates,
@@ -155,6 +155,77 @@ describe('Codex app-server session controls', () => {
             sessionModelsState: metadataSnapshot[SESSION_MODELS_STATE_KEY],
             sessionConfigOptionsState: metadataSnapshot[SESSION_CONFIG_OPTIONS_STATE_KEY],
         });
+    });
+
+    it('uses provider-declared service-tier metadata instead of only auth/model hardcoding', async () => {
+        const client = {
+            request: vi.fn(async (method: string) => {
+                if (method === 'collaborationMode/list') {
+                    return { data: [{ id: 'default', name: 'Default', mode: 'default' }] };
+                }
+                if (method === 'model/list') {
+                    return {
+                        data: [
+                            {
+                                id: 'gpt-5.4',
+                                displayName: 'GPT-5.4',
+                                isDefault: true,
+                                supportedReasoningEfforts: [
+                                    { reasoningEffort: 'low', description: 'Fast responses' },
+                                    { reasoningEffort: 'medium', description: 'Balanced' },
+                                    { reasoningEffort: 'high', description: 'Deep' },
+                                    { reasoningEffort: 'xhigh', description: 'Extra deep' },
+                                ],
+                                defaultReasoningEffort: 'medium',
+                                additionalSpeedTiers: ['fast'],
+                                serviceTiers: [
+                                    { id: 'priority', name: 'Fast', description: '1.5x speed, increased usage' },
+                                ],
+                            },
+                        ],
+                    };
+                }
+                throw new Error(`Unexpected method: ${method}`);
+            }),
+        };
+
+        const snapshot = await readCodexAppServerSessionControls({
+            client,
+            authMethod: null,
+            currentModelId: 'gpt-5.4',
+            currentServiceTier: 'fast',
+        });
+
+        expect(snapshot.availableModels).toEqual([
+            {
+                id: 'gpt-5.4',
+                name: 'GPT 5.4',
+                modelOptions: [
+                    {
+                        id: 'reasoning_effort',
+                        name: 'Thinking',
+                        type: 'select',
+                        currentValue: 'medium',
+                        options: [
+                            { value: 'low', name: 'Low', description: 'Fast responses' },
+                            { value: 'medium', name: 'Medium', description: 'Balanced' },
+                            { value: 'high', name: 'High', description: 'Deep' },
+                            { value: 'xhigh', name: 'XHigh', description: 'Extra deep' },
+                        ],
+                    },
+                    {
+                        id: 'service_tier',
+                        name: 'Speed',
+                        type: 'select',
+                        currentValue: 'fast',
+                        options: [
+                            { value: 'standard', name: 'Standard' },
+                            { value: 'fast', name: 'Fast', description: '1.5x speed, increased usage' },
+                        ],
+                    },
+                ],
+            },
+        ]);
     });
 
     it('resolves collaboration-mode selection with the provider default model when the current model is missing', () => {

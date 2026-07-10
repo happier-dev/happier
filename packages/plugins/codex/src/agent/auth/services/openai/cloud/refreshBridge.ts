@@ -2,14 +2,11 @@ import {
   ConnectedServiceBindingsV1Schema,
   ConnectedServiceAuthGroupIdSchema,
   ConnectedServiceProfileIdSchema,
-} from '@happier-dev/protocol';
-import { readSessionMetadataConnectedServiceBindings } from '@happier-dev/agents';
+  readSessionMetadataConnectedServiceBindings,
+} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 import { z } from 'zod';
 
 import type { CodexConnectedServiceRuntimeFailureClassification } from '../../runtime/auth/failure.js';
-
-export const CODEX_CHATGPT_AUTH_TOKENS_REFRESH_PATH =
-  '/connected-service-auth/openai-codex/chatgpt-auth-tokens/refresh';
 
 export const CodexChatGptAuthTokensRefreshSelectionSchema = z.discriminatedUnion('kind', [
   z.object({

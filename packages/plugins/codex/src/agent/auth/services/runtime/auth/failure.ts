@@ -1,4 +1,4 @@
-import type { ConnectedServiceId, ConnectedServiceLimitCategoryV1, ConnectedServiceProfileId } from '@happier-dev/protocol';
+import type { ConnectedServiceId, ConnectedServiceLimitCategoryV1, ConnectedServiceProfileId } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 export type CodexConnectedServiceRuntimeFailureKind =
   | 'usage_limit'
@@ -19,6 +19,9 @@ export type CodexConnectedServiceRuntimeFailureClassification = Readonly<{
   resetsAtMs: number | null;
   retryAfterMs: number | null;
   planType: string | null;
+  sourceProviderAccountId?: string | null;
+  sourceAccountLabel?: string | null;
+  groupGeneration?: number | null;
   rateLimits: unknown | null;
   source: 'structured_provider_error' | 'stable_provider_message' | 'provider_runtime_marker';
   recoveryAction?: CodexConnectedServiceRecoveryAction | null;
@@ -43,6 +46,11 @@ export type ClassifyCodexConnectedServiceAuthFailureInput = Readonly<{
   groupId: string | null;
   nowMs?: number | null;
   genericRuntimeIssueSource?: CodexConnectedServiceGenericRuntimeIssueSource;
+  sourceAccountIdentity?: Readonly<{
+    providerAccountId?: string | null;
+    accountLabel?: string | null;
+    groupGeneration?: string | number | null;
+  }> | null;
 }>;
 
 const CODEX_ACCOUNT_CHANGED_MESSAGE =
@@ -138,6 +146,16 @@ function readDurationSecondsAsMs(value: unknown): number | null {
   return Math.trunc(numeric * 1000);
 }
 
+function readNonNegativeInteger(value: unknown): number | null {
+  const numeric = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && value.trim().length > 0
+      ? Number(value)
+      : null;
+  if (numeric === null || !Number.isFinite(numeric) || numeric < 0) return null;
+  return Math.trunc(numeric);
+}
+
 function readRetryAfterMs(record: Record<string, unknown> | null): number | null {
   const explicitMs = readDurationMs(record?.retryAfterMs ?? record?.retry_after_ms);
   if (explicitMs !== null) return explicitMs;
@@ -170,6 +188,11 @@ function buildClassification(
     recoveryAction?: CodexConnectedServiceRecoveryAction | null;
   }>,
 ): CodexConnectedServiceRuntimeFailureClassification {
+  const sourceProviderAccountId = readString(input.sourceAccountIdentity?.providerAccountId);
+  const sourceAccountLabel = sourceProviderAccountId
+    ? readString(input.sourceAccountIdentity?.accountLabel)
+    : null;
+  const groupGeneration = readNonNegativeInteger(input.sourceAccountIdentity?.groupGeneration);
   return {
     kind: params.kind,
     ...(params.limitCategory ? { limitCategory: params.limitCategory } : {}),
@@ -179,6 +202,9 @@ function buildClassification(
     resetsAtMs: params.resetsAtMs ?? null,
     retryAfterMs: params.retryAfterMs ?? null,
     planType: params.planType ?? null,
+    ...(sourceProviderAccountId ? { sourceProviderAccountId } : {}),
+    ...(sourceProviderAccountId && sourceAccountLabel ? { sourceAccountLabel } : {}),
+    ...(groupGeneration === null ? {} : { groupGeneration }),
     rateLimits: params.rateLimits ?? null,
     source: params.source,
     ...(params.recoveryAction ? { recoveryAction: params.recoveryAction } : {}),

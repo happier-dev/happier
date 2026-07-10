@@ -1,8 +1,8 @@
 import type {
     SessionWorkStateStatusV1,
     SessionWorkStateV1,
-} from '@happier-dev/protocol';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+} from '@happier-dev/plugin-sdk/experimental/sessions/workState';
+import { SESSION_WORK_STATE_GOAL_RPC_METHODS_V1 } from '@happier-dev/plugin-sdk/experimental/sessions/workState';
 
 export type CodexAppServerGoalControlErrorCode =
   | 'goal_not_found'
@@ -57,15 +57,15 @@ export function unsupportedGoalControlMethod(method: string): CodexAppServerGoal
 }
 
 export function unsupportedGoalGet(): CodexAppServerGoalControlError {
-    return unsupportedGoalControlMethod(SESSION_RPC_METHODS.SESSION_GOAL_GET);
+    return unsupportedGoalControlMethod(SESSION_WORK_STATE_GOAL_RPC_METHODS_V1.get);
 }
 
 export function unsupportedGoalSet(): CodexAppServerGoalControlError {
-    return unsupportedGoalControlMethod(SESSION_RPC_METHODS.SESSION_GOAL_SET);
+    return unsupportedGoalControlMethod(SESSION_WORK_STATE_GOAL_RPC_METHODS_V1.set);
 }
 
 export function unsupportedGoalClear(): CodexAppServerGoalControlError {
-    return unsupportedGoalControlMethod(SESSION_RPC_METHODS.SESSION_GOAL_CLEAR);
+    return unsupportedGoalControlMethod(SESSION_WORK_STATE_GOAL_RPC_METHODS_V1.clear);
 }
 
 export function goalThreadIdMissing(): CodexAppServerGoalControlError {

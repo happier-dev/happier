@@ -19,7 +19,7 @@ describe('resolveCodexVendorResumeSupportParamsForSpawn', () => {
         codexBackendMode: 'acp',
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           provider: {
             backendMode: 'appServer',
           },

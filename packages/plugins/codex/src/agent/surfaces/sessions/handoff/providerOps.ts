@@ -1,7 +1,7 @@
-import type { HandoffSurfaceV1, SessionStateUpdateV1 } from '@happier-dev/agents';
-import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
+import type { HandoffSurfaceV1, SessionStateUpdateV1 } from '@happier-dev/plugin-sdk';
+import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/plugin-sdk/sessions';
 
-import type { CodexSessionHandoffBundle } from './bundle.js';
+import { CodexSessionHandoffBundleSchema } from './bundle.js';
 import { exportCodexSessionBundle } from './export.js';
 import { importCodexSessionBundle } from './import.js';
 
@@ -29,13 +29,13 @@ export const codexHandoffSurface = {
     }
   },
   importBundle: async (params) => {
-    const bundle = params.bundle as Partial<CodexSessionHandoffBundle>;
-    if (bundle.providerId !== 'codex') {
+    const parsedBundle = CodexSessionHandoffBundleSchema.safeParse(params.bundle);
+    if (!parsedBundle.success) {
       return { ok: false, code: 'bundle_invalid', message: `Codex handoff import received unsupported bundle` };
     }
     try {
       const imported = await importCodexSessionBundle({
-        bundle: bundle as CodexSessionHandoffBundle,
+        bundle: parsedBundle.data,
         targetPath: params.targetDirectory,
         env: process.env,
       });
@@ -58,6 +58,9 @@ export const codexHandoffSurface = {
           source: imported.externalSource,
           launch: {
             directory: imported.resume.directory,
+            ...(imported.resume.codexBackendMode
+              ? { resumePlanOptions: { codexBackendMode: imported.resume.codexBackendMode } }
+              : {}),
             ...(imported.resume.environmentVariables ? { environmentVariables: imported.resume.environmentVariables } : {}),
             sessionStateUpdates,
           },

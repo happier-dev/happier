@@ -3,14 +3,15 @@ import type {
   HostRuntimeControlAppServerDelegateInputV1,
   HostRuntimeControlContextV1,
   HostRuntimeControlResultV1,
-} from '@happier-dev/agents';
-import { readSessionMetadataRuntimeDescriptor, resolveCodexSessionBackendMode } from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import { readSessionMetadataRuntimeDescriptor } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
 
 import {
   createCodexAppServerClient,
   type CodexAppServerClient,
 } from '../client.js';
+import { resolveCodexSessionBackendMode } from '../../../lifecycle/backendMode.js';
 
 export type CodexAppServerControlClientResult<T> =
   | Readonly<{ ok: true; value: T }>

@@ -1,4 +1,4 @@
-import type { SessionRollbackTarget, SessionTurnV1 } from '@happier-dev/protocol';
+import type { SessionRollbackTarget, SessionTurnV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 export type CodexAppServerRollbackPlan = Readonly<{
     numTurns: number;

@@ -145,6 +145,118 @@ describe('mapCodexRolloutEventToActions', () => {
         ]);
     });
 
+    it('maps canonical title-control function calls when debug is disabled', () => {
+        const actions = mapCodexRolloutEventToActions(
+            {
+                type: 'response_item',
+                payload: {
+                    type: 'function_call',
+                    name: 'session_title_set',
+                    arguments: '{"title":"Runtime QA title"}',
+                    call_id: 'call_title_1',
+                },
+            },
+            { debug: false },
+        );
+
+        expect(actions).toEqual([
+            {
+                type: 'tool-call',
+                callId: 'call_title_1',
+                name: 'change_title',
+                input: { title: 'Runtime QA title', _happier: { sessionMode: 'local_control' } },
+            },
+        ]);
+    });
+
+    it('maps MCP title-control aliases to canonical change_title when debug is disabled', () => {
+        const actions = mapCodexRolloutEventToActions(
+            {
+                type: 'response_item',
+                payload: {
+                    type: 'function_call',
+                    name: 'mcp__happy__change_title',
+                    arguments: '{"title":"MCP Alias QA title"}',
+                    call_id: 'call_title_mcp_1',
+                },
+            },
+            { debug: false },
+        );
+
+        expect(actions).toEqual([
+            {
+                type: 'tool-call',
+                callId: 'call_title_mcp_1',
+                name: 'change_title',
+                input: { title: 'MCP Alias QA title', _happier: { sessionMode: 'local_control' } },
+                source: {
+                    kind: 'mcp',
+                    serverName: 'happy',
+                    toolName: 'change_title',
+                },
+            },
+        ]);
+    });
+
+    it('maps namespaced MCP function_call records from Codex rollout payloads', () => {
+        const actions = mapCodexRolloutEventToActions(
+            {
+                type: 'response_item',
+                payload: {
+                    type: 'function_call',
+                    name: 'js',
+                    namespace: 'mcp__node_repl',
+                    arguments: '{"code":"nodeRepl.write(1)"}',
+                    call_id: 'call_namespace_1',
+                },
+            },
+            { debug: false },
+        );
+
+        expect(actions).toEqual([
+            {
+                type: 'tool-call',
+                callId: 'call_namespace_1',
+                name: 'mcp__node_repl__js',
+                input: { code: 'nodeRepl.write(1)', _happier: { sessionMode: 'local_control' } },
+                source: {
+                    kind: 'mcp',
+                    serverName: 'node_repl',
+                    toolName: 'js',
+                },
+            },
+        ]);
+    });
+
+    it('maps injected Happier MCP server names without losing the server namespace', () => {
+        const actions = mapCodexRolloutEventToActions(
+            {
+                type: 'response_item',
+                payload: {
+                    type: 'function_call',
+                    name: 'mcp__happier__context7__resolve-library-id',
+                    arguments: '{"libraryName":"react"}',
+                    call_id: 'call_happier_context7_1',
+                },
+            },
+            { debug: false },
+        );
+
+        expect(actions).toEqual([
+            {
+                type: 'tool-call',
+                callId: 'call_happier_context7_1',
+                name: 'mcp__happier__context7__resolve-library-id',
+                input: { libraryName: 'react', _happier: { sessionMode: 'local_control' } },
+                source: {
+                    kind: 'mcp',
+                    serverName: 'happier__context7',
+                    toolName: 'resolve-library-id',
+                },
+            },
+        ]);
+    });
+
     it('maps apply_patch custom_tool_call to Patch tool-call with patch string', () => {
         const actions = mapCodexRolloutEventToActions(
             {

@@ -4,7 +4,7 @@ import type {
   FetchRuntimeRequestV1,
   FetchRuntimeResponseV1,
 } from '@happier-dev/plugin-sdk';
-import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 import { describe, expect, it, vi } from 'vitest';
 
 import { OPENAI_CODEX_AUTH_BASE_URL } from './exchange.js';

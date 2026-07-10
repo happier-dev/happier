@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { ConnectedServiceQuotaSnapshotV1Schema, buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+import type { FetchRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import { ConnectedServiceQuotaSnapshotV1Schema, buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 import {
   createOpenAiCodexQuotaFetcher,
@@ -49,6 +50,148 @@ describe('createOpenAiCodexQuotaFetcher', () => {
     expect(snapshot?.planLabel).toBe('pro');
     expect(snapshot?.activeAccountId).toBe('acct');
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://chatgpt.com/backend-api/wham/usage');
+  });
+
+  it('loads reset-credit inventory with the same OAuth account headers for the default Codex usage endpoint', async () => {
+    const now = 1_000_000;
+    const requests: Array<Readonly<{ url: string; headers: Readonly<Record<string, string>> }>> = [];
+    const runtimeFetch = vi.fn(async (request: Parameters<FetchRuntimeServiceV1>[0]) => {
+      const { url, headers } = request;
+      requests.push({ url, headers: headers as Readonly<Record<string, string>> });
+      if (url.endsWith('/rate-limit-reset-credits')) {
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          headers: {},
+          json: async () => ({
+            available_count: 1,
+            credits: [{
+              id: 'credit-1',
+              reset_type: 'codex_rate_limits',
+              status: 'available',
+              expires_at: '2026-05-24T10:00:00.000Z',
+              profile_image_url: 'https://example.com/private-avatar.png',
+              profile_user_id: 'user-secret',
+            }],
+          }),
+          text: async () => '',
+          arrayBuffer: async () => new ArrayBuffer(0),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        json: async () => ({
+          plan_type: 'pro',
+          rate_limit: {
+            primary_window: { used_percent: 100, reset_at: 1700000000 },
+          },
+          rate_limit_reset_credits: { available_count: 1 },
+        }),
+        text: async () => '',
+        arrayBuffer: async () => new ArrayBuffer(0),
+      };
+    });
+
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'at',
+        refreshToken: 'rt',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: 'user@example.com',
+      },
+    });
+
+    const fetcher = createOpenAiCodexQuotaFetcher({ runtimeFetch });
+    const snapshot = await fetcher.loadQuota({ record, now, signal: new AbortController().signal });
+
+    expect(requests.map((request) => request.url)).toEqual([
+      'https://chatgpt.com/backend-api/wham/usage',
+      'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits',
+    ]);
+    expect(requests[1]?.headers).toMatchObject({
+      Authorization: 'Bearer at',
+      'ChatGPT-Account-Id': 'acct',
+    });
+    expect(snapshot?.recoveryCredits).toEqual({
+      availableCount: 1,
+      credits: [expect.objectContaining({
+        id: 'credit-1',
+        status: 'available',
+        expiresAtMs: Date.parse('2026-05-24T10:00:00.000Z'),
+      })],
+    });
+    expect(JSON.stringify(snapshot?.recoveryCredits)).not.toContain('private-avatar');
+    expect(JSON.stringify(snapshot?.recoveryCredits)).not.toContain('user-secret');
+  });
+
+  it('consumes reset credits with the same OAuth account headers', async () => {
+    const now = 1_000_000;
+    const requests: Array<Parameters<FetchRuntimeServiceV1>[0]> = [];
+    const runtimeFetch = vi.fn(async (request: Parameters<FetchRuntimeServiceV1>[0]) => {
+      requests.push(request);
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        json: async () => ({ ok: true }),
+        text: async () => '',
+        arrayBuffer: async () => new ArrayBuffer(0),
+      };
+    });
+
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'at',
+        refreshToken: 'rt',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: 'user@example.com',
+      },
+    });
+
+    const fetcher = createOpenAiCodexQuotaFetcher({ runtimeFetch });
+    await fetcher.consumeRecoveryCredit?.({
+      record,
+      now,
+      idempotencyKey: 'consume:work:credit-1',
+      providerCreditId: 'credit-1',
+      signal: new AbortController().signal,
+    });
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      url: 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume',
+      method: 'POST',
+      headers: expect.objectContaining({
+        Authorization: 'Bearer at',
+        'ChatGPT-Account-Id': 'acct',
+        'Idempotency-Key': 'consume:work:credit-1',
+      }),
+      body: {
+        idempotency_key: 'consume:work:credit-1',
+        reset_credit_id: 'credit-1',
+      },
+    });
   });
 
   it('fetches and parses approved OpenAI Codex usage proxy data into a quota snapshot', async () => {

@@ -18,7 +18,7 @@ describe('Codex app-server permission profile params', () => {
       support: 'unknown',
       target: 'thread',
     })).toEqual({
-      permissions: { type: 'profile', id: ':read-only' },
+      permissions: ':read-only',
     });
 
     expect(buildCodexAppServerPermissionParams({
@@ -30,20 +30,32 @@ describe('Codex app-server permission profile params', () => {
       support: 'unknown',
       target: 'thread',
     })).toEqual({
-      permissions: { type: 'profile', id: ':workspace' },
+      permissions: ':workspace',
     });
 
+    const dangerPolicy = {
+      approvalPolicy: 'never',
+      sandbox: 'danger-full-access',
+      sandboxPolicy: { type: 'dangerFullAccess' },
+    };
+
     expect(buildCodexAppServerPermissionParams({
-      policy: {
-        approvalPolicy: 'never',
-        sandbox: 'danger-full-access',
-        sandboxPolicy: { type: 'dangerFullAccess' },
-      },
+      policy: dangerPolicy,
       support: 'unknown',
       target: 'thread',
-    })).toEqual({
-      permissions: { type: 'profile', id: ':danger-no-sandbox' },
-    });
+    })).toEqual(buildCodexAppServerLegacyPermissionParams({
+      policy: dangerPolicy,
+      target: 'thread',
+    }));
+
+    expect(buildCodexAppServerPermissionParams({
+      policy: dangerPolicy,
+      support: 'unknown',
+      target: 'turn',
+    })).toEqual(buildCodexAppServerLegacyPermissionParams({
+      policy: dangerPolicy,
+      target: 'turn',
+    }));
   });
 
   test('falls back to legacy thread and turn fields after permission profiles are unsupported', () => {
@@ -77,6 +89,35 @@ describe('Codex app-server permission profile params', () => {
       target: 'turn',
     })).toEqual({
       approvalPolicy: 'never',
+      approvalsReviewer: 'user',
+      sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/repo'] },
+    });
+  });
+
+  test('preserves approval policy fields instead of profile-only params for prompting policies', () => {
+    const policy = {
+      approvalPolicy: 'on-request',
+      approvalsReviewer: 'user',
+      sandbox: 'workspace-write',
+      sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/repo'] },
+    };
+
+    expect(buildCodexAppServerPermissionParams({
+      policy,
+      support: 'unknown',
+      target: 'thread',
+    })).toEqual({
+      approvalPolicy: 'on-request',
+      approvalsReviewer: 'user',
+      sandbox: 'workspace-write',
+    });
+
+    expect(buildCodexAppServerPermissionParams({
+      policy,
+      support: 'unknown',
+      target: 'turn',
+    })).toEqual({
+      approvalPolicy: 'on-request',
       approvalsReviewer: 'user',
       sandboxPolicy: { type: 'workspaceWrite', writableRoots: ['/repo'] },
     });

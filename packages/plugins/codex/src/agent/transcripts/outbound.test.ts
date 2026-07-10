@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { RuntimeOutboundTranscriptToolNormalizationV1 } from '@happier-dev/agents';
+import type { RuntimeOutboundTranscriptToolNormalizationV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 import { createCodexOutboundTranscriptDispatchFacet } from './outbound.js';
 
@@ -21,7 +21,7 @@ function createMetadata(): Record<string, unknown> {
   return {
     runtimeDescriptorV1: {
       v: 1,
-      providerId: 'codex',
+      agentId: 'codex',
       provider: {
         backendMode: 'appServer',
         providerExtra: {
@@ -163,6 +163,33 @@ describe('Codex outbound transcript dispatch', () => {
       },
       backendMode: 'appServer',
       externalKey: 'usage-1',
+    });
+  });
+
+  it('classifies Codex agent_message transcript bodies as agent messages', () => {
+    const facet = createCodexOutboundTranscriptDispatchFacet();
+
+    const plan = facet.prepareDispatch({
+      body: {
+        type: 'agent_message',
+        text: 'codex assistant text',
+      },
+      randomId: () => 'local-agent-message',
+    });
+
+    expect(plan).toMatchObject({
+      localId: 'local-agent-message',
+      messageRole: 'agent',
+      content: {
+        role: 'agent',
+        content: {
+          type: 'codex',
+          data: {
+            type: 'agent_message',
+            text: 'codex assistant text',
+          },
+        },
+      },
     });
   });
 });

@@ -1,0 +1,67 @@
+{
+  "v": 1,
+  "id": "codex",
+  "enableEnvVar": "HAPPIER_E2E_PROVIDER_CODEX",
+  "protocol": "acp",
+  "traceProvider": "codex",
+  "requiredBinaries": ["codex"],
+  "auth": {
+    "mode": "auto",
+    "env": {
+      "requiredAnyOf": [["OPENAI_API_KEY"], ["CODEX_API_KEY"]],
+      "env": { "NO_BROWSER": "1" }
+    },
+    "host": {
+      "envUnset": ["NO_BROWSER"]
+    }
+  },
+  "permissions": {
+    "v": 1,
+    "acp": {
+      "toolPermissionPromptsByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "outsideWorkspaceWriteAllowedByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "outsideWorkspaceWriteMustCompleteByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "outsideWorkspaceRequireTaskCompleteByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "expectToolPermissionPrompts": false,
+      "permissionSurfaceOutsideWorkspaceYolo": false
+    }
+  },
+  "cli": {
+    "subcommand": "codex",
+    "extraArgs": ["--started-by", "terminal"],
+    "env": {
+      "HEADLESS": "1",
+      "HAPPIER_VARIANT": "dev",
+      "HAPPIER_CODEX_BACKEND_MODE": "acp",
+      "HAPPIER_E2E_ACP_TRACE_MARKERS": "1",
+      "HAPPIER_ACP_PROBE_TIMEOUT_CODEX_MS": "20000"
+    },
+    "envFrom": {
+      "HAPPIER_CODEX_ACP_BIN": "HAPPIER_E2E_PROVIDER_CODEX_ACP_BIN"
+    }
+  }
+}

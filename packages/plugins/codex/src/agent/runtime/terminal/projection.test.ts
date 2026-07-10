@@ -1,4 +1,4 @@
-import type { TerminalRuntimeProjectionHostServiceV1 } from '@happier-dev/agents';
+import type { TerminalRuntimeProjectionHostServiceV1 } from '@happier-dev/plugin-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 type ProjectionModule = typeof import('./projection.js');
@@ -96,7 +96,7 @@ describe('createCodexTerminalRuntimeProjection', () => {
 
         expect(projection.publishSubagentStarted).toHaveBeenCalledWith({
             providerId: 'codex',
-            providerKind: 'codex-native-subagent',
+            agentKind: 'codex-native-subagent',
             subagentId: 'thread-1',
             sidechainId: 'thread-1',
             label: 'Review',
@@ -123,12 +123,12 @@ describe('createCodexTerminalRuntimeProjection', () => {
 
         expect(projection.publishSubagentCompleted).toHaveBeenCalledWith({
             providerId: 'codex',
-            providerKind: 'codex-native-subagent',
+            agentKind: 'codex-native-subagent',
             subagentId: 'thread-1',
             sidechainId: 'thread-1',
             status: 'aborted',
             lifecycleDetail: {
-                providerState: 'interrupted',
+                agentState: 'interrupted',
                 reason: 'provider_interrupted',
                 summaryText: 'Stopped by user',
             },

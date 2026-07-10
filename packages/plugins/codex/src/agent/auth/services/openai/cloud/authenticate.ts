@@ -1,7 +1,7 @@
 import {
   buildConnectedServiceCredentialRecord,
   type ConnectedServiceCredentialRecordV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 import type {
   CloudAuthDiagnosticV1,
   CloudConnectAuthenticateOptionsV1,
@@ -10,6 +10,7 @@ import type {
   FetchRuntimeHeadersV1,
   FetchRuntimeServiceV1,
 } from '@happier-dev/plugin-sdk';
+import { sleepWithSignal as sdkSleepWithSignal } from '@happier-dev/plugin-sdk/experimental/timeout';
 
 import { resolveCodexCloudAuthMode } from './authenticator.js';
 import {
@@ -163,20 +164,11 @@ function createFetchAdapter(runtimeFetch: FetchRuntimeServiceV1, signal: AbortSi
 }
 
 async function sleepWithSignal(ms: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) throw new Error('connect_oauth_cancelled');
-  await new Promise<void>((resolve, reject) => {
-    const finish = () => {
-      signal.removeEventListener('abort', abort);
-      resolve();
-    };
-    const timeout = setTimeout(finish, ms);
-    const abort = () => {
-      clearTimeout(timeout);
-      signal.removeEventListener('abort', abort);
-      reject(new Error('connect_oauth_cancelled'));
-    };
-    signal.addEventListener('abort', abort, { once: true });
-  });
+  try {
+    await sdkSleepWithSignal(ms, signal);
+  } catch {
+    throw new Error('connect_oauth_cancelled');
+  }
 }
 
 async function authenticateDevice(

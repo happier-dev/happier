@@ -10,7 +10,7 @@ describe('Codex external session working-directory policy', () => {
       source,
       remoteSessionId: ' session-1 ',
     })).toEqual({
-      providerId: 'codex',
+      agentId: 'codex',
       source,
       remoteSessionId: ' session-1 ',
     });

@@ -3,7 +3,8 @@ import { lstat, readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-import type { ExternalSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/sessions';
+import { expandHomePath, readTrimmedString as readEnvString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 export type CodexExternalSessionHomeEntry = Readonly<{
   codexHome: string;
@@ -44,10 +45,6 @@ function normalizeHomePath(raw: string): string {
   return resolve(raw.trim());
 }
 
-function readEnvString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
 function resolveHomeDirFromEnvironment(env: Readonly<Record<string, string | undefined>>): string {
   return readEnvString(env.HOME) ?? readEnvString(env.USERPROFILE) ?? homedir();
 }
@@ -55,11 +52,7 @@ function resolveHomeDirFromEnvironment(env: Readonly<Record<string, string | und
 function expandHomeDirPath(value: string, env: Readonly<Record<string, string | undefined>>): string {
   const trimmed = value.trim();
   if (!trimmed) return '';
-  if (trimmed === '~') return resolveHomeDirFromEnvironment(env);
-  if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
-    return resolve(resolveHomeDirFromEnvironment(env), trimmed.slice(2));
-  }
-  return resolve(trimmed);
+  return resolve(expandHomePath(trimmed, resolveHomeDirFromEnvironment(env)));
 }
 
 export function resolveConfiguredCodexHomePath(env: Readonly<Record<string, string | undefined>>): string {

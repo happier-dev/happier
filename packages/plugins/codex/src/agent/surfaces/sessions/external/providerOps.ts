@@ -1,19 +1,18 @@
-import {
-  buildCodexSpawnRuntimeAffinityCompatFields,
-  type CodexBackendMode,
-} from '@happier-dev/agents';
+import type {
+  ExternalSessionActivityResultV1,
+  ExternalSessionCandidatePageV1,
+  ExternalSessionFollowLeaseV1,
+  ExternalSessionFollowTranscriptPathResolutionV1,
+  ExternalSessionResolveFollowTranscriptPathRequestV1,
+  ExternalSessionTranscriptPageV1,
+} from '@happier-dev/plugin-sdk/sessions';
 import type {
   BackendSurfaceResultV1,
   ExternalSessionActivityRequestV1,
-  ExternalSessionActivityResultV1,
-  ExternalSessionCandidatePageV1,
   ExternalSessionFollowLeaseRequestV1,
-  ExternalSessionFollowLeaseV1,
-  ExternalSessionFollowTranscriptPathResolutionV1,
   ExternalSessionFailureCodeV1,
   ExternalSessionListCandidatesRequestV1,
   ExternalSessionReadAfterRequestV1,
-  ExternalSessionResolveFollowTranscriptPathRequestV1,
   ExternalSessionResolveLinkedIdentityRequestV1,
   ExternalSessionResolveLinkIdentityRequestV1,
   ExternalSessionResolveSourceRequestV1,
@@ -23,15 +22,18 @@ import type {
   ExternalSessionTakeoverLaunchRequestV1,
   ExternalSessionTakeoverLaunchResultV1,
   ExternalSessionTranscriptPageRequestV1,
-  ExternalSessionTranscriptPageV1,
-} from '@happier-dev/agents';
-import {
-  readRuntimeDescriptorV1FromMetadata,
-  type ExternalSessionsSource,
-  type RuntimeDescriptorV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk';
+import type {
+  ExternalSessionsSource,
+  RuntimeDescriptorV1,
+} from '@happier-dev/plugin-sdk/sessions';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/plugin-sdk/sessions';
 
 import { homeEntries, resolveConfiguredCodexHomePath } from '../../../rollout/discovery/homeEntries.js';
+import {
+  normalizeCodexBackendMode,
+  type CodexBackendMode,
+} from '../../../../protocol/runtimeDescriptorV1.js';
 import { resolveCodexExternalSessionLinkIdentity } from './identity.js';
 import { validateCodexExternalSessionsSourcePolicy } from './sourceValidation.js';
 
@@ -42,7 +44,7 @@ export type CodexExternalSessionTakeoverSpawnPlan = Readonly<{
   resume: string;
   approvedNewDirectoryCreation: true;
   transcriptStorage: 'direct';
-  codexBackendMode?: CodexBackendMode;
+  backendModeHint?: CodexBackendMode;
   environmentVariables: Readonly<{ CODEX_HOME: string }>;
 }>;
 
@@ -67,7 +69,7 @@ export function resolveCodexExternalSessionTakeoverSpawnPlan(params: Readonly<{
   remoteSessionId: string;
   directory: string | null | undefined;
   codexHome: string | null | undefined;
-  codexBackendMode?: CodexBackendMode | null;
+  backendMode?: CodexBackendMode | null;
 }>): CodexExternalSessionTakeoverSpawnPlan | null {
   const directory = normalizeNonEmptyString(params.directory);
   const codexHome = normalizeNonEmptyString(params.codexHome);
@@ -80,9 +82,7 @@ export function resolveCodexExternalSessionTakeoverSpawnPlan(params: Readonly<{
     resume: params.remoteSessionId,
     approvedNewDirectoryCreation: true,
     transcriptStorage: 'direct',
-    ...buildCodexSpawnRuntimeAffinityCompatFields(
-      params.codexBackendMode ? { backendMode: params.codexBackendMode } : null,
-    ),
+    ...(params.backendMode ? { backendModeHint: params.backendMode } : {}),
     environmentVariables: {
       CODEX_HOME: codexHome,
     },
@@ -116,6 +116,18 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
 
 function readExternalSessionRuntimeDescriptor(value: Readonly<Record<string, unknown>>): RuntimeDescriptorV1 | null {
   return readRuntimeDescriptorV1FromMetadata(value);
+}
+
+function resolveCodexTakeoverBackendMode(metadata: Readonly<Record<string, unknown>>): CodexBackendMode | null {
+  const runtimeDescriptor = readRuntimeDescriptorV1FromMetadata(metadata);
+  const descriptorMode = normalizeCodexBackendMode(runtimeDescriptor?.agent.backendMode);
+  if (descriptorMode) {
+    return descriptorMode;
+  }
+
+  const externalSession = readRecord(metadata.externalSessionV1);
+  return normalizeCodexBackendMode(externalSession?.codexBackendMode)
+    ?? normalizeCodexBackendMode(metadata.codexBackendMode);
 }
 
 function resolveSourcePolicy(params: Readonly<{
@@ -171,15 +183,15 @@ type ExternalSessionTranscriptStoreService = NonNullable<
 async function mapTranscriptCall<TValue>(
   runtime: ExternalSessionRuntimeContextV1 | undefined,
   operation: (service: ExternalSessionTranscriptStoreService) => Promise<TValue>,
-): Promise<BackendSurfaceResultV1<TValue, 'provider_unavailable'>> {
+): Promise<BackendSurfaceResultV1<TValue, 'agent_unavailable'>> {
   const service = requireTranscriptService(runtime);
   if (!service) {
-    return fail<TValue, 'provider_unavailable'>('provider_unavailable', 'external_session_transcript_service_unavailable');
+    return fail<TValue, 'agent_unavailable'>('agent_unavailable', 'external_session_transcript_service_unavailable');
   }
   try {
     return ok(await operation(service));
   } catch {
-    return fail<TValue, 'provider_unavailable'>('provider_unavailable', 'external_session_transcript_service_failed');
+    return fail<TValue, 'agent_unavailable'>('agent_unavailable', 'external_session_transcript_service_failed');
   }
 }
 
@@ -210,7 +222,7 @@ export function createCodexExternalSessionSurface(
   return {
     resolveSource: (request: ExternalSessionResolveSourceRequestV1) => resolveSourcePolicy({
       source: request.source,
-      baseProcessEnv: params.baseProcessEnv,
+      baseProcessEnv: request.env ?? params.baseProcessEnv,
     }),
     listCandidates: async (request: ExternalSessionListCandidatesRequestV1) => {
       const resolved = resolveSourcePolicy({
@@ -222,11 +234,11 @@ export function createCodexExternalSessionSurface(
       }
       const service = requireCandidateService(request.runtime);
       if (!service) {
-        return fail<ExternalSessionCandidatePageV1, 'provider_unavailable'>('provider_unavailable', 'external_session_candidate_service_unavailable');
+        return fail<ExternalSessionCandidatePageV1, 'agent_unavailable'>('agent_unavailable', 'external_session_candidate_service_unavailable');
       }
       try {
         return ok(await service.listViaChildHost({
-          providerId: 'codex',
+          agentId: 'codex',
           source: resolved.value.source,
           cursor: request.cursor,
           limit: request.limit,
@@ -234,13 +246,13 @@ export function createCodexExternalSessionSurface(
           searchMode: request.searchMode,
         }));
       } catch {
-        return fail<ExternalSessionCandidatePageV1, 'provider_unavailable'>('provider_unavailable', 'external_session_candidate_service_failed');
+        return fail<ExternalSessionCandidatePageV1, 'agent_unavailable'>('agent_unavailable', 'external_session_candidate_service_failed');
       }
     },
     getActivity: async (request: ExternalSessionActivityRequestV1) => await mapTranscriptCall<ExternalSessionActivityResultV1>(
       request.runtime,
       (service) => service.getActivity({
-        providerId: 'codex',
+        agentId: 'codex',
         source: request.source,
         providerSessionId: request.providerSessionId,
       }),
@@ -248,7 +260,7 @@ export function createCodexExternalSessionSurface(
     pageTranscript: async (request: ExternalSessionTranscriptPageRequestV1) => await mapTranscriptCall<ExternalSessionTranscriptPageV1>(
       request.runtime,
       (service) => service.page({
-        providerId: 'codex',
+        agentId: 'codex',
         source: request.source,
         providerSessionId: request.providerSessionId,
         direction: request.direction,
@@ -260,7 +272,7 @@ export function createCodexExternalSessionSurface(
     readAfterTranscript: async (request: ExternalSessionReadAfterRequestV1) => await mapTranscriptCall<ExternalSessionTranscriptPageV1>(
       request.runtime,
       (service) => service.readAfter({
-        providerId: 'codex',
+        agentId: 'codex',
         source: request.source,
         providerSessionId: request.providerSessionId,
         cursor: request.cursor,
@@ -271,7 +283,7 @@ export function createCodexExternalSessionSurface(
     resolveFollowTranscriptPath: async (request: ExternalSessionResolveFollowTranscriptPathRequestV1) => await mapTranscriptCall<ExternalSessionFollowTranscriptPathResolutionV1>(
       request.runtime,
       (service) => service.resolveFollowTranscriptPath({
-        providerId: 'codex',
+        agentId: 'codex',
         source: request.source,
         providerSessionId: request.providerSessionId,
         reason: request.reason,
@@ -281,7 +293,7 @@ export function createCodexExternalSessionSurface(
     acquireFollowLease: async (request: ExternalSessionFollowLeaseRequestV1) => await mapTranscriptCall<ExternalSessionFollowLeaseV1>(
       request.runtime,
       (service) => service.acquireFollowLease({
-        providerId: 'codex',
+        agentId: 'codex',
         source: request.source,
         providerSessionId: request.providerSessionId,
         reason: request.reason,
@@ -309,10 +321,10 @@ export function createCodexExternalSessionSurface(
     resolveTakeoverLaunch: async (request: ExternalSessionTakeoverLaunchRequestV1) => {
       const service = requireTranscriptService(request.runtime);
       if (!service) {
-        return fail<ExternalSessionTakeoverLaunchResultV1, 'provider_unavailable'>('provider_unavailable', 'external_session_transcript_service_unavailable');
+        return fail<ExternalSessionTakeoverLaunchResultV1, 'agent_unavailable'>('agent_unavailable', 'external_session_transcript_service_unavailable');
       }
       const key = {
-        providerId: 'codex' as const,
+        agentId: 'codex' as const,
         source: request.source,
         providerSessionId: request.providerSessionId,
       };
@@ -331,7 +343,7 @@ export function createCodexExternalSessionSurface(
         remoteSessionId: request.providerSessionId,
         directory,
         codexHome: providerHome,
-        codexBackendMode: null,
+        backendMode: resolveCodexTakeoverBackendMode(request.metadata),
       });
       if (!plan) {
         return fail<ExternalSessionTakeoverLaunchResultV1, 'takeover_not_available'>('takeover_not_available');
@@ -342,6 +354,7 @@ export function createCodexExternalSessionSurface(
         launch: {
           directory: plan.directory,
           environmentVariables: plan.environmentVariables,
+          ...(plan.backendModeHint ? { backendModeHint: plan.backendModeHint } : {}),
         },
       });
     },

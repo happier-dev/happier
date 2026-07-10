@@ -1,20 +1,25 @@
 import {
+  BackendSurfaceOperationCatalogV1,
   definePluginManifest,
-  type PluginBackendContributionV2,
+  type PluginAgentContributionV2,
+  type PluginHookContributionV2,
+  type PluginManagedDependencyContributionV2,
   type PluginManifestV2,
   type PluginMcpContributesV1,
+  type PluginAgentSettingsContributionV1,
   type PluginSystemToolContributionV1,
-} from '@happier-dev/plugin-sdk';
-import {
-  BackendSurfaceOperationCatalogV1,
-  type PluginHookContributionV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/manifest';
+
+import { CODEX_ACP_INSTALLABLE_DESCRIPTOR } from './agent/installables/codexAcp.js';
+import { CODEX_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
 type CodexPluginManifestV2 = Omit<PluginManifestV2, 'contributes'> & Readonly<{
   contributes: Readonly<{
-    backends: ReadonlyArray<PluginBackendContributionV2>;
+    agents: ReadonlyArray<PluginAgentContributionV2>;
     hooks: ReadonlyArray<PluginHookContributionV2>;
+    managedDependencies: ReadonlyArray<PluginManagedDependencyContributionV2>;
     mcp: PluginMcpContributesV1;
+    agentSettings: ReadonlyArray<PluginAgentSettingsContributionV1>;
     systemTools: ReadonlyArray<PluginSystemToolContributionV1>;
   }>;
 }>;
@@ -28,16 +33,16 @@ export const PLUGIN_MANIFEST = definePluginManifest({
   displayName: 'codex',
   description: undefined,
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: ['agents', 'backends', 'mcp', 'hooks'] },
-  targets: {},
-  capabilities: { permissions: [{ capability: 'hooks.register' }] },
+  activationEvents: ['onAgent:codex'],
+  uses: ['agents', 'mcp', 'hooks'],
+  entrypoints: { main: './dist/index.js' },
+  permissions: { required: [], optional: [] },
   contributes: {
-    backends: [
+    agents: [
       {
         kindVersion: 1,
         id: 'codex',
-        agentId: 'codex',
-        engine: { kind: 'custom' },
+        runtime: { kind: 'custom' },
         surfaceHandlers: [
           {
             surfaceApiVersion: 1,
@@ -138,7 +143,67 @@ export const PLUGIN_MANIFEST = definePluginManifest({
             handler: { target: 'daemon' },
           },
         ],
+        surfaces: {
+          externalSession: {
+            sources: [
+              {
+                sourceKind: 'codexHome',
+                schema: {
+                  passthrough: true,
+                  fields: [
+                    { name: 'kind', kind: 'literal', value: 'codexHome' },
+                    { name: 'home', kind: 'enum', values: ['user', 'connectedService'] },
+                    { name: 'homePath', kind: 'string', min: 1, optional: true },
+                    { name: 'connectedServiceId', kind: 'string', min: 1, optional: true },
+                    { name: 'connectedServiceProfileId', kind: 'string', min: 1, optional: true },
+                    { name: 'connectedServiceGroupId', kind: 'string', min: 1, optional: true },
+                  ],
+                  refinements: [
+                    {
+                      kind: 'requiresWhenEquals',
+                      field: 'connectedServiceId',
+                      when: { field: 'home', equals: 'connectedService' },
+                    },
+                    {
+                      kind: 'forbidsWhenEquals',
+                      fields: [
+                        'connectedServiceId',
+                        'connectedServiceProfileId',
+                        'connectedServiceGroupId',
+                      ],
+                      when: { field: 'home', equals: 'user' },
+                    },
+                  ],
+                },
+                key: {
+                  segments: [
+                    { kind: 'literal', value: 'codexHome' },
+                    { kind: 'homeMode', field: 'home' },
+                    {
+                      kind: 'conditionalField',
+                      field: 'connectedServiceId',
+                      when: { field: 'home', equals: 'connectedService' },
+                    },
+                    {
+                      kind: 'connectedServiceScope',
+                      groupField: 'connectedServiceGroupId',
+                      profileField: 'connectedServiceProfileId',
+                      when: { field: 'home', equals: 'connectedService' },
+                    },
+                    { kind: 'field', field: 'homePath' },
+                  ],
+                },
+              },
+            ],
+          },
+        },
         capabilities: {
+          executionRun: {
+            supported: true,
+            structuredOutputRecovery: {
+              delegate: 'loose-deliverables-with-single-fallback',
+            },
+          },
           session: {
             media: {
               emitsSessionMedia: {
@@ -159,11 +224,11 @@ export const PLUGIN_MANIFEST = definePluginManifest({
     ],
     hooks: [
       {
-        id: 'backend.resolveRuntimePrerequisites',
+        id: 'agent.resolvePrerequisites',
         hookApiVersion: 1,
         category: 'decision',
-        scope: 'backend',
-        filters: { backendId: 'codex' },
+        scope: 'agent',
+        filters: { agentId: 'codex' },
         executionKind: 'decide',
         handler: {
           target: 'plugin',
@@ -171,11 +236,11 @@ export const PLUGIN_MANIFEST = definePluginManifest({
         },
       },
       {
-        id: 'spawn.augmentEnv',
+        id: 'agent.spawnEnv.augment',
         hookApiVersion: 1,
         category: 'augmentation',
         scope: 'daemon',
-        filters: { backendId: 'codex' },
+        filters: { agentId: 'codex' },
         executionKind: 'augment',
         handler: {
           target: 'plugin',
@@ -183,6 +248,7 @@ export const PLUGIN_MANIFEST = definePluginManifest({
         },
       },
     ],
+    managedDependencies: [CODEX_ACP_INSTALLABLE_DESCRIPTOR],
     mcp: {
       servers: [],
       discoveryProviders: [
@@ -194,10 +260,11 @@ export const PLUGIN_MANIFEST = definePluginManifest({
           permissionGates: [],
           redaction: 'none',
           hidden: false,
-          providerId: 'codex',
+          agentId: 'codex',
         },
       ],
     },
+    agentSettings: [CODEX_AGENT_SETTINGS_CONTRIBUTION],
     systemTools: [{
       toolId: 'codex-acp',
       displayName: 'Codex ACP',

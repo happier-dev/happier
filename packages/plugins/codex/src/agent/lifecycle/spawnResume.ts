@@ -1,10 +1,11 @@
-import type { CodexBackendMode } from '@happier-dev/protocol';
+import type { CodexBackendMode } from '../../protocol/runtimeDescriptorV1.js';
 
 import { resolveCanonicalCodexBackendMode } from './backendMode.js';
 
 export type CodexSpawnResumeSupportParamsInput = Readonly<{
   catalogAgentId?: unknown;
   options?: Readonly<{
+    backendMode?: unknown;
     codexBackendMode?: unknown;
     runtimeDescriptorV1?: unknown;
   }> | null;
@@ -22,6 +23,7 @@ export function resolveCodexVendorResumeSupportParamsForSpawn(
   }
 
   const codexBackendMode = resolveCanonicalCodexBackendMode({
+    backendMode: params.options?.backendMode,
     codexBackendMode: params.options?.codexBackendMode,
     runtimeDescriptorV1: params.options?.runtimeDescriptorV1,
   });

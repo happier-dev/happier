@@ -8,15 +8,15 @@ import type {
   ExecRuntimeServiceV1,
   JsonRpcClientV1,
   PluginContextV1,
+  RuntimeEventV1,
+  RuntimeSendOptionsV1,
+  SessionRuntimeV1,
+  TerminalRuntimeHostOrchestrationV1,
 } from '@happier-dev/plugin-sdk';
-import type { TerminalRuntimeHostOrchestrationV1 } from '@happier-dev/agents';
-import type { InternalRuntimeTurnOperationsEnvelopeV1 } from '@happier-dev/plugin-sdk/internal/runtime/session';
-import type { RuntimeEventV1 } from '@happier-dev/protocol';
 
 import { buildCodexAgentRuntimeDescriptor } from '../../protocol/runtimeDescriptorV1.js';
 import { createCodexBackendEngine } from './createCodexBackendEngine.js';
 
-type RuntimeEnvelope = InternalRuntimeTurnOperationsEnvelopeV1;
 type HostRunSessionParams = CreateSessionRuntimeParamsV1 & Readonly<{
   credentials: Readonly<{
     token: string;
@@ -45,6 +45,7 @@ function createCapturingExec(fixtureOptions: Readonly<{
   specs: ExecClientSpecV1[];
   requests: Array<Readonly<{ method: string; params: unknown; timeoutMs?: number }>>;
   notifications: Array<Readonly<{ method: string; params: unknown }>>;
+  emitNotification: (method: string, params: unknown) => Promise<void>;
   completeTurn: () => Promise<void>;
 }> {
   const specs: ExecClientSpecV1[] = [];
@@ -64,6 +65,10 @@ function createCapturingExec(fixtureOptions: Readonly<{
       threadId: turn.threadId,
       turn: { id: turn.turnId },
     });
+  };
+
+  const emitNotification = async (method: string, params: unknown): Promise<void> => {
+    await notificationHandlers.get(method)?.(params);
   };
 
   const client: JsonRpcClientV1 = {
@@ -202,6 +207,7 @@ function createCapturingExec(fixtureOptions: Readonly<{
     specs,
     requests,
     notifications,
+    emitNotification,
     completeTurn,
     exec: {
       systemTools: {
@@ -226,6 +232,51 @@ async function delay(ms: number): Promise<void> {
   });
 }
 
+async function createAppServerRuntime(
+  engine: ReturnType<typeof createCodexBackendEngine>,
+  sessionParams: CreateSessionRuntimeParamsV1,
+): Promise<SessionRuntimeV1> {
+  const runtime = await engine.runtimeCore?.createSessionRuntime(sessionParams);
+  if (!runtime) {
+    throw new Error('Expected Codex engine to create a public session runtime.');
+  }
+  return runtime;
+}
+
+async function sendRuntimeText(
+  runtime: SessionRuntimeV1,
+  text: string,
+  options?: RuntimeSendOptionsV1,
+): Promise<void> {
+  await expect(runtime.send({ v: 1, text }, options)).resolves.toEqual(
+    expect.objectContaining({ status: 'accepted' }),
+  );
+}
+
+async function waitForRequestCount(
+  exec: ReturnType<typeof createCapturingExec>,
+  method: string,
+  count: number,
+): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (exec.requests.filter((request) => request.method === method).length >= count) return;
+    await delay(5);
+  }
+  throw new Error(`Timed out waiting for ${count} ${method} requests`);
+}
+
+async function waitForRuntimeEvent(
+  events: readonly RuntimeEventV1[],
+  predicate: (event: RuntimeEventV1) => boolean,
+): Promise<RuntimeEventV1> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const event = events.find(predicate);
+    if (event) return event;
+    await delay(5);
+  }
+  throw new Error('Timed out waiting for runtime event');
+}
+
 function createPluginContextFixture(
   exec = createCapturingExec(),
   envOverrides: Readonly<Record<string, string>> = {},
@@ -239,7 +290,17 @@ function createPluginContextFixture(
       debug: vi.fn(),
     },
     config: { values: {} },
-    exec: exec.exec,
+    agentRuntime: {
+      exec: exec.exec,
+      acp: {
+        defineAcpBackend: vi.fn(() => ({
+          runtimeCore: {
+            createSessionRuntime: vi.fn(async () => ({ kind: 'acp-runtime' })),
+            createExecutionRunBackend: vi.fn(),
+          },
+        })),
+      },
+    },
     env: {
       get: vi.fn(() => null),
       require: vi.fn(() => {
@@ -249,14 +310,6 @@ function createPluginContextFixture(
         HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '250',
         HAPPIER_CODEX_APP_SERVER_STARTUP_RPC_TIMEOUT_MS: '500',
         ...envOverrides,
-      })),
-    },
-    acp: {
-      defineAcpBackend: vi.fn(() => ({
-        runtimeCore: {
-          createSessionRuntime: vi.fn(async () => ({ kind: 'acp-runtime' })),
-          createExecutionRunBackend: vi.fn(),
-        },
       })),
     },
   } as unknown as PluginContextV1;
@@ -276,6 +329,7 @@ describe('createCodexBackendEngine', () => {
   it('launches the Codex terminal runtime through a host-granted agent CLI executable', async () => {
     const ctx = createPluginContextFixture(createCapturingExec(), {
       CODEX_HOME: '/tmp/codex-home',
+      OPENAI_API_KEY: 'ambient-native-key',
     });
     const engine = createCodexBackendEngine(ctx);
     const resolveAgentCliExecutable = vi.fn(async () => ({
@@ -322,6 +376,10 @@ describe('createCodexBackendEngine', () => {
       metadata: {
         permissionMode: 'default',
       },
+      isolation: {
+        env: { OPENAI_BASE_URL: 'http://127.0.0.1:11434/v1' },
+        unsetEnvKeys: ['openai_api_key'],
+      },
       host,
       signal: new AbortController().signal,
     });
@@ -339,7 +397,11 @@ describe('createCodexBackendEngine', () => {
       args: expect.arrayContaining(['/managed/codex/bin/codex.js', '--cd', '/repo']),
       cwd: '/repo',
       stdio: 'inherit',
+      unsetEnvKeys: ['openai_api_key'],
     }));
+    const launchedEnv = launch.mock.calls[0]?.[0]?.env;
+    expect(launchedEnv?.OPENAI_API_KEY).toBeUndefined();
+    expect(launchedEnv?.OPENAI_BASE_URL).toBe('http://127.0.0.1:11434/v1');
     expect(publishControlState).toHaveBeenCalledWith(expect.objectContaining({
       target: 'local',
     }));
@@ -405,28 +467,15 @@ describe('createCodexBackendEngine', () => {
     const ctx = createPluginContextFixture(exec);
     const engine = createCodexBackendEngine(ctx);
 
-    const plan = await engine.runtimeCore?.createSessionRuntime({ cwd: '/tmp/codex-project' });
+    const sessionRuntime = await createAppServerRuntime(engine, { cwd: '/tmp/codex-project' });
 
-    expect(plan).toMatchObject({
-      kind: 'hostSessionRuntimePlan',
-      providerId: 'codex',
-      opts: {
-        backendId: 'codex',
-        directory: '/tmp/codex-project',
-      },
-      config: {
-        backendDisplayName: 'Codex',
-        providerName: 'Codex',
-        agentMessageType: 'codex',
-        createSessionRuntime: expect.any(Function),
-      },
-    });
-    const sessionRuntime = await plan?.config.createSessionRuntime({
-      directory: '/tmp/codex-project',
-      session: { sessionId: 'happier-session-1' },
-    }) as RuntimeEnvelope;
-
-    await sessionRuntime.operations.startOrLoadSession();
+    expect(sessionRuntime).toEqual(expect.objectContaining({
+      identity: expect.objectContaining({ read: expect.any(Function) }),
+      events: expect.objectContaining({ subscribe: expect.any(Function) }),
+      send: expect.any(Function),
+      dispose: expect.any(Function),
+      permissions: { capability: 'inline' },
+    }));
 
     expect(exec.specs).toHaveLength(1);
     expect(exec.specs[0]).toMatchObject({
@@ -446,8 +495,8 @@ describe('createCodexBackendEngine', () => {
       'account/rateLimits/read',
       'thread/start',
     ]);
-    expect(sessionRuntime.operations.readSessionIdentity()).toEqual({
-      sessionId: 'thread-started',
+    expect(sessionRuntime.identity.read()).toEqual({
+      providerSessionId: 'thread-started',
     });
   });
 
@@ -468,36 +517,18 @@ describe('createCodexBackendEngine', () => {
       environmentVariables: { HAPPIER_TEST_FLAG: '1' },
     } satisfies HostRunSessionParams;
 
-    const plan = await engine.runtimeCore?.createSessionRuntime(sessionParams);
+    const runtime = await createAppServerRuntime(engine, sessionParams);
 
-    expect(plan).toMatchObject({
-      kind: 'hostSessionRuntimePlan',
-      providerId: 'codex',
-      opts: expect.objectContaining({
-        backendId: 'codex-daemon',
-        directory: '/tmp/codex-project',
-        cwd: '/tmp/codex-project',
-        credentials,
-        startedBy: 'daemon',
-        resume: 'resume-session-1',
-        modelId: 'gpt-5-codex',
-        environmentVariables: { HAPPIER_TEST_FLAG: '1' },
-      }),
-    });
+    expect(runtime.identity.read()).toEqual({ providerSessionId: 'resume-session-1' });
   });
 
-  it('sends app-server turns through the runtime operations instead of no-op placeholders', async () => {
+  it('sends app-server turns through the public session runtime instead of no-op placeholders', async () => {
     const exec = createCapturingExec();
     const ctx = createPluginContextFixture(exec);
     const engine = createCodexBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({ cwd: '/tmp/codex-project' });
-    const sessionRuntime = await plan?.config.createSessionRuntime({
-      directory: '/tmp/codex-project',
-      session: { sessionId: 'happier-session-1' },
-    }) as RuntimeEnvelope;
+    const sessionRuntime = await createAppServerRuntime(engine, { cwd: '/tmp/codex-project' });
 
-    await sessionRuntime.operations.startOrLoadSession();
-    await sessionRuntime.operations.sendTurnPrompt('hello codex');
+    await sendRuntimeText(sessionRuntime, 'hello codex');
 
     expect(exec.requests).toContainEqual(expect.objectContaining({
       method: 'turn/start',
@@ -508,25 +539,63 @@ describe('createCodexBackendEngine', () => {
     }));
   });
 
+  it('publishes app-server assistant deltas as committed transcript runtime events at turn completion', async () => {
+    const exec = createCapturingExec({ autoCompleteTurns: false });
+    const ctx = createPluginContextFixture(exec);
+    const engine = createCodexBackendEngine(ctx);
+    const sessionRuntime = await createAppServerRuntime(engine, { cwd: '/tmp/codex-project' });
+    const runtimeEvents: RuntimeEventV1[] = [];
+    sessionRuntime.events.subscribe((event) => {
+      runtimeEvents.push(event);
+    });
+
+    await sendRuntimeText(sessionRuntime, 'hello codex');
+    await exec.emitNotification('item/agentMessage/delta', {
+      threadId: 'thread-started',
+      turnId: 'turn-1',
+      itemId: 'assistant-message-1',
+      delta: 'Hello',
+    });
+    await exec.emitNotification('item/agentMessage/delta', {
+      threadId: 'thread-started',
+      turnId: 'turn-1',
+      itemId: 'assistant-message-1',
+      delta: ' from Codex',
+    });
+    await exec.completeTurn();
+
+    await waitForRuntimeEvent(runtimeEvents, (event) => (
+      event.kind === 'transcript-agent-message-committed'
+      && event.agentId === 'codex'
+    ));
+    const turnStart = runtimeEvents.find((event) => event.kind === 'turn-start');
+    const agentMessage = runtimeEvents.find((event) => (
+      event.kind === 'transcript-agent-message-committed'
+      && event.agentId === 'codex'
+    ));
+    expect(turnStart?.turnId).toMatch(/^codex-turn-/);
+    expect(agentMessage).toEqual(expect.objectContaining({
+      kind: 'transcript-agent-message-committed',
+      agentId: 'codex',
+      localId: `codex:${turnStart?.turnId}:assistant:assistant-message-1`,
+      body: { type: 'message', message: 'Hello from Codex' },
+    }));
+  });
+
   it('retries the plugin app-server prompt once after a temporary model-capacity failure without turn activity', async () => {
     const exec = createCapturingExec({
       failWithModelCapacityOnFirstPrompt: 'model-capacity-once',
     });
     const ctx = createPluginContextFixture(exec);
     const engine = createCodexBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({ cwd: '/tmp/codex-project' });
-    const sessionRuntime = await plan?.config.createSessionRuntime({
-      directory: '/tmp/codex-project',
-      session: { sessionId: 'happier-session-1' },
-    }) as RuntimeEnvelope;
+    const sessionRuntime = await createAppServerRuntime(engine, { cwd: '/tmp/codex-project' });
     const runtimeEvents: RuntimeEventV1[] = [];
-    sessionRuntime.operations.subscribeRuntimeEvents((event) => {
+    sessionRuntime.events.subscribe((event) => {
       runtimeEvents.push(event);
     });
 
-    await sessionRuntime.operations.startOrLoadSession();
-    await sessionRuntime.operations.sendTurnPrompt('model-capacity-once');
-    await expect(sessionRuntime.operations.waitForTurnCompletion()).resolves.toBeUndefined();
+    await sendRuntimeText(sessionRuntime, 'model-capacity-once');
+    await waitForRequestCount(exec, 'turn/start', 2);
 
     const turnStarts = exec.requests.filter((request) => request.method === 'turn/start') as Array<{
       params?: { input?: Array<{ text?: string }> };
@@ -550,15 +619,10 @@ describe('createCodexBackendEngine', () => {
     });
     const ctx = createPluginContextFixture(exec);
     const engine = createCodexBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({ cwd: '/tmp/codex-project' });
-    const sessionRuntime = await plan?.config.createSessionRuntime({
-      directory: '/tmp/codex-project',
-      session: { sessionId: 'happier-session-1' },
-    }) as RuntimeEnvelope;
+    const sessionRuntime = await createAppServerRuntime(engine, { cwd: '/tmp/codex-project' });
 
-    await sessionRuntime.operations.startOrLoadSession();
-    await sessionRuntime.operations.sendTurnPrompt('model-capacity-after-activity');
-    await expect(sessionRuntime.operations.waitForTurnCompletion()).resolves.toBeUndefined();
+    await sendRuntimeText(sessionRuntime, 'model-capacity-after-activity');
+    await waitForRequestCount(exec, 'turn/start', 2);
 
     const turnStarts = exec.requests.filter((request) => request.method === 'turn/start') as Array<{
       params?: { input?: Array<{ text?: string }> };
@@ -577,15 +641,10 @@ describe('createCodexBackendEngine', () => {
       HAPPIER_CODEX_CONTEXT_WINDOW_CONTINUATION_PROMPT: 'Configured continuation prompt from host policy.',
     });
     const engine = createCodexBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({ cwd: '/tmp/codex-project' });
-    const sessionRuntime = await plan?.config.createSessionRuntime({
-      directory: '/tmp/codex-project',
-      session: { sessionId: 'happier-session-1' },
-    }) as RuntimeEnvelope;
+    const sessionRuntime = await createAppServerRuntime(engine, { cwd: '/tmp/codex-project' });
 
-    await sessionRuntime.operations.startOrLoadSession();
-    await sessionRuntime.operations.sendTurnPrompt('model-capacity-configured-continuation');
-    await expect(sessionRuntime.operations.waitForTurnCompletion()).resolves.toBeUndefined();
+    await sendRuntimeText(sessionRuntime, 'model-capacity-configured-continuation');
+    await waitForRequestCount(exec, 'turn/start', 2);
 
     const turnStarts = exec.requests.filter((request) => request.method === 'turn/start') as Array<{
       params?: { input?: Array<{ text?: string }> };
@@ -599,40 +658,23 @@ describe('createCodexBackendEngine', () => {
     const exec = createCapturingExec({ resumeResponseDelayMs: 500 });
     const ctx = createPluginContextFixture(exec);
     const engine = createCodexBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({ cwd: '/tmp/codex-project' });
-    const sessionRuntime = await plan?.config.createSessionRuntime({
-      directory: '/tmp/codex-project',
-      session: { sessionId: 'happier-session-1' },
-    }) as RuntimeEnvelope;
-    const runtimeEvents: RuntimeEventV1[] = [];
-    sessionRuntime.operations.subscribeRuntimeEvents((event) => {
-      runtimeEvents.push(event);
-    });
 
     let settled = false;
-    const start = sessionRuntime.operations.startOrLoadSession({ resumeId: 'resume-slow' })
+    const start = createAppServerRuntime(engine, {
+      cwd: '/tmp/codex-project',
+      initialRuntimeState: { providerSessionId: 'resume-slow' },
+    })
       .finally(() => {
         settled = true;
       });
     await delay(50);
 
     expect(settled).toBe(false);
-    expect(sessionRuntime.operations.readSessionIdentity()).toEqual({ sessionId: 'resume-slow' });
-    expect(runtimeEvents).toContainEqual(expect.objectContaining({
-      kind: 'session-id-publish',
-      publishedSessionId: 'resume-slow',
-      source: 'codex-app-server',
+    await expect(start).resolves.toEqual(expect.objectContaining({
+      identity: expect.objectContaining({ read: expect.any(Function) }),
     }));
-    expect(runtimeEvents).toContainEqual(expect.objectContaining({
-      kind: 'descriptor-update',
-      descriptor: expect.objectContaining({
-        provider: expect.objectContaining({
-          backendMode: 'appServer',
-          providerSessionId: 'resume-slow',
-        }),
-      }),
-    }));
-    await expect(start).resolves.toBe('resume-slow');
+    const sessionRuntime = await start;
+    expect(sessionRuntime.identity.read()).toEqual({ providerSessionId: 'resume-slow' });
   });
 
   it('defaults resumed app-server sessions to lean thread metadata recovery', async () => {
@@ -642,15 +684,11 @@ describe('createCodexBackendEngine', () => {
     });
     const ctx = createPluginContextFixture(exec);
     const engine = createCodexBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({ cwd: '/tmp/codex-project' });
-    const sessionRuntime = await plan?.config.createSessionRuntime({
-      directory: '/tmp/codex-project',
-      session: { sessionId: 'happier-session-1' },
-    }) as RuntimeEnvelope;
 
-    await expect(sessionRuntime.operations.startOrLoadSession({
-      resumeId: 'resume-123',
-    })).resolves.toBe('resume-123');
+    const sessionRuntime = await createAppServerRuntime(engine, {
+      cwd: '/tmp/codex-project',
+      initialRuntimeState: { providerSessionId: 'resume-123' },
+    });
 
     const resumeIndex = exec.requests.findIndex((request) => request.method === 'thread/resume');
     const readIndex = exec.requests.findIndex((request) => request.method === 'thread/read');
@@ -663,7 +701,7 @@ describe('createCodexBackendEngine', () => {
         includeTurns: false,
       },
     });
-    expect(sessionRuntime.operations.readSessionIdentity()).toEqual({ sessionId: 'resume-123' });
+    expect(sessionRuntime.identity.read()).toEqual({ providerSessionId: 'resume-123' });
   });
 
   it('waits beyond the normal startup timeout for recoverable oversized no-history resumes', async () => {
@@ -677,15 +715,13 @@ describe('createCodexBackendEngine', () => {
       HAPPIER_CODEX_APP_SERVER_RESUME_RECOVERY_TIMEOUT_MS: '1200',
     });
     const engine = createCodexBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({ cwd: '/tmp/codex-project' });
-    const sessionRuntime = await plan?.config.createSessionRuntime({
-      directory: '/tmp/codex-project',
-      session: { sessionId: 'happier-session-1' },
-    }) as RuntimeEnvelope;
 
-    await expect(sessionRuntime.operations.startOrLoadSession({
-      resumeId: 'resume-slow',
-    })).resolves.toBe('resume-slow');
+    await expect(createAppServerRuntime(engine, {
+      cwd: '/tmp/codex-project',
+      initialRuntimeState: { providerSessionId: 'resume-slow' },
+    })).resolves.toEqual(expect.objectContaining({
+      identity: expect.objectContaining({ read: expect.any(Function) }),
+    }));
 
     const resumeIndex = exec.requests.findIndex((request) => request.method === 'thread/resume');
     const readIndex = exec.requests.findIndex((request) => request.method === 'thread/read');
@@ -715,15 +751,13 @@ describe('createCodexBackendEngine', () => {
       HAPPIER_CODEX_APP_SERVER_RESUME_RECOVERY_TIMEOUT_MS: '1200',
     });
     const engine = createCodexBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({ cwd: '/tmp/codex-project' });
-    const sessionRuntime = await plan?.config.createSessionRuntime({
-      directory: '/tmp/codex-project',
-      session: { sessionId: 'happier-session-1' },
-    }) as RuntimeEnvelope;
 
-    await expect(sessionRuntime.operations.startOrLoadSession({
-      resumeId: 'resume-slow-read',
-    })).resolves.toBe('resume-slow-read');
+    await expect(createAppServerRuntime(engine, {
+      cwd: '/tmp/codex-project',
+      initialRuntimeState: { providerSessionId: 'resume-slow-read' },
+    })).resolves.toEqual(expect.objectContaining({
+      identity: expect.objectContaining({ read: expect.any(Function) }),
+    }));
 
     const resumeIndex = exec.requests.findIndex((request) => request.method === 'thread/resume');
     const readIndex = exec.requests.findIndex((request) => request.method === 'thread/read');
@@ -746,15 +780,13 @@ describe('createCodexBackendEngine', () => {
     });
     const ctx = createPluginContextFixture(exec);
     const engine = createCodexBackendEngine(ctx);
-    const plan = await engine.runtimeCore?.createSessionRuntime({ cwd: '/tmp/codex-project' });
-    const sessionRuntime = await plan?.config.createSessionRuntime({
-      directory: '/tmp/codex-project',
-      session: { sessionId: 'happier-session-1' },
-    }) as RuntimeEnvelope;
 
-    await expect(sessionRuntime.operations.startOrLoadSession({
-      resumeId: 'resume-123',
-      importHistory: true,
+    await expect(createAppServerRuntime(engine, {
+      cwd: '/tmp/codex-project',
+      initialRuntimeState: {
+        providerSessionId: 'resume-123',
+        importHistory: true,
+      },
     })).rejects.toThrow(/JSON-RPC frame exceeded/);
 
     expect(exec.requests.map((request) => request.method)).toEqual([

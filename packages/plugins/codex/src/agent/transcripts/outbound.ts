@@ -6,33 +6,17 @@ import type {
   RuntimeOutboundTranscriptDispatchPlanV1,
   RuntimeOutboundTranscriptPostSendEffectV1,
   RuntimeOutboundTranscriptToolTraceEventV1,
-} from '@happier-dev/agents';
-import type { SessionMessageRole } from '@happier-dev/protocol';
-import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
+  SessionMessageRole,
+} from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import {
+  readRuntimeDescriptorV1FromMetadata,
+  resolveTranscriptBodySessionMessageRole,
+} from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 type CliMessageMeta = Readonly<Record<string, unknown> & {
   sentFrom: 'cli';
   source: 'cli';
 }>;
-
-const CODEX_EVENT_TYPES = new Set([
-  'tool-call',
-  'tool-call-result',
-  'tool-result',
-  'token_count',
-  'reasoning',
-  'agent_reasoning',
-  'thinking',
-  'task_started',
-  'task_complete',
-  'turn_failed',
-  'turn_cancelled',
-  'turn_aborted',
-  'context-compaction',
-  'permission-request',
-  'file-edit',
-  'terminal-output',
-]);
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -57,13 +41,7 @@ function getToolCallNameKey(provider: string, callId: string): string {
 }
 
 function resolveCodexSessionMessageRole(body: unknown): SessionMessageRole {
-  const record = asRecord(body);
-  const type = readNonEmptyString(record?.type);
-  if (type === 'message' || type === 'agent_message') {
-    return readNonEmptyString(record?.role) === 'user' ? 'user' : 'agent';
-  }
-  if (type && CODEX_EVENT_TYPES.has(type)) return 'event';
-  return 'unknown';
+  return resolveTranscriptBodySessionMessageRole({ protocol: 'codex', body });
 }
 
 function normalizeCodexSessionMessageBody(input: RuntimeOutboundTranscriptDispatchInputV1): unknown {
@@ -124,10 +102,10 @@ function normalizeCodexSessionMessageBody(input: RuntimeOutboundTranscriptDispat
 
 function resolveBackendMode(metadata: unknown): string | null {
   const descriptor = readRuntimeDescriptorV1FromMetadata(metadata);
-  const providerExtra = asRecord(descriptor?.provider.providerExtra);
-  const runtimeHandle = asRecord(providerExtra?.runtimeHandle);
+  const agentExtra = asRecord(descriptor?.agent.agentExtra);
+  const runtimeHandle = asRecord(agentExtra?.runtimeHandle);
   return readNonEmptyString(runtimeHandle?.backendMode)
-    ?? readNonEmptyString(descriptor?.provider.backendMode);
+    ?? readNonEmptyString(descriptor?.agent.backendMode);
 }
 
 function resolveExternalKey(params: Readonly<{

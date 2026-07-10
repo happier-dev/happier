@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ProviderAccountUsageSnapshotV1Schema,
   buildProviderAccountUsageRecordId,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/experimental/cloud/usage';
 
 import { resolveCodexUsageSubjectRef } from './identity.js';
 
@@ -39,7 +39,6 @@ describe('mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot', () => {
       },
       observedAtMs: 1_768_000_000_000,
       fetchedAtMs: 1_768_000_000_000,
-      aliases: [{ kind: 'appServerNative', sessionId: 'session-a' }],
     });
 
     const parsed = ProviderAccountUsageSnapshotV1Schema.parse(snapshot);
@@ -55,12 +54,6 @@ describe('mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot', () => {
       },
       planLabel: 'team',
       accountLabel: 'alice@example.com',
-      aliases: [{
-        kind: 'appServerNative',
-        providerId: 'openai-codex',
-        sessionId: 'session-a',
-        accountSubjectId: 'chatgpt-account-1',
-      }],
       meters: [expect.objectContaining({
         meterId: 'primary',
         utilizationPct: 25,
@@ -88,18 +81,12 @@ describe('mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot', () => {
       rawSnapshot: { account: { email: 'native@example.com' }, primary: { usedPercent: 10 } },
       observedAtMs: 1_000,
       fetchedAtMs: 1_000,
-      aliases: [{ kind: 'appServerNative', sessionId: 'session-a' }],
     });
     const connectedSnapshot = moduleRecord.mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
       subject: stableSubject,
       rawSnapshot: { account: { email: 'connected@example.com' }, primary: { usedPercent: 20 } },
       observedAtMs: 2_000,
       fetchedAtMs: 2_000,
-      aliases: [{
-        kind: 'connectedServiceProfile',
-        serviceId: 'openai-codex',
-        profileId: 'work',
-      }],
     });
 
     expect(nativeSnapshot.recordId).toBe(connectedSnapshot.recordId);
@@ -112,7 +99,6 @@ describe('mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot', () => {
       rawSnapshot: { account: { email: 'same@example.com' }, primary: { usedPercent: 10 } },
       observedAtMs: 1_000,
       fetchedAtMs: 1_000,
-      aliases: [{ kind: 'appServerNative', sessionId: 'session-a' }],
     });
     const secondProvisional = moduleRecord.mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
       subject: resolveCodexUsageSubjectRef({
@@ -122,7 +108,6 @@ describe('mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot', () => {
       rawSnapshot: { account: { email: 'same@example.com' }, primary: { usedPercent: 10 } },
       observedAtMs: 1_000,
       fetchedAtMs: 1_000,
-      aliases: [{ kind: 'appServerNative', sessionId: 'session-b' }],
     });
 
     expect(firstProvisional.recordId).not.toBe(secondProvisional.recordId);
@@ -149,7 +134,6 @@ describe('mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot', () => {
       accountLabel: 'codex-user@example.test',
       observedAtMs: 1_000,
       fetchedAtMs: 1_000,
-      aliases: [{ kind: 'appServerNative', sessionId: 'session-a' }],
     });
 
     expect(snapshot).toMatchObject({
@@ -159,5 +143,54 @@ describe('mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot', () => {
       },
       accountLabel: 'codex-user@example.test',
     });
+  });
+
+  it('carries sanitized reset-credit inventory on provider account usage snapshots', async () => {
+    const moduleRecord = await loadSnapshotModule();
+    expect(moduleRecord).toEqual(expect.objectContaining({
+      mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot: expect.any(Function),
+    }));
+    if (!moduleRecord) throw new Error('snapshot module missing');
+
+    const subject = resolveCodexUsageSubjectRef({
+      authStoreProviderAccountIdProof: {
+        status: 'resolved',
+        accountId: 'chatgpt-account-1',
+      },
+    });
+
+    const snapshot = moduleRecord.mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
+      subject,
+      rawSnapshot: {
+        rate_limit: {
+          primary_window: { used_percent: 100 },
+        },
+        rate_limit_reset_credits: { available_count: 1 },
+      },
+      rawResetCredits: {
+        available_count: 1,
+        credits: [{
+          id: 'credit-1',
+          reset_type: 'codex_rate_limits',
+          status: 'available',
+          expires_at: '2026-05-24T10:00:00.000Z',
+          profile_image_url: 'https://example.com/private-avatar.png',
+          profile_user_id: 'user-secret',
+        }],
+      },
+      observedAtMs: 1_000,
+      fetchedAtMs: 1_000,
+    });
+
+    expect(snapshot.recoveryCredits).toEqual({
+      availableCount: 1,
+      credits: [expect.objectContaining({
+        id: 'credit-1',
+        status: 'available',
+        expiresAtMs: Date.parse('2026-05-24T10:00:00.000Z'),
+      })],
+    });
+    expect(JSON.stringify(snapshot.recoveryCredits)).not.toContain('private-avatar');
+    expect(JSON.stringify(snapshot.recoveryCredits)).not.toContain('user-secret');
   });
 });

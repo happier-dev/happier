@@ -1,8 +1,9 @@
-import { mkdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
-import type { ConnectedServiceCredentialRecordV1, ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedServiceCredentialRecordV1, ConnectedServiceId } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import { writeAtomicJsonFile } from '@happier-dev/plugin-sdk/experimental/fs';
+import { expandHomePath, readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 import { readCodexEnvironmentAuthState } from '../cli/auth/environment.js';
 import {
@@ -11,6 +12,10 @@ import {
   resolveCodexCliAuthStatus,
 } from '../cli/auth/spec.js';
 import { codexCloudConnectDescriptor } from '../auth/services/openai/cloud/connect.js';
+import {
+  CodexChatGptAuthTokensRefreshSelectionSchema,
+  type CodexChatGptAuthTokensRefreshSelection,
+} from '../auth/services/openai/cloud/refreshBridge.js';
 import { createCodexAcpBackendSpec } from '../acp/backend.js';
 import { buildCodexCloudAuthFile } from '../auth/services/openai/cloud/authFile.js';
 import {
@@ -47,7 +52,11 @@ import {
   listCodexRuntimeSkills,
   listCodexRuntimeVendorPlugins,
 } from '../runtime/appServer/control/catalog.js';
-import { checkCodexUsageLimitRecoveryNow } from '../runtime/appServer/control/usageLimitRecovery.js';
+import {
+  checkCodexUsageLimitRecoveryNow,
+  consumeCodexUsageLimitResetCredit,
+} from '../runtime/appServer/control/usageLimitRecovery.js';
+import { openAiCodexQuotaFetcherDescriptor } from '../auth/services/quota/openaiFetcher.js';
 import { createCodexConnectedServiceRuntimeAuthAdapter } from '../auth/services/runtime/control/runtimeAuthAdapter.js';
 import { materializeCodexConnectedServiceRuntimeAuthSelection } from '../auth/services/runtime/control/selection.js';
 import { resolveCodexConnectedServiceSwitchContinuity } from '../auth/services/runtime/control/switchContinuity.js';
@@ -55,6 +64,11 @@ import { verifyResumeReachableCodex } from '../auth/services/runtime/control/ver
 import {
   resolveCodexConnectedServiceCandidatePersistedSessionFile,
 } from '../auth/services/runtime/control/candidateSessionFile.js';
+import {
+  createCodexExternalSessionCandidateHostAdapter,
+  createCodexExternalSessionTranscriptStoreAdapter,
+} from '../surfaces/sessions/external/hostAdapters.js';
+import { resolveCodexCodingPromptBehaviorBlocks } from '../prompting/behavior.js';
 
 const CODEX_SUPPORTED_AUTH_SERVICE_IDS = Object.freeze([
   'openai-codex',
@@ -71,10 +85,6 @@ const CODEX_MATERIALIZED_HOME_CREDENTIAL_ENTRIES = Object.freeze([
 ] as const);
 
 type CodexSupportedAuthServiceId = typeof CODEX_SUPPORTED_AUTH_SERVICE_IDS[number];
-
-function readString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
 
 function isCodexSupportedAuthServiceId(value: unknown): value is CodexSupportedAuthServiceId {
   return typeof value === 'string'
@@ -108,11 +118,7 @@ function resolveHomeDir(env: NodeJS.ProcessEnv): string {
 function expandHomeDirPath(value: string, env: NodeJS.ProcessEnv): string {
   const trimmed = value.trim();
   if (!trimmed) return '';
-  if (trimmed === '~') return resolveHomeDir(env);
-  if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
-    return resolve(resolveHomeDir(env), trimmed.slice(2));
-  }
-  return trimmed;
+  return expandHomePath(trimmed, resolveHomeDir(env));
 }
 
 function resolveCodexHomeForAuthMaterialization(env: NodeJS.ProcessEnv): string {
@@ -163,8 +169,7 @@ function requireOpenAiTokenRecord(value: unknown): Extract<ConnectedServiceCrede
 }
 
 async function writeJson(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  await writeAtomicJsonFile({ path, value, mode: 0o600 });
 }
 
 export async function materializeCodexAuthEnvironment(input: Readonly<Record<string, unknown>>): Promise<Readonly<{
@@ -223,7 +228,7 @@ function resolveCodexStateSharingStateSourceRoot(params: Readonly<{
   return params.sourceRoot;
 }
 
-export const CODEX_PROVIDER_RUNTIME_CONTRIBUTION = Object.freeze({
+export const CODEX_AGENT_RUNTIME_CONTRIBUTION = Object.freeze({
   agentId: 'codex',
   builtInAcpCatalog: true,
   acpBackend: {
@@ -252,6 +257,9 @@ export const CODEX_PROVIDER_RUNTIME_CONTRIBUTION = Object.freeze({
   },
   sessionRuntimePreferences: {
     resolve: resolveCodexSessionRuntimePreferences,
+  },
+  codingPromptBehavior: {
+    resolve: resolveCodexCodingPromptBehaviorBlocks,
   },
   vendorResumeSupport: {
     resolve: supportsCodexVendorResume,
@@ -292,6 +300,50 @@ export const CODEX_PROVIDER_RUNTIME_CONTRIBUTION = Object.freeze({
     stateSharingDescriptor: codexStateSharingDescriptor,
     materializeRuntimeAuthSelection: false,
     runtimeAuthAdapter: false,
+    quotaFetcherDescriptor: openAiCodexQuotaFetcherDescriptor,
+    daemonAuthBridge: {
+      refresh: async (input: Readonly<{
+        serviceId: string;
+        request: Readonly<Record<string, unknown>>;
+        refreshCoordinator: Readonly<{
+          refreshOpenAiCodexChatGptTokensForBridge(params: Readonly<{
+            selection: CodexChatGptAuthTokensRefreshSelection;
+            chatgptPlanType: string | null;
+            forceRefresh: boolean;
+          }>): Promise<unknown>;
+        }>;
+      }>) => {
+        if (input.serviceId !== 'openai-codex') {
+          throw new Error(`Codex daemon auth bridge cannot refresh unsupported service '${input.serviceId}'`);
+        }
+        return await input.refreshCoordinator.refreshOpenAiCodexChatGptTokensForBridge({
+          selection: CodexChatGptAuthTokensRefreshSelectionSchema.parse(input.request.selection),
+          chatgptPlanType: typeof input.request.chatgptPlanType === 'string'
+            ? input.request.chatgptPlanType
+            : null,
+          forceRefresh: input.request.forceRefresh === true,
+        });
+      },
+    },
+    recoveryCapabilities: {
+      predictiveSoftSwitch: { mode: 'supported' },
+      sameAccountFanoutStrategy: 'provider_account_id',
+      runtimeAuthApply: {
+        directLiveHotAuth: {
+          supportsInTurnApply: true,
+          requiresExactRuntimeIdentity: true,
+          refreshSelectionResync: 'required',
+          authMode: {
+            kind: 'external_token_injection',
+            surface: 'codex_chatgpt_auth_tokens',
+          },
+        },
+      },
+    },
+  },
+  externalSessions: {
+    createCandidateHostAdapter: createCodexExternalSessionCandidateHostAdapter,
+    createTranscriptStoreAdapter: createCodexExternalSessionTranscriptStoreAdapter,
   },
   runtimeControl: {
     appServer: codexAppServerRuntimeControl,
@@ -314,6 +366,7 @@ export const CODEX_PROVIDER_RUNTIME_CONTRIBUTION = Object.freeze({
     },
     usageLimitRecovery: {
       checkNow: checkCodexUsageLimitRecoveryNow,
+      consumeResetCredit: consumeCodexUsageLimitResetCredit,
     },
   },
 } as const);

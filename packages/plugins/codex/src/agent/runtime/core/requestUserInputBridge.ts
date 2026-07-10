@@ -1,23 +1,13 @@
+import type { SessionPermissionsServiceV1 } from '@happier-dev/plugin-sdk/sessions';
+
 import { looksLikeCodexApprovalRequestUserInput } from './requestUserInputQuestions.js';
 
 type LoggerSubset = {
   debug: (message: string, ...args: unknown[]) => void;
 };
 
-type PermissionDecision =
-  | 'approved'
-  | 'approved_for_session'
-  | 'approved_execpolicy_amendment'
-  | 'denied'
-  | 'abort';
-
-type PermissionHandlerSubset = {
-  handleToolCall: (
-    toolCallId: string,
-    toolName: string,
-    input: unknown,
-  ) => Promise<{ decision: PermissionDecision }>;
-};
+type RequestPermissionDecision = SessionPermissionsServiceV1['requestDecision'];
+type PermissionDecision = Awaited<ReturnType<RequestPermissionDecision>>['decision'];
 
 function safeJsonParse(value: unknown): unknown {
   if (typeof value !== 'string') return value;
@@ -92,7 +82,7 @@ export function resolveApprovalChoiceLabel(params: {
 }
 
 export function createCodexRequestUserInputBridge(opts: {
-  permissionHandler: PermissionHandlerSubset | null;
+  requestPermissionDecision: RequestPermissionDecision | null;
   continueSession: (prompt: string) => Promise<void>;
   logger: LoggerSubset;
 }): {
@@ -128,11 +118,11 @@ export function createCodexRequestUserInputBridge(opts: {
       if (!looksLikeCodexApprovalRequestUserInput({ toolName, questions })) return;
       if (inFlightToolApprovals.has(callId)) return;
 
-      if (!opts.permissionHandler) {
-        opts.logger.debug('[Codex] request_user_input received but no permissionHandler is attached');
+      if (!opts.requestPermissionDecision) {
+        opts.logger.debug('[Codex] request_user_input received but no permission decision service is attached');
         return;
       }
-      const permissionHandler = opts.permissionHandler;
+      const requestPermissionDecision = opts.requestPermissionDecision;
 
       const toolInputBase =
         context?.toolInput && typeof context.toolInput === 'object' && !Array.isArray(context.toolInput)
@@ -146,7 +136,11 @@ export function createCodexRequestUserInputBridge(opts: {
 
       const workflow = (async () => {
         try {
-          const result = await permissionHandler.handleToolCall(callId, toolName, toolInput);
+          const result = await requestPermissionDecision({
+            toolCallId: callId,
+            toolName,
+            input: toolInput,
+          });
           const choice = resolveApprovalChoiceLabel({ decision: result.decision, questions, logger: opts.logger });
           if (!choice) return;
           try {

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { BackendSurfaceOperationCatalogV1 } from '@happier-dev/protocol';
+import { BackendSurfaceOperationCatalogV1 } from '@happier-dev/plugin-sdk/manifest';
 
 import * as pluginModule from './index.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 function getCodexBackend() {
-  const backend = PLUGIN_MANIFEST.contributes?.backends?.find((entry) => entry.id === 'codex');
+  const backend = PLUGIN_MANIFEST.contributes?.agents?.find((entry) => entry.id === 'codex');
   if (!backend) {
     throw new Error('Expected Codex plugin manifest to declare codex backend contribution');
   }
@@ -118,5 +118,54 @@ describe('Codex B.5 surface declarations', () => {
         }),
       }),
     ]));
+  });
+
+  it('declares the Codex external-session source schema and source-key rules in the backend manifest surface', () => {
+    expect(getCodexBackend().surfaces?.externalSession?.sources).toEqual([
+      {
+        sourceKind: 'codexHome',
+        schema: {
+          passthrough: true,
+          fields: [
+            { name: 'kind', kind: 'literal', value: 'codexHome' },
+            { name: 'home', kind: 'enum', values: ['user', 'connectedService'] },
+            { name: 'homePath', kind: 'string', min: 1, optional: true },
+            { name: 'connectedServiceId', kind: 'string', min: 1, optional: true },
+            { name: 'connectedServiceProfileId', kind: 'string', min: 1, optional: true },
+            { name: 'connectedServiceGroupId', kind: 'string', min: 1, optional: true },
+          ],
+          refinements: [
+            {
+              kind: 'requiresWhenEquals',
+              field: 'connectedServiceId',
+              when: { field: 'home', equals: 'connectedService' },
+            },
+            {
+              kind: 'forbidsWhenEquals',
+              fields: ['connectedServiceId', 'connectedServiceProfileId', 'connectedServiceGroupId'],
+              when: { field: 'home', equals: 'user' },
+            },
+          ],
+        },
+        key: {
+          segments: [
+            { kind: 'literal', value: 'codexHome' },
+            { kind: 'homeMode', field: 'home' },
+            {
+              kind: 'conditionalField',
+              field: 'connectedServiceId',
+              when: { field: 'home', equals: 'connectedService' },
+            },
+            {
+              kind: 'connectedServiceScope',
+              groupField: 'connectedServiceGroupId',
+              profileField: 'connectedServiceProfileId',
+              when: { field: 'home', equals: 'connectedService' },
+            },
+            { kind: 'field', field: 'homePath' },
+          ],
+        },
+      },
+    ]);
   });
 });

@@ -29,7 +29,6 @@ export * from './runtime/appServer/state/controls.js';
 export * from './runtime/appServer/client.js';
 export * from './runtime/appServer/work/goalControl.js';
 export * from './runtime/appServer/projection/assistantReasoning.js';
-export * from './runtime/appServer/recovery/suppressionWait.js';
 export * from './runtime/appServer/recovery/switchProgress.js';
 export * from './runtime/appServer/media/generatedMedia.js';
 export * from './runtime/appServer/wire/fields.js';

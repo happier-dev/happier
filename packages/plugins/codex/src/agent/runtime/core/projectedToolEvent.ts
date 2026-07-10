@@ -38,17 +38,21 @@ type CodexProjectedToolEventSession = Readonly<{
     agentId: 'codex',
     body: CodexProjectedToolCallMessage | CodexProjectedToolResultMessage,
   ) => void | Promise<void>;
-  sendCodexMessage: (
-    body: CodexProjectedToolCallMessage | CodexProjectedCodexToolResultMessage,
+  sendProviderMessage: (
+    request: Readonly<{ body: CodexProjectedToolCallMessage | CodexProjectedCodexToolResultMessage }>,
   ) => void | Promise<void>;
 }>;
 
 export async function sendCodexProjectedToolEvent(params: Readonly<{
   session: CodexProjectedToolEventSession;
   event: CodexProjectedToolEvent;
+  messageId?: string | null;
   flushBeforeToolCall?: (() => Promise<void>) | null;
   flushBeforeToolResult?: (() => Promise<void>) | null;
 }>): Promise<void> {
+  const messageId = typeof params.messageId === 'string' && params.messageId.trim().length > 0
+    ? params.messageId.trim()
+    : randomUUID();
   if (params.event.type === 'tool-call') {
     await params.flushBeforeToolCall?.();
     if (params.event.sidechainId) {
@@ -57,18 +61,20 @@ export async function sendCodexProjectedToolEvent(params: Readonly<{
         callId: params.event.callId,
         name: params.event.name,
         input: params.event.input,
-        id: randomUUID(),
+        id: messageId,
         sidechainId: params.event.sidechainId,
       });
       return;
     }
 
-    await params.session.sendCodexMessage({
-      type: 'tool-call',
-      callId: params.event.callId,
-      name: params.event.name,
-      input: params.event.input,
-      id: randomUUID(),
+    await params.session.sendProviderMessage({
+      body: {
+        type: 'tool-call',
+        callId: params.event.callId,
+        name: params.event.name,
+        input: params.event.input,
+        id: messageId,
+      },
     });
     return;
   }
@@ -79,18 +85,20 @@ export async function sendCodexProjectedToolEvent(params: Readonly<{
       type: 'tool-result',
       callId: params.event.callId,
       output: params.event.output,
-      id: randomUUID(),
+      id: messageId,
       sidechainId: params.event.sidechainId,
       ...(params.event.isError ? { isError: params.event.isError } : {}),
     });
     return;
   }
 
-  await params.session.sendCodexMessage({
-    type: 'tool-call-result',
-    callId: params.event.callId,
-    output: params.event.output,
-    id: randomUUID(),
-    ...(params.event.isError ? { isError: params.event.isError } : {}),
+  await params.session.sendProviderMessage({
+    body: {
+      type: 'tool-call-result',
+      callId: params.event.callId,
+      output: params.event.output,
+      id: messageId,
+      ...(params.event.isError ? { isError: params.event.isError } : {}),
+    },
   });
 }

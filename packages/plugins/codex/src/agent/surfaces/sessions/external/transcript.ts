@@ -1,7 +1,7 @@
 import type {
   ExternalSessionCandidateV1,
   ExternalSessionTranscriptRawMessageV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/sessions';
 
 export type CodexExternalSessionAppServerMetadata = Readonly<{
   updatedAtMs: number;

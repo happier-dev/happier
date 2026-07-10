@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 import { resolveCodexUsageSubjectRef } from './identity.js';
 
@@ -48,6 +48,40 @@ describe('resolveCodexUsageSubjectRef', () => {
     expect(first.kind).toBe('provisionalLocalSubject');
     expect(second.kind).toBe('provisionalLocalSubject');
     expect(first.accountSubjectId).not.toBe(second.accountSubjectId);
+  });
+
+  it('uses live app-server account id evidence instead of stale auth-store identity', () => {
+    expect(resolveCodexUsageSubjectRef({
+      liveProviderAccount: {
+        providerAccountId: 'live-account',
+        providerEmail: 'live@example.com',
+      },
+      authStoreProviderAccountIdProof: {
+        status: 'resolved',
+        accountId: 'stale-auth-store-account',
+      },
+      provisionalDiscriminator: 'runtime-session-a',
+    })).toEqual({
+      providerId: 'openai-codex',
+      kind: 'providerSubject',
+      accountSubjectId: 'live-account',
+      proof: 'live_app_server_account_id',
+    });
+  });
+
+  it('keeps live account evidence with no account id provisional', () => {
+    const subject = resolveCodexUsageSubjectRef({
+      liveProviderAccount: {
+        providerAccountId: null,
+        providerEmail: 'label-only@example.com',
+      },
+      provisionalDiscriminator: 'runtime-session-a',
+    });
+
+    expect(subject).toMatchObject({
+      kind: 'provisionalLocalSubject',
+      reason: 'missing_stable_provider_account_id',
+    });
   });
 
   it('requires provider-owned local evidence before creating a provisional subject', () => {

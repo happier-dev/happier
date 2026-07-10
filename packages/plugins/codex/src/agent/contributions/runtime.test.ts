@@ -1,3 +1,7 @@
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import * as runtimeContribution from './runtime.js';
@@ -23,7 +27,14 @@ type RuntimeControlMaterializeInput = Readonly<{
 }>;
 
 type CodexRuntimeContributionModule = typeof runtimeContribution & Partial<{
-  CODEX_PROVIDER_RUNTIME_CONTRIBUTION: Readonly<{
+  CODEX_AGENT_RUNTIME_CONTRIBUTION: Readonly<{
+    connectedServices?: Readonly<{
+      recoveryCapabilities?: unknown;
+    }>;
+    externalSessions?: Readonly<{
+      createCandidateHostAdapter?: unknown;
+      createTranscriptStoreAdapter?: unknown;
+    }>;
     runtimeControl?: Readonly<{
       connectedServices?: Readonly<{
         createRuntimeAuthAdapter?: () => Readonly<{
@@ -67,8 +78,60 @@ type CodexRuntimeContributionModule = typeof runtimeContribution & Partial<{
 const moduleWithA16y3Exports = runtimeContribution as CodexRuntimeContributionModule;
 
 describe('Codex runtime contribution leaves', () => {
+  it('declares the full provider-owned direct-live runtime auth capability', () => {
+    expect(moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION?.connectedServices?.recoveryCapabilities)
+      .toMatchObject({
+        predictiveSoftSwitch: { mode: 'supported' },
+        sameAccountFanoutStrategy: 'provider_account_id',
+        runtimeAuthApply: {
+          directLiveHotAuth: {
+            supportsInTurnApply: true,
+            requiresExactRuntimeIdentity: true,
+            refreshSelectionResync: 'required',
+            authMode: {
+              kind: 'external_token_injection',
+              surface: 'codex_chatgpt_auth_tokens',
+            },
+          },
+        },
+      });
+  });
+
+  it('materializes openai-codex auth.json with private atomic-file permissions', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-auth-materialize-'));
+    try {
+      await runtimeContribution.materializeCodexAuthEnvironment({
+        rootDir: codexHome,
+        openaiCodex: {
+          kind: 'oauth',
+          serviceId: 'openai-codex',
+          oauth: {
+            accessToken: 'access-token',
+            refreshToken: 'refresh-token',
+            idToken: 'id-token',
+            providerAccountId: 'account-1',
+          },
+        },
+      });
+
+      const authPath = join(codexHome, 'auth.json');
+      expect(JSON.parse(await readFile(authPath, 'utf8'))).toMatchObject({
+        auth_mode: 'chatgpt',
+        access_token: 'access-token',
+        refresh_token: 'refresh-token',
+        id_token: 'id-token',
+        account_id: 'account-1',
+      });
+      if (process.platform !== 'win32') {
+        expect((await stat(authPath)).mode & 0o777).toBe(0o600);
+      }
+    } finally {
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
   it('exports host-mediated runtime-control hooks for generated projection', async () => {
-    const runtimeControl = moduleWithA16y3Exports.CODEX_PROVIDER_RUNTIME_CONTRIBUTION?.runtimeControl;
+    const runtimeControl = moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION?.runtimeControl;
     const adapter = runtimeControl?.connectedServices?.createRuntimeAuthAdapter?.();
 
     expect(runtimeControl?.appServer).toMatchObject({
@@ -76,12 +139,16 @@ describe('Codex runtime contribution leaves', () => {
       request: expect.any(Function),
     });
     expect(adapter?.canHotApply?.({
-      target: { agentId: 'codex' },
+      target: { providerId: 'codex' },
       selection: {
         record: { serviceId: 'openai-codex', kind: 'oauth', oauth: { providerAccountId: 'acct' } },
         invalidateTransports: async () => undefined,
       },
-    })).toEqual({ supported: true });
+    })).toEqual({
+      supported: true,
+      mode: 'transport_recycle',
+      recovery: 'restart_resume',
+    });
 
     const selection = await runtimeControl?.connectedServices?.materializeRuntimeAuthSelection?.({
       runtimeControl: {
@@ -130,7 +197,7 @@ describe('Codex runtime contribution leaves', () => {
     expect(adapter?.resolvePersistedSessionRuntimeKind?.({
       agentRuntimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: {
           backendMode: 'appServer',
           providerSessionId: 'thread-1',
@@ -140,7 +207,7 @@ describe('Codex runtime contribution leaves', () => {
     expect(adapter?.resolveVendorResumeId?.({
       agentRuntimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: {
           backendMode: 'appServer',
           vendorSessionId: 'legacy-thread',
@@ -159,7 +226,7 @@ describe('Codex runtime contribution leaves', () => {
       metadata: {
         agentRuntimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           provider: {
             backendMode: 'mcp',
             providerSessionId: 'thread-1',
@@ -180,7 +247,7 @@ describe('Codex runtime contribution leaves', () => {
       metadata: {
         agentRuntimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           provider: {
             backendMode: 'mcp',
             providerSessionId: 'thread-1',
@@ -195,7 +262,7 @@ describe('Codex runtime contribution leaves', () => {
     expect(moduleWithA16y3Exports.readCodexSessionMetadataRuntimeDescriptor?.({
       agentRuntimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: {
           backendMode: 'appServer',
           providerSessionId: 'thread-1',
@@ -205,13 +272,20 @@ describe('Codex runtime contribution leaves', () => {
         },
       },
     })).toMatchObject({
-      providerId: 'codex',
+      agentId: 'codex',
       runtimeKind: 'appServer',
       backendMode: 'appServer',
       providerSessionId: 'thread-1',
       connectedServiceId: 'openai-codex',
       connectedServiceGroupId: 'group-1',
     });
+  });
+
+  it('exports public external-session host adapter factories from the runtime contribution', () => {
+    const externalSessions = moduleWithA16y3Exports.CODEX_AGENT_RUNTIME_CONTRIBUTION?.externalSessions;
+
+    expect(externalSessions?.createCandidateHostAdapter).toBeTypeOf('function');
+    expect(externalSessions?.createTranscriptStoreAdapter).toBeTypeOf('function');
   });
 
   it('exports plugin-owned protocol descriptor functions for generated projection', () => {
@@ -226,7 +300,7 @@ describe('Codex runtime contribution leaves', () => {
     });
 
     expect(moduleWithA16y3Exports.readCanonicalCodexAgentRuntimeDescriptorV1?.(descriptor)).toEqual({
-      providerId: 'codex',
+      agentId: 'codex',
       backendMode: 'appServer',
       providerSessionId: 'thread-1',
       home: 'connectedService',

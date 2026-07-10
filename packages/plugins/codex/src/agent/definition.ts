@@ -1,58 +1,242 @@
 // IMPORTANT: this must stay JSON-serializable (data-only).
 const CODEX_AGENT_ID = 'codex';
 
+const CODEX_RUNTIME_KIND_ALIASES = [
+  { input: 'acp', runtimeKind: 'acp' },
+  { input: 'appServer', runtimeKind: 'appServer' },
+  { input: 'mcp', runtimeKind: 'appServer' },
+  { input: 'mcp_resume', runtimeKind: 'acp' },
+] as const;
+
+const CODEX_RUNTIME_CONTROL_KIND_ALIASES = [
+  { input: 'acp', runtimeKind: 'acp' },
+  { input: 'appServer', runtimeKind: 'appServer' },
+  { input: 'mcp', runtimeKind: 'mcp' },
+  { input: 'mcp_resume', runtimeKind: 'acp' },
+] as const;
+
+const CODEX_RUNTIME_DESCRIPTOR_READER_PROJECTION = {
+  providerId: 'codex',
+  backendModeKey: 'backendMode',
+  runtimeKind: {
+    aliases: CODEX_RUNTIME_KIND_ALIASES,
+  },
+  fields: [
+    { key: 'backendMode', kind: 'runtimeKind', runtimeHandle: 'whenPresent' },
+    { key: 'providerSessionId', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+    { key: 'home', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+    { key: 'connectedServiceId', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+    { key: 'connectedServiceProfileId', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+    { key: 'connectedServiceGroupId', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+    { key: 'homePath', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+  ],
+  legacy: {
+    requireRuntimeKind: true,
+    fields: [
+      { key: 'backendMode', sourceKey: 'codexBackendMode', kind: 'runtimeKind', runtimeHandle: 'whenPresent' },
+      { key: 'providerSessionId', sourceKey: 'codexSessionId', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+      { key: 'home', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+      { key: 'connectedServiceId', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+      { key: 'connectedServiceProfileId', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+      { key: 'connectedServiceGroupId', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+      { key: 'homePath', kind: 'trimmedString', runtimeHandle: 'whenPresent' },
+    ],
+  },
+} as const;
+
+const CODEX_SESSION_CONTROL_ADAPTER_PROJECTION = {
+  providerId: 'codex',
+  runtimeDescriptor: CODEX_RUNTIME_DESCRIPTOR_READER_PROJECTION,
+  runtimeKindOverride: {
+    aliases: CODEX_RUNTIME_KIND_ALIASES,
+    accountSettingsField: 'codexBackendMode',
+  },
+  configuredRuntimeKind: {
+    aliases: CODEX_RUNTIME_KIND_ALIASES,
+    accountSettingsField: 'codexBackendMode',
+    defaultRuntimeKind: 'appServer',
+    booleanTrueField: 'experimentalCodexAcp',
+    booleanTrueRuntimeKind: 'acp',
+  },
+  controlRuntimeKind: {
+    aliases: CODEX_RUNTIME_CONTROL_KIND_ALIASES,
+    rawDescriptorPaths: [
+      { providerId: 'codex', path: ['agent', 'agentExtra', 'runtimeHandle', 'backendMode'] },
+      { providerId: 'codex', path: ['agent', 'agentExtra', 'runtimeAffinity', 'backendMode'] },
+      { providerId: 'codex', path: ['agent', 'backendMode'] },
+      // legacy `provider` payload-key read-compat (pre-rename persisted metadata)
+      { providerId: 'codex', path: ['provider', 'providerExtra', 'runtimeHandle', 'backendMode'] },
+      { providerId: 'codex', path: ['provider', 'providerExtra', 'runtimeAffinity', 'backendMode'] },
+      { providerId: 'codex', path: ['provider', 'backendMode'] },
+    ],
+    metadataPaths: [
+      { path: ['codexRuntimeDescriptorV1', 'backendMode'] },
+      { path: ['affinity', 'backendMode'] },
+      { path: ['codexBackendMode'] },
+      { path: ['directSessionV1', 'codexBackendMode'] },
+      { providerId: 'codex', path: ['externalSessionV1', 'codexBackendMode'] },
+    ],
+    genericState: {
+      providerId: 'codex',
+      runtimeKind: 'appServer',
+      fields: [
+        'sessionModesV1',
+        'sessionModelsV1',
+        'sessionConfigOptionsV1',
+        'acpSessionModesV1',
+        'acpSessionModelsV1',
+        'acpConfigOptionsV1',
+      ],
+    },
+  },
+  vendorResumeId: {
+    descriptorField: 'providerSessionId',
+    legacyField: 'codexSessionId',
+  },
+  experimentalVendorResume: {
+    runtimeKinds: ['acp', 'appServer'],
+    accountSettingsField: 'codexBackendMode',
+    accountSettingsValues: ['acp', 'appServer', 'mcp_resume'],
+    booleanTrueField: 'experimentalCodexAcp',
+    requireConfiguredRuntimeKind: true,
+  },
+  experimentalVendorHandoff: {
+    runtimeKinds: ['acp', 'appServer'],
+    accountSettingsField: 'codexBackendMode',
+    accountSettingsValues: ['acp', 'appServer', 'mcp_resume'],
+    booleanTrueField: 'experimentalCodexAcp',
+  },
+} as const;
+
 export const AGENT_DEFINITION = Object.freeze({
   id: CODEX_AGENT_ID,
   core: {
     id: CODEX_AGENT_ID,
     cliSubcommand: 'codex',
     detectKey: 'codex',
-    resume: { vendorResume: 'unsupported', vendorResumeIdField: null },
-    sessionStorage: { direct: false, persisted: false },
-    sessionCapabilities: {
-      sessionListing: 'unsupported',
-      sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
-      sessionRollback: { conversation: 'unsupported' },
+    flavorAliases: ['codex-acp', 'codex-mcp', 'openai', 'gpt'],
+    cloudConnect: { vendorKey: 'openai', status: 'wired' },
+    connectedServices: {
+      supportedServiceIds: ['openai-codex', 'openai'],
+      sessionAuthSwitch: {
+        continuityMode: 'restart_shared_state_required',
+        supportedTransitions: ['same_connected_group'],
+        providerStateSharingRequired: {
+          serviceIds: ['openai-codex'],
+          supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
+        },
+      },
+      providerStateSharing: {
+        config: {
+          supported: true,
+          modes: ['linked', 'copied', 'isolated'],
+        },
+        state: {
+          supported: true,
+          modes: ['isolated', 'shared'],
+          sharedStatePrivacyRiskAcknowledgementRequired: true,
+        },
+      },
+      supportedKindsByServiceId: {
+        'openai-codex': ['oauth'],
+        openai: ['token'],
+      },
     },
-    handoff: { vendorStateTransfer: 'unsupported' },
-    tools: { delivery: 'unsupported', support: 'unsupported' },
+    resume: { vendorResume: 'experimental', vendorResumeIdField: 'codexSessionId' },
+    sessionStorage: { direct: true, persisted: true },
+    sessionCapabilities: {
+      sessionListing: 'supported',
+      sessionFork: { conversation: 'supported', fromMessage: 'unsupported' },
+      sessionRollback: { conversation: 'supported' },
+      usageLimitRecovery: { checkNow: 'supported' },
+    },
+    runtimeKinds: {
+      defaultKind: 'appServer',
+      byKind: {
+        mcp: {
+          kind: 'mcp',
+          overrides: {
+            resume: { vendorResume: 'unsupported' },
+            sessionCapabilities: {
+              sessionFork: { conversation: 'unsupported' },
+              sessionRollback: { conversation: 'unsupported' },
+              usageLimitRecovery: { checkNow: 'unsupported' },
+            },
+            handoff: { vendorStateTransfer: 'unsupported' },
+            localControl: null,
+          },
+        },
+        acp: {
+          kind: 'acp',
+          overrides: {
+            sessionCapabilities: {
+              sessionFork: { conversation: 'unsupported' },
+              sessionRollback: { conversation: 'unsupported' },
+              usageLimitRecovery: { checkNow: 'unsupported' },
+            },
+          },
+        },
+        appServer: { kind: 'appServer' },
+      },
+    },
+    handoff: { vendorStateTransfer: 'experimental', requiresExplicitSessionId: true },
+    localControl: { supported: true, topology: 'exclusive', attachStrategy: 'terminal_host' },
+    tools: { delivery: 'native_mcp', support: 'supported' },
   },
-  sessionModeDescriptor: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },
-  sessionModesKind: 'none',
+  sessionModeDescriptor: { source: 'acp', semantics: 'policy-presets', runtimeSwitch: 'metadata-gating' },
+  sessionModesKind: 'acpPolicyPresets',
   modelConfig: {
-    supportsSelection: false,
+    supportsSelection: true,
     nonAcpApplyScope: 'spawn_only',
+    acpModelConfigOptionId: 'model',
+    dynamicProbe: 'auto',
     defaultMode: 'default',
     allowedModes: ['default'],
   },
   authProbeConfig: {
     agentId: 'codex',
     binaryNames: ['codex'],
-    statusCommand: null,
-    parser: 'unknown',
+    statusCommand: ['login', 'status'],
+    parser: 'codexLoginStatus',
     backgroundChecks: 'safe',
+    envVars: ['OPENAI_API_KEY', 'CODEX_API_KEY'],
+    credentialPaths: ['~/.codex/auth.json'],
   },
   localCli: {
     agentId: 'codex',
     detectKey: 'codex',
     machineLoginKey: 'codex',
-    supportKind: 'unsupported',
-    loginLaunch: null,
+    supportKind: 'login_terminal',
+    loginLaunch: {
+      command: 'codex',
+      args: ['login'],
+    },
   },
   agentCliRuntime: {
     id: CODEX_AGENT_ID,
-    title: 'codex CLI',
+    title: 'OpenAI Codex CLI',
     binaryName: 'codex',
+    knownUserBinDirSuffixes: null,
     sourcePreferenceDefault: 'system-first',
-    managedInstall: null,
-    manualInstallKind: 'none',
+    managedInstall: {
+      kind: 'github_release_binary',
+      githubRepo: 'openai/codex',
+      binaryName: 'codex',
+    },
+    manualInstallKind: 'command',
     manualInstallRecipes: null,
     acceptsJavaScriptFileOverride: false,
+    setupRecommendation: { order: 20 },
+    installGuideUrl: null,
+    docsUrl: 'https://github.com/openai/codex',
   },
-  providerSettings: null,
+  commandPolicy: {
+    daemonAutostartDefault: 'preferLocalTui',
+  },
+  agentSettings: null,
   runtimeContributions: {
-    providerCatalogEntry: {
-      importName: 'CODEX_PROVIDER_RUNTIME_CONTRIBUTION',
+    agentCatalogEntry: {
+      importName: 'CODEX_AGENT_RUNTIME_CONTRIBUTION',
       source: './agent/contributions/runtime',
     },
     sessionControlAdapter: {
@@ -60,12 +244,14 @@ export const AGENT_DEFINITION = Object.freeze({
       providerId: 'codex',
       source: './agent/surfaces/sessions/controls/adapter',
       exportName: 'CODEX_SESSION_CONTROL_ADAPTER',
+      generatedAdapter: CODEX_SESSION_CONTROL_ADAPTER_PROJECTION,
     },
     runtimeDescriptorReader: {
       kind: 'providerRuntimeDescriptorReader',
       providerId: 'codex',
       source: './agent/identity/runtimeDescriptor',
       exportName: 'readCodexSessionMetadataRuntimeDescriptor',
+      generatedReader: CODEX_RUNTIME_DESCRIPTOR_READER_PROJECTION,
     },
     protocolRuntimeDescriptor: {
       kind: 'providerRuntimeDescriptorV1',
@@ -79,24 +265,6 @@ export const AGENT_DEFINITION = Object.freeze({
       providerId: 'codex',
       source: './protocol/profiles',
       exportName: 'CODEX_BUILT_IN_BACKEND_PROFILES',
-    },
-    protocolExternalSessionSource: {
-      kind: 'providerExternalSessionSourceV1',
-      providerId: 'codex',
-      source: './protocol/externalSession',
-      exportName: 'CODEX_EXTERNAL_SESSION_SOURCE',
-    },
-    externalSessionHostAdapters: {
-      kind: 'providerExternalSessionHostAdaptersV1',
-      providerId: 'codex',
-      candidateHostAdapter: {
-        source: '@/backends/codex/appServer/session/externalCandidates',
-        exportName: 'createCodexExternalSessionCandidateHostAdapter',
-      },
-      transcriptStoreAdapter: {
-        source: '@/backends/codex/rollout/sessionStore/externalTranscriptAdapter',
-        exportName: 'createCodexExternalSessionTranscriptStoreAdapter',
-      },
     },
   },
 });

@@ -66,12 +66,19 @@ export function readProviderEventTurnId(
   const record = readRecord(value);
   if (!record) return null;
   const turn = readRecord(record.turn);
+  const item = readRecord(record.item);
+  const recordMetadataPassthrough = readRecord(record.internal_chat_message_metadata_passthrough);
+  const itemMetadataPassthrough = readRecord(item?.internal_chat_message_metadata_passthrough);
   const candidates = [
     record.turnId,
     record.turn_id,
     turn?.turnId,
     turn?.turn_id,
     turn?.id,
+    recordMetadataPassthrough?.turnId,
+    recordMetadataPassthrough?.turn_id,
+    itemMetadataPassthrough?.turnId,
+    itemMetadataPassthrough?.turn_id,
     options?.allowTopLevelId === true ? readTopLevelProviderTurnId(record) : null,
   ];
   for (const candidate of candidates) {

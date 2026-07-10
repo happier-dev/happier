@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  CODEX_CHATGPT_AUTH_TOKENS_REFRESH_PATH,
   CodexChatGptAuthTokensRefreshResponseSchema,
   CodexChatGptAuthTokensRefreshSelectionSchema,
   createCodexChatGptBridgeRefreshFailureClassification,
@@ -40,7 +39,6 @@ describe('Codex ChatGPT auth-token refresh bridge contract', () => {
   });
 
   it('publishes only the Codex access token response fields used by the daemon bridge', () => {
-    expect(CODEX_CHATGPT_AUTH_TOKENS_REFRESH_PATH).toBe('/connected-service-auth/openai-codex/chatgpt-auth-tokens/refresh');
     expect(CodexChatGptAuthTokensRefreshResponseSchema.parse({
       accessToken: 'access-token',
       chatgptAccountId: null,

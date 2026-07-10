@@ -120,12 +120,19 @@ export function readCodexActiveProviderAccount(value: unknown): CodexActiveProvi
   const profile = readRecord(record.profile);
   return {
     providerAccountId: readString(record.chatgptAccountId)
+      ?? readString(record.chatgpt_account_id)
       ?? readString(record.accountId)
       ?? readString(record.account_id)
       ?? readString(account?.id)
+      ?? readString(account?.chatgptAccountId)
+      ?? readString(account?.chatgpt_account_id)
       ?? readString(account?.accountId)
       ?? readString(auth?.account_id)
+      ?? readString(auth?.chatgptAccountId)
+      ?? readString(auth?.chatgpt_account_id)
       ?? readString(profile?.accountId)
+      ?? readString(profile?.chatgptAccountId)
+      ?? readString(profile?.chatgpt_account_id)
       ?? readString(profile?.providerAccountId),
     providerEmail: normalizeEmail(
       readString(record.email)
@@ -185,47 +192,10 @@ export function verifyCodexActiveProviderAccount(params: Readonly<{
         reason: 'provider_account_auth_store_mismatch',
       };
     }
-    if (!activeAccount.providerEmail) {
-      return {
-        status: 'unavailable',
-        retryable: true,
-        reason: 'active_account_probe_missing_email',
-      };
-    }
-    if (expectedProviderEmail && activeAccount.providerEmail !== expectedProviderEmail) {
-      return {
-        status: 'mismatch',
-        expectedProviderAccountId: params.expectedProviderAccountId,
-        actualProviderAccountId: null,
-        retryable: true,
-        reason: 'provider_account_email_mismatch',
-      };
-    }
-    return {
-      status: 'verified',
-      providerAccountId: params.expectedProviderAccountId,
-      reason: expectedProviderEmail
-        ? 'provider_account_auth_store_and_email_verified'
-        : 'provider_account_auth_store_verified',
-    };
   }
 
-  if (activeAccount.providerEmail && expectedProviderEmail && activeAccount.providerEmail !== expectedProviderEmail) {
-    return {
-      status: 'mismatch',
-      expectedProviderAccountId: params.expectedProviderAccountId,
-      actualProviderAccountId: null,
-      retryable: true,
-      reason: 'provider_account_email_mismatch',
-    };
-  }
-  if (activeAccount.providerEmail && expectedProviderEmail && activeAccount.providerEmail === expectedProviderEmail) {
-    return {
-      status: 'weakly_verified',
-      providerAccountId: params.expectedProviderAccountId,
-      reason: 'provider_account_email_verified_without_account_id',
-    };
-  }
+  // Auth-store and email proof can diagnose mismatches, but Codex adoption
+  // success must be proven by the live app-server account id.
   return {
     status: 'unavailable',
     retryable: true,

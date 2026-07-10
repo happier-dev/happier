@@ -5,7 +5,7 @@ import {
   type SessionRuntimeIssueV1,
   type SessionUsageLimitRecoveryResumePromptModeV1,
   type SessionUsageLimitRecoveryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/experimental/cloud/usage';
 
 import {
   isCodexRateLimitSnapshotExhausted,
@@ -60,8 +60,8 @@ export function applyCodexUsageLimitRecoveryResumePromptMode(
 export function buildCodexUsageLimitIssueFingerprint(issue: SessionRuntimeIssueV1): string {
   return [
     'usage-limit',
-    issue.provider ?? 'codex',
-    issue.providerTurnId ?? 'unknown-turn',
+    issue.agentId ?? 'codex',
+    issue.agentTurnId ?? 'unknown-turn',
     String(issue.occurredAt),
     issue.usageLimit?.resetAtMs === null || issue.usageLimit?.resetAtMs === undefined
       ? 'no-reset'

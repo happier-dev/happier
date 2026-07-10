@@ -45,11 +45,11 @@ describe('createCodexForkSurface', () => {
     expect(result?.launch.sessionStateUpdates).toContainEqual({
       fieldId: 'identity.runtimeDescriptor',
       value: expect.objectContaining({
-        provider: expect.objectContaining({
+        agent: expect.objectContaining({
           backendMode: 'appServer',
           providerSessionId: 'forked-thread',
           connectedServiceGroupId: 'group-1',
-          providerExtra: expect.objectContaining({
+          agentExtra: expect.objectContaining({
             runtimeHandle: expect.objectContaining({
               providerSessionId: 'forked-thread',
               connectedServiceGroupId: 'group-1',
@@ -142,7 +142,7 @@ describe('createCodexForkSurface', () => {
     expect(result?.launch.sessionStateUpdates).toContainEqual({
       fieldId: 'identity.runtimeDescriptor',
       value: expect.objectContaining({
-        provider: expect.objectContaining({
+        agent: expect.objectContaining({
           backendMode: 'acp',
           providerSessionId: 'forked-acp-thread',
           connectedServiceGroupId: 'group-1',

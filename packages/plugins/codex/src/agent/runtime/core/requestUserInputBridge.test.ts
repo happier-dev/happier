@@ -2,18 +2,18 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createCodexRequestUserInputBridge } from './requestUserInputBridge.js';
 
-type PermissionHandler = Parameters<typeof createCodexRequestUserInputBridge>[0]['permissionHandler'];
+type RequestPermissionDecision = Parameters<typeof createCodexRequestUserInputBridge>[0]['requestPermissionDecision'];
 
 describe('createCodexRequestUserInputBridge', () => {
   it('requests permission and resumes Codex with the selected approval option', async () => {
-    const permissionHandler = {
-      handleToolCall: vi.fn().mockResolvedValue({ decision: 'approved_for_session' }),
-    } satisfies NonNullable<PermissionHandler>;
+    const requestPermissionDecision = vi
+      .fn()
+      .mockResolvedValue({ decision: 'approved_for_session' }) satisfies NonNullable<RequestPermissionDecision>;
     const continueSession = vi.fn().mockResolvedValue(undefined);
     const logger = { debug: vi.fn() };
 
     const bridge = createCodexRequestUserInputBridge({
-      permissionHandler,
+      requestPermissionDecision,
       continueSession,
       logger,
     });
@@ -49,27 +49,27 @@ describe('createCodexRequestUserInputBridge', () => {
       ],
     });
 
-    expect(permissionHandler.handleToolCall).toHaveBeenCalledWith(
-      'call_1',
-      'mcp__playwright__browser_navigate',
-      expect.objectContaining({
+    expect(requestPermissionDecision).toHaveBeenCalledWith({
+      toolCallId: 'call_1',
+      toolName: 'mcp__playwright__browser_navigate',
+      input: expect.objectContaining({
         url: 'https://example.com',
         requestUserInput: expect.any(Object),
       }),
-    );
+    });
 
     expect(continueSession).toHaveBeenCalledWith('Approve this Session');
   });
 
   it('falls back to a valid option label when the expected approval label is missing', async () => {
-    const permissionHandler = {
-      handleToolCall: vi.fn().mockResolvedValue({ decision: 'approved' }),
-    } satisfies NonNullable<PermissionHandler>;
+    const requestPermissionDecision = vi
+      .fn()
+      .mockResolvedValue({ decision: 'approved' }) satisfies NonNullable<RequestPermissionDecision>;
     const continueSession = vi.fn().mockResolvedValue(undefined);
     const logger = { debug: vi.fn() };
 
     const bridge = createCodexRequestUserInputBridge({
-      permissionHandler,
+      requestPermissionDecision,
       continueSession,
       logger,
     });
@@ -101,19 +101,19 @@ describe('createCodexRequestUserInputBridge', () => {
       ],
     });
 
-    expect(permissionHandler.handleToolCall).toHaveBeenCalled();
+    expect(requestPermissionDecision).toHaveBeenCalled();
     expect(continueSession).toHaveBeenCalledWith('Allow');
   });
 
   it('ignores request_user_input prompts that are not MCP tool approvals', async () => {
-    const permissionHandler = {
-      handleToolCall: vi.fn().mockResolvedValue({ decision: 'approved' }),
-    } satisfies NonNullable<PermissionHandler>;
+    const requestPermissionDecision = vi
+      .fn()
+      .mockResolvedValue({ decision: 'approved' }) satisfies NonNullable<RequestPermissionDecision>;
     const continueSession = vi.fn().mockResolvedValue(undefined);
     const logger = { debug: vi.fn() };
 
     const bridge = createCodexRequestUserInputBridge({
-      permissionHandler,
+      requestPermissionDecision,
       continueSession,
       logger,
     });
@@ -131,7 +131,7 @@ describe('createCodexRequestUserInputBridge', () => {
       ],
     });
 
-    expect(permissionHandler.handleToolCall).not.toHaveBeenCalled();
+    expect(requestPermissionDecision).not.toHaveBeenCalled();
     expect(continueSession).not.toHaveBeenCalled();
   });
 });

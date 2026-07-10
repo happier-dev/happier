@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { SessionTurnV1 } from '@happier-dev/protocol';
+import type { SessionTurnV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 import { resolveCodexAppServerRollbackPlanFromSessionTurns } from './rollbackPlan';
 
@@ -31,7 +31,7 @@ describe('resolveCodexAppServerRollbackPlanFromSessionTurns', () => {
             turns: [
                 createTurn({
                     turnId: 'session-turn-1',
-                    providerTurnId: 'provider-turn-1',
+                    agentTurnId: 'provider-turn-1',
                     transcriptAnchors: {
                         startUserMessageSeq: 11,
                         userMessageSeqs: [11, 15],

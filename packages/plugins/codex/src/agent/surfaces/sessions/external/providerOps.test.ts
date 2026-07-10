@@ -13,7 +13,7 @@ describe('Codex external-session provider operation policy', () => {
       remoteSessionId: 'codex-session-1',
       directory: ' /repo/project ',
       codexHome: ' /home/user/.codex ',
-      codexBackendMode: 'appServer',
+      backendMode: 'appServer',
     })).toEqual({
       directory: '/repo/project',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
@@ -21,7 +21,7 @@ describe('Codex external-session provider operation policy', () => {
       resume: 'codex-session-1',
       approvedNewDirectoryCreation: true,
       transcriptStorage: 'direct',
-      codexBackendMode: 'appServer',
+      backendModeHint: 'appServer',
       environmentVariables: {
         CODEX_HOME: '/home/user/.codex',
       },
@@ -32,14 +32,14 @@ describe('Codex external-session provider operation policy', () => {
       remoteSessionId: 'codex-session-1',
       directory: null,
       codexHome: '/home/user/.codex',
-      codexBackendMode: null,
+      backendMode: null,
     })).toBeNull();
     expect(resolveCodexExternalSessionTakeoverSpawnPlan({
       sessionId: 'happy-session-1',
       remoteSessionId: 'codex-session-1',
       directory: '/repo/project',
       codexHome: ' ',
-      codexBackendMode: null,
+      backendMode: null,
     })).toBeNull();
   });
 
@@ -117,7 +117,7 @@ describe('Codex external-session provider operation policy', () => {
       },
     });
     expect(calls).toEqual([{
-      providerId: 'codex',
+      agentId: 'codex',
       source: {
         kind: 'codexHome',
         home: 'user',
@@ -152,7 +152,15 @@ describe('Codex external-session provider operation policy', () => {
       linkedSessionId: 'happier-session-1',
       providerSessionId: 'codex-session-1',
       source: { kind: 'codexHome', home: 'user', homePath: '/home/user/.codex' },
-      metadata: {},
+      metadata: {
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'codex',
+          provider: {
+            backendMode: 'appServer',
+          },
+        },
+      },
       runtime,
     })).resolves.toEqual({
       ok: true,
@@ -164,6 +172,7 @@ describe('Codex external-session provider operation policy', () => {
           environmentVariables: {
             CODEX_HOME: '/home/user/.codex',
           },
+          backendModeHint: 'appServer',
         },
       },
     });

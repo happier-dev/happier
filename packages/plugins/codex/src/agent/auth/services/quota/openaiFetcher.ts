@@ -2,9 +2,18 @@ import type {
   ConnectedServiceCredentialRecordV1,
   ConnectedServiceId,
   ConnectedServiceQuotaMeterV1,
+  ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1,
   ConnectedServiceQuotaSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 import type { FetchRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+
+import { mapCodexRateLimitResetCredits } from './rateLimitResetCredits.js';
+import {
+  OPENAI_CODEX_DEFAULT_RATE_LIMIT_RESET_CREDIT_CONSUME_URL,
+  OPENAI_CODEX_DEFAULT_RATE_LIMIT_RESET_CREDITS_URL,
+  consumeCodexRateLimitResetCredit,
+  fetchCodexRateLimitResetCredits,
+} from './rateLimitResetCreditsClient.js';
 
 export const OPENAI_CODEX_DEFAULT_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 
@@ -41,6 +50,13 @@ export type CodexQuotaFetcher = Readonly<{
     now: number;
     signal: AbortSignal;
   }>) => Promise<ConnectedServiceQuotaSnapshotV1 | null>;
+  consumeRecoveryCredit?: (params: Readonly<{
+    record: ConnectedServiceCredentialRecordV1;
+    now: number;
+    idempotencyKey: string;
+    providerCreditId?: string;
+    signal: AbortSignal;
+  }>) => Promise<ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1 | void>;
 }>;
 
 export type CodexQuotaFetcherDescriptor = Readonly<{
@@ -116,6 +132,8 @@ function buildQuotaUnknownMeter(meterId: string, label: string): ConnectedServic
 
 export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
   usageUrl?: string;
+  resetCreditsUrl?: string;
+  resetCreditConsumeUrl?: string;
   staleAfterMs?: number;
   userAgent?: string;
   /**
@@ -132,6 +150,16 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
     : OPENAI_CODEX_DEFAULT_USAGE_URL;
   const disablePrivateEndpoint = params?.disablePrivateEndpoint === true
     && usageUrl === OPENAI_CODEX_DEFAULT_USAGE_URL;
+  const resetCreditsUrl = typeof params?.resetCreditsUrl === 'string' && params.resetCreditsUrl.trim().length > 0
+    ? params.resetCreditsUrl.trim()
+    : usageUrl === OPENAI_CODEX_DEFAULT_USAGE_URL
+      ? OPENAI_CODEX_DEFAULT_RATE_LIMIT_RESET_CREDITS_URL
+      : null;
+  const resetCreditConsumeUrl = typeof params?.resetCreditConsumeUrl === 'string' && params.resetCreditConsumeUrl.trim().length > 0
+    ? params.resetCreditConsumeUrl.trim()
+    : usageUrl === OPENAI_CODEX_DEFAULT_USAGE_URL
+      ? OPENAI_CODEX_DEFAULT_RATE_LIMIT_RESET_CREDIT_CONSUME_URL
+      : null;
   const staleAfterMs = typeof params?.staleAfterMs === 'number' && Number.isFinite(params.staleAfterMs)
     ? Math.max(1, Math.trunc(params.staleAfterMs))
     : 300_000;
@@ -140,6 +168,22 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
 
   return {
     serviceId: 'openai-codex',
+    consumeRecoveryCredit: async ({ record, idempotencyKey, providerCreditId, signal }) => {
+      if (record.kind !== 'oauth') return;
+      if (!resetCreditConsumeUrl) {
+        throw new Error('OpenAI reset-credit consume endpoint unavailable');
+      }
+      await consumeCodexRateLimitResetCredit({
+        accessToken: record.oauth.accessToken,
+        accountId: record.oauth.providerAccountId,
+        idempotencyKey,
+        providerCreditId,
+        consumeUrl: resetCreditConsumeUrl,
+        userAgent,
+        signal,
+        runtimeFetch,
+      });
+    },
     loadQuota: async ({ record, now, signal }) => {
       if (record.kind !== 'oauth') return null;
       if (!usageUrl) return null;
@@ -183,6 +227,25 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
 
       const json: unknown = await response.json();
       const data = isRecord(json) ? json : {};
+      let rawResetCredits: unknown;
+      if (resetCreditsUrl) {
+        try {
+          rawResetCredits = await fetchCodexRateLimitResetCredits({
+            accessToken: record.oauth.accessToken,
+            accountId: record.oauth.providerAccountId,
+            resetCreditsUrl,
+            userAgent,
+            signal,
+            runtimeFetch,
+          });
+        } catch {
+          rawResetCredits = undefined;
+        }
+      }
+      const recoveryCredits = mapCodexRateLimitResetCredits({
+        rawUsage: data,
+        rawResetCredits,
+      });
 
       const planLabel = normalizeNonEmptyString(data.plan_type);
       const rateLimit = isRecord(data.rate_limit) ? data.rate_limit : null;
@@ -201,6 +264,7 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
         staleAfterMs,
         planLabel,
         accountLabel: resolveConnectedServiceQuotaAccountLabel(record),
+        ...(recoveryCredits ? { recoveryCredits } : {}),
         meters: [
           {
             meterId: 'session',
@@ -255,6 +319,8 @@ export const openAiCodexQuotaFetcherDescriptor: CodexQuotaFetcherDescriptor = {
   id: 'openai-codex',
   createFetcher: ({ env, staleAfterMs, userAgent }) => createOpenAiCodexQuotaFetcher({
     usageUrl: readNonEmptyEnv(env, 'HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_USAGE_URL'),
+    resetCreditsUrl: readNonEmptyEnv(env, 'HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_RESET_CREDITS_URL'),
+    resetCreditConsumeUrl: readNonEmptyEnv(env, 'HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_RESET_CREDIT_CONSUME_URL'),
     staleAfterMs,
     userAgent,
     disablePrivateEndpoint: readDisableCodexQuotaEndpointEnv(env),

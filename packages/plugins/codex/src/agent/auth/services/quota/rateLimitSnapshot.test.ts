@@ -82,6 +82,56 @@ describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
     }
   });
 
+  it('normalizes merged sparse app-server snapshots without erasing identity or reset windows', () => {
+    const snapshot = mapCodexRateLimitSnapshotToQuotaSnapshot({
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      activeAccountId: 'acct_live_codex',
+      fetchedAt: 1_768_000_000_000,
+      rawSnapshot: {
+        rateLimits: {
+          account: {
+            id: 'acct_live_codex',
+            email: 'codex-user@example.test',
+          },
+          primary: {
+            usedPercent: 88,
+            windowDurationMins: 300,
+            resetsAt: 1_779_098_400,
+          },
+          secondary: {
+            usedPercent: 40,
+            windowDurationMins: 10080,
+            resetsAt: 1_779_698_400,
+          },
+          planType: 'pro',
+        },
+      },
+    });
+
+    expect(snapshot).toMatchObject({
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      activeAccountId: 'acct_live_codex',
+      accountLabel: 'codex-user@example.test',
+      planLabel: 'pro',
+      meters: [
+        {
+          meterId: 'primary',
+          utilizationPct: 88,
+          resetAtMs: 1_779_098_400_000,
+          resetsAt: 1_779_098_400_000,
+        },
+        {
+          meterId: 'secondary',
+          utilizationPct: 40,
+          resetAtMs: 1_779_698_400_000,
+          resetsAt: 1_779_698_400_000,
+        },
+      ],
+    });
+  });
+
   it('uses a trusted account-label fallback when the rate-limit payload has no email label', () => {
     const snapshot = mapCodexRateLimitSnapshotToQuotaSnapshot({
       serviceId: 'openai-codex',
@@ -145,6 +195,51 @@ describe('mapCodexRateLimitSnapshotToQuotaSnapshot', () => {
         },
       ],
     });
+  });
+
+  it('maps Codex reset-credit payloads into sanitized recovery credits', () => {
+    const snapshot = mapCodexRateLimitSnapshotToQuotaSnapshot({
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      fetchedAt: 1_768_000_000_000,
+      rawSnapshot: {
+        rate_limit: {
+          primary_window: { used_percent: 100 },
+        },
+        rate_limit_reset_credits: {
+          available_count: 1,
+        },
+      },
+      rawResetCredits: {
+        available_count: 1,
+        credits: [{
+          id: 'credit-1',
+          reset_type: 'codex_rate_limits',
+          status: 'available',
+          granted_at: '2026-05-17T10:00:00.000Z',
+          expires_at: '2026-05-24T10:00:00.000Z',
+          profile_image_url: 'https://example.com/private-avatar.png',
+          profile_user_id: 'user-secret',
+          title: 'Codex rate limit reset',
+          description: 'Reset your Codex rate limits.',
+        }],
+      },
+    });
+
+    expect(snapshot.recoveryCredits).toEqual({
+      availableCount: 1,
+      credits: [{
+        id: 'credit-1',
+        kind: 'usage_limit_reset',
+        status: 'available',
+        grantedAtMs: Date.parse('2026-05-17T10:00:00.000Z'),
+        expiresAtMs: Date.parse('2026-05-24T10:00:00.000Z'),
+        title: 'Codex rate limit reset',
+        description: 'Reset your Codex rate limits.',
+      }],
+    });
+    expect(JSON.stringify(snapshot.recoveryCredits)).not.toContain('private-avatar');
+    expect(JSON.stringify(snapshot.recoveryCredits)).not.toContain('user-secret');
   });
 
   it('preserves numeric usage and limit fields from Codex meters', () => {

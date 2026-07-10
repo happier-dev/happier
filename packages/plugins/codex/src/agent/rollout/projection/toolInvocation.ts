@@ -1,3 +1,5 @@
+import { isChangeTitleToolNameAlias } from '@happier-dev/plugin-sdk/experimental/acp';
+
 export type CodexRolloutToolVisibility = 'default' | 'debug-only' | 'ignore';
 
 /**
@@ -11,6 +13,9 @@ export const KNOWN_CODEX_ROLLOUT_TOOL_NAMES = [
     // function_call (legacy aliases)
     'shell',
     'shell_command',
+    // function_call (Happier session-control aliases)
+    'change_title',
+    'session_title_set',
     // function_call
     'exec_command',
     'spawn_agent',
@@ -36,6 +41,10 @@ export function canonicalizeCodexRolloutToolName(name: string): {
     canonicalToolName: string;
     visibility: CodexRolloutToolVisibility;
 } {
+    if (isChangeTitleToolNameAlias(name)) {
+        return { canonicalToolName: 'change_title', visibility: 'default' };
+    }
+
     if (name.startsWith('mcp__')) {
         return { canonicalToolName: name, visibility: 'default' };
     }

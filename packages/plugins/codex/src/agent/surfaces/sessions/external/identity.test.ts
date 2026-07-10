@@ -1,6 +1,6 @@
 import { join, resolve } from 'node:path';
 
-import type { SessionMetadata } from '@happier-dev/protocol';
+import type { SessionMetadata } from '@happier-dev/plugin-sdk/sessions';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -121,13 +121,13 @@ describe('Codex plugin session identity metadata', () => {
         codexBackendMode: 'appServer',
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
-          provider: {
+          agentId: 'codex',
+          agent: {
             backendMode: 'appServer',
             providerSessionId: 'thread-app-server',
             home: 'user',
             homePath: DEFAULT_CODEX_HOME_PATH,
-            providerExtra: {
+            agentExtra: {
               owner: 'codex',
               schemaId: 'codex.agentRuntimeDescriptorExtra',
               v: 1,
@@ -166,7 +166,7 @@ describe('Codex plugin session identity metadata', () => {
 
     expect(recorder.getMetadata().externalSessionV1).toMatchObject({
       v: 1,
-      providerId: 'codex',
+      agentId: 'codex',
       machineId: 'machine-1',
       remoteSessionId: 'thread-direct',
       source: {
@@ -226,8 +226,8 @@ describe('Codex plugin session identity metadata', () => {
 
     expect(recorder.getMetadata().runtimeDescriptorV1).toMatchObject({
       v: 1,
-      providerId: 'codex',
-      provider: {
+      agentId: 'codex',
+      agent: {
         backendMode: 'appServer',
         providerSessionId: 'thread-connected',
         home: 'connectedService',
@@ -295,7 +295,7 @@ describe('Codex plugin session identity metadata', () => {
       host: string;
       externalSessionV1?: {
         v: 1;
-        providerId: string;
+        agentId: string;
         machineId: string;
         remoteSessionId: string;
         source: { kind: 'codexHome'; home: 'user'; homePath: string };
@@ -311,7 +311,7 @@ describe('Codex plugin session identity metadata', () => {
       happyToolsDir: '/home/test/.happier/tools',
       externalSessionV1: {
         v: 1,
-        providerId: 'other',
+        agentId: 'other',
         machineId: 'machine-1',
         remoteSessionId: 'other-thread',
         source: { kind: 'codexHome', home: 'user', homePath: '/tmp/.codex' },
@@ -344,8 +344,8 @@ describe('Codex plugin session identity metadata', () => {
       },
       runtimeDescriptor: {
         v: 1,
-        providerId: 'codex',
-        provider: {
+        agentId: 'codex',
+        agent: {
           backendMode: 'appServer',
           providerSessionId: 'thread-from-runtime',
           home: 'connectedService',
@@ -376,8 +376,8 @@ describe('Codex plugin session identity metadata', () => {
       },
       runtimeDescriptor: {
         v: 1,
-        providerId: 'codex',
-        provider: {
+        agentId: 'codex',
+        agent: {
           backendMode: 'appServer',
           providerSessionId: 'thread-from-runtime',
           home: 'connectedService',

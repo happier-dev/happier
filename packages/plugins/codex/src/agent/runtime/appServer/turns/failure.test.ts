@@ -21,6 +21,13 @@ describe('createCodexAppServerTurnFailure', () => {
                 },
             },
             authContext: { profileId: 'leeroy', groupId: 'happier' },
+            sourceAccountIdentity: {
+                providerAccountId: 'acct_source',
+                accountLabel: 'source@example.test',
+                profileId: 'runtime-profile',
+                groupId: 'runtime-group',
+                generation: 42,
+            },
         });
 
         expect((failure as Error & { runtimeAuthClassification?: unknown }).runtimeAuthClassification).toMatchObject({
@@ -33,6 +40,37 @@ describe('createCodexAppServerTurnFailure', () => {
             planType: 'plus',
             rateLimits: { primary: { used_percent: 100 } },
             source: 'structured_provider_error',
+            sourceProviderAccountId: 'acct_source',
+            sourceAccountLabel: 'source@example.test',
+            groupGeneration: 42,
+        });
+    });
+
+    it('uses failure-time runtime identity when separate auth context is unavailable', () => {
+        const failure = createCodexAppServerTurnFailure({
+            value: {
+                error: {
+                    message: 'Usage limit reached',
+                    codexErrorInfo: 'UsageLimitExceeded',
+                },
+            },
+            sourceAccountIdentity: {
+                providerAccountId: 'acct_source',
+                accountLabel: 'source@example.test',
+                profileId: 'runtime-profile',
+                groupId: 'runtime-group',
+                generation: 42,
+            },
+        });
+
+        expect((failure as Error & { runtimeAuthClassification?: unknown }).runtimeAuthClassification).toMatchObject({
+            kind: 'usage_limit',
+            serviceId: 'openai-codex',
+            profileId: 'runtime-profile',
+            groupId: 'runtime-group',
+            sourceProviderAccountId: 'acct_source',
+            sourceAccountLabel: 'source@example.test',
+            groupGeneration: 42,
         });
     });
 

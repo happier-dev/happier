@@ -1,6 +1,7 @@
 import { resolveCanonicalCodexBackendModeFromCompatInput } from '../../../lifecycle/backendMode.js';
 
 export type CodexProviderResumeSupportInput = Readonly<{
+  backendMode?: unknown;
   codexBackendMode?: unknown;
   experimentalCodexAcp?: boolean;
   runtimeDescriptorV1?: unknown;

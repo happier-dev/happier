@@ -1,13 +1,11 @@
 import type {
+  AgentRuntimeV1,
   CreateExecutionRunBackendParamsV1,
   CreateSessionRuntimeParamsV1,
   ExecutionRunBackendCreateResultV1,
   PluginContextV1,
+  SessionRuntimeCreateResultV1,
 } from '@happier-dev/plugin-sdk';
-import type {
-  BundledBackendEngineV1,
-  BundledSessionRuntimeCreateResultV1,
-} from '@happier-dev/plugin-sdk/internal/runtime/session';
 
 import { CODEX_ACP_BACKEND_SPEC } from '../acp/backend.js';
 import { createCodexExecutionRunBackend } from '../executionRuns/backend.js';
@@ -56,20 +54,20 @@ function readCodexBackendMode(value: unknown): CodexBackendMode {
 function createCodexAcpSessionRuntime(params: Readonly<{
   ctx: PluginContextV1;
   sessionParams: CreateSessionRuntimeParamsV1;
-}>): BundledSessionRuntimeCreateResultV1 | Promise<BundledSessionRuntimeCreateResultV1> {
-  const acpEngine = params.ctx.acp.defineAcpBackend(CODEX_ACP_BACKEND_SPEC);
+}>): SessionRuntimeCreateResultV1 | Promise<SessionRuntimeCreateResultV1> {
+  const acpEngine = params.ctx.agentRuntime.acp.defineAcpBackend(CODEX_ACP_BACKEND_SPEC);
   const createSessionRuntime = acpEngine.runtimeCore?.createSessionRuntime;
   if (typeof createSessionRuntime !== 'function') {
     throw new Error('Codex ACP backend definition did not expose runtimeCore.createSessionRuntime.');
   }
-  return createSessionRuntime(params.sessionParams) as BundledSessionRuntimeCreateResultV1 | Promise<BundledSessionRuntimeCreateResultV1>;
+  return createSessionRuntime(params.sessionParams) as SessionRuntimeCreateResultV1 | Promise<SessionRuntimeCreateResultV1>;
 }
 
 function createCodexAcpExecutionRunBackend(params: Readonly<{
   ctx: PluginContextV1;
   executionRunParams: CreateExecutionRunBackendParamsV1;
 }>): ExecutionRunBackendCreateResultV1 {
-  const acpEngine = params.ctx.acp.defineAcpBackend(CODEX_ACP_BACKEND_SPEC);
+  const acpEngine = params.ctx.agentRuntime.acp.defineAcpBackend(CODEX_ACP_BACKEND_SPEC);
   const createExecutionRunBackend = acpEngine.runtimeCore?.createExecutionRunBackend;
   if (typeof createExecutionRunBackend !== 'function') {
     throw new Error('Codex ACP backend definition did not expose runtimeCore.createExecutionRunBackend.');
@@ -77,7 +75,7 @@ function createCodexAcpExecutionRunBackend(params: Readonly<{
   return createExecutionRunBackend(params.executionRunParams);
 }
 
-export function createCodexBackendEngine(ctx: PluginContextV1): BundledBackendEngineV1 {
+export function createCodexBackendEngine(ctx: PluginContextV1): AgentRuntimeV1 {
   return {
     handoffSurface: codexHandoffSurface,
     terminalRuntimeSurface: createCodexTerminalRuntimeSurface({
@@ -90,7 +88,7 @@ export function createCodexBackendEngine(ctx: PluginContextV1): BundledBackendEn
       baseProcessEnv: ctx.env.list(),
       forkNative: async ({ directory, parentCodexSessionId, processEnv }) => {
         const client = await createCodexAppServerClient({
-          exec: ctx.exec,
+          exec: ctx.agentRuntime.exec,
           cwd: directory,
           processEnv,
         });

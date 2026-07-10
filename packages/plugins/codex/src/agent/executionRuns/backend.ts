@@ -1,15 +1,18 @@
-import type {
-  CreateExecutionRunBackendParamsV1,
-  ExecutionRunBackendCreateResultV1,
-  ExecutionRunHostBackendV1,
-  PluginContextV1,
+import {
+  createExecutionRunHostBackendFromSessionRuntime,
+  type CreateExecutionRunHostBackendFromSessionRuntimeOptionsV1,
+  type CreateExecutionRunBackendParamsV1,
+  type ExecutionRunBackendCreateResultV1,
+  type ExecutionRunHostBackendV1,
+  type PluginContextV1,
+  type SessionRuntimeV1,
 } from '@happier-dev/plugin-sdk';
-import { createExecutionRunHostBackendFromTurnOperations } from '@happier-dev/plugin-sdk/internal/runtime/executionRun';
+import { composeSessionIsolationEnvironment } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 import {
-  createCodexAppServerRuntime,
   type CodexAppServerRuntime,
 } from '../runtime/appServer/runtime.js';
+import { createCodexAppServerSessionRuntime } from '../runtime/appServer/session.js';
 
 function normalizeString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -21,11 +24,32 @@ function readDirectory(params: CreateExecutionRunBackendParamsV1): string {
   return normalizeString(params.cwd) ?? normalizeString(params.directory) ?? process.cwd();
 }
 
-function readProcessEnv(params: CreateExecutionRunBackendParamsV1): Readonly<Record<string, string>> {
-  return {
-    ...(params.isolation?.env ?? {}),
-    ...(params.env ?? {}),
-  };
+function readProcessEnv(
+  ctx: PluginContextV1,
+  params: CreateExecutionRunBackendParamsV1,
+): Readonly<Record<string, string>> {
+  return composeSessionIsolationEnvironment({
+    inheritedEnvironment: ctx.env.list(),
+    isolationEnvironment: params.isolation?.env,
+    environment: params.env,
+    unsetEnvKeys: params.isolation?.unsetEnvKeys,
+  });
+}
+
+function readModelId(params: CreateExecutionRunBackendParamsV1): string | null {
+  const modelId = normalizeString(params.modelId);
+  return modelId && modelId !== 'default' ? modelId : null;
+}
+
+function hasCodexAppServerLivenessProbe(runtime: SessionRuntimeV1): runtime is CodexAppServerRuntime {
+  return typeof (runtime as SessionRuntimeV1 & Readonly<{ probeTurnLiveness?: unknown }>).probeTurnLiveness === 'function';
+}
+
+function readCodexExecutionRunMessageActivity(
+  message: Parameters<NonNullable<CreateExecutionRunHostBackendFromSessionRuntimeOptionsV1['readMessageActivity']>>[0],
+): ReturnType<NonNullable<CreateExecutionRunHostBackendFromSessionRuntimeOptionsV1['readMessageActivity']>> {
+  if ('kind' in message && message.kind === 'backend-error') return 'idle';
+  return null;
 }
 
 export function createCodexAppServerExecutionRunBackend(params: Readonly<{
@@ -34,20 +58,30 @@ export function createCodexAppServerExecutionRunBackend(params: Readonly<{
 }>): ExecutionRunHostBackendV1 {
   const directory = readDirectory(params.executionRunParams);
   const happierSessionId = normalizeString(params.executionRunParams.runId) ?? 'codex-execution-run';
+  const modelId = readModelId(params.executionRunParams);
+  const processEnv = readProcessEnv(params.ctx, params.executionRunParams);
 
-  return createExecutionRunHostBackendFromTurnOperations({
-    createOperations: () => createCodexAppServerRuntime({
+  return createExecutionRunHostBackendFromSessionRuntime({
+    createSessionRuntime: (factoryParams) => createCodexAppServerSessionRuntime({
       ctx: params.ctx,
-      directory,
-      happierSessionId,
-      processEnv: readProcessEnv(params.executionRunParams),
+      sessionParams: {
+        backendId: params.executionRunParams.backendId ?? 'codex',
+        cwd: directory,
+        directory,
+        sessionId: happierSessionId,
+        ...(modelId ? { modelId } : {}),
+        env: processEnv,
+        initialRuntimeState: {
+          ...(factoryParams?.resumeSessionId ? { providerSessionId: factoryParams.resumeSessionId } : {}),
+          ...(factoryParams?.captureReplay === true ? { captureReplay: true } : {}),
+        },
+      },
     }),
-    readRuntimeLiveness: (operations) => {
-      const runtime = operations as CodexAppServerRuntime;
-      return typeof runtime.probeTurnLiveness === 'function'
-        ? runtime.probeTurnLiveness()
-        : null;
-    },
+    readRuntimeLiveness: (runtime) => hasCodexAppServerLivenessProbe(runtime)
+      ? runtime.probeTurnLiveness()
+      : null,
+    readMessageActivity: readCodexExecutionRunMessageActivity,
+    waitForTurnCompletion: { mode: 'untilIdle' },
     diagnostics: {
       source: 'codex-app-server-runtime',
     },

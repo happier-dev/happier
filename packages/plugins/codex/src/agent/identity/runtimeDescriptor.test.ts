@@ -32,7 +32,7 @@ describe('Codex runtime descriptor identity helpers', () => {
     const metadata = {
       agentRuntimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: {
           backendMode: 'mcp',
           providerSessionId: 'thread-mcp',

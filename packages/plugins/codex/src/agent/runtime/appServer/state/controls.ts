@@ -2,7 +2,12 @@ import {
     SESSION_CONFIG_OPTIONS_STATE_KEY,
     SESSION_MODELS_STATE_KEY,
     SESSION_MODES_STATE_KEY,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk/sessions';
+
+import {
+    CODEX_APP_SERVER_REASONING_EFFORT_CONFIG_OPTION_ID,
+    CODEX_APP_SERVER_SERVICE_TIER_CONFIG_OPTION_ID,
+} from './configOptionIds.js';
 
 type JsonRpcClient = Readonly<{
     request: (method: string, params?: unknown) => Promise<unknown>;
@@ -153,6 +158,12 @@ type ReasoningEffortChoice = Readonly<{
     description?: string;
 }>;
 
+type SpeedTierChoice = Readonly<{
+    value: string;
+    name?: string;
+    description?: string;
+}>;
+
 function normalizeReasoningEffortChoices(value: unknown): ReasoningEffortChoice[] {
     if (!Array.isArray(value)) return [];
     return value
@@ -198,7 +209,7 @@ function buildReasoningEffortModelOption(params: Readonly<{
         ? (params.currentReasoningEffort ?? defaultValue)
         : defaultValue;
     return {
-        id: 'reasoning_effort',
+        id: CODEX_APP_SERVER_REASONING_EFFORT_CONFIG_OPTION_ID,
         name: 'Thinking',
         type: 'select',
         currentValue,
@@ -210,7 +221,7 @@ function buildReasoningEffortModelOption(params: Readonly<{
     };
 }
 
-function isSpeedEligible(params: Readonly<{
+function isLegacySpeedEligible(params: Readonly<{
     authMethod?: string | null;
     currentModelId: string | null;
 }>): boolean {
@@ -218,15 +229,84 @@ function isSpeedEligible(params: Readonly<{
     return params.authMethod === 'oauth_cli' || params.authMethod === 'credentials_file';
 }
 
+function normalizeSpeedTierLabel(value: string): string {
+    switch (value) {
+        case 'fast':
+            return 'Fast';
+        case 'standard':
+            return 'Standard';
+        default:
+            return value;
+    }
+}
+
+function normalizeSpeedTierDetails(value: unknown): SpeedTierChoice[] {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((entry): SpeedTierChoice[] => {
+        const stringValue = normalizeString(entry);
+        if (stringValue) {
+            return [{ value: stringValue, name: normalizeSpeedTierLabel(stringValue) }];
+        }
+        const record = asRecord(entry);
+        if (!record) return [];
+        const valueId = normalizeString(record.value)
+            ?? normalizeString(record.id)
+            ?? normalizeString(record.tier)
+            ?? normalizeString(record.serviceTier)
+            ?? normalizeString(record.service_tier);
+        const name = normalizeString(record.name) ?? normalizeString(record.label);
+        if (!valueId && !name) return [];
+        const value = valueId ?? name!;
+        const description = normalizeString(record.description);
+        return [{
+            value,
+            ...(name ? { name } : {}),
+            ...(description ? { description } : {}),
+        }];
+    });
+}
+
+function normalizeAdditionalSpeedTierValues(value: unknown): string[] {
+    return normalizeSpeedTierDetails(value)
+        .map((entry) => normalizeString(entry.value))
+        .filter((entry): entry is string => entry !== null);
+}
+
+function readProviderDeclaredSpeedTierChoice(record: MetadataRecord): SpeedTierChoice | null {
+    const additionalSpeedTiers = normalizeAdditionalSpeedTierValues(
+        record.additionalSpeedTiers ?? record.additional_speed_tiers,
+    );
+    const declaresFast = additionalSpeedTiers.includes('fast');
+    const serviceTierDetails = normalizeSpeedTierDetails(record.serviceTiers ?? record.service_tiers);
+    const fastDetail = serviceTierDetails.find((entry) => {
+        const value = normalizeString(entry.value);
+        const name = normalizeString(entry.name);
+        return value === 'fast' || name?.toLowerCase() === 'fast';
+    }) ?? (declaresFast && serviceTierDetails.length === 1 ? serviceTierDetails[0] : null);
+
+    if (!declaresFast && !fastDetail) return null;
+    return {
+        value: 'fast',
+        name: fastDetail?.name ?? normalizeSpeedTierLabel('fast'),
+        ...(fastDetail?.description ? { description: fastDetail.description } : {}),
+    };
+}
+
 function buildSpeedModelOption(params: Readonly<{
     authMethod?: string | null;
     modelId: string;
+    record: MetadataRecord;
     currentModelId: string | null;
     currentServiceTier?: string | null;
 }>): SessionConfigOption | null {
-    if (!isSpeedEligible({ authMethod: params.authMethod, currentModelId: params.modelId })) return null;
+    const providerChoice = readProviderDeclaredSpeedTierChoice(params.record);
+    const speedChoice = providerChoice
+        ?? (isLegacySpeedEligible({ authMethod: params.authMethod, currentModelId: params.modelId })
+            ? { value: 'fast', name: normalizeSpeedTierLabel('fast') }
+            : null);
+    if (!speedChoice) return null;
     return {
-        id: 'service_tier',
+        id: CODEX_APP_SERVER_SERVICE_TIER_CONFIG_OPTION_ID,
         name: 'Speed',
         type: 'select',
         currentValue: params.modelId === params.currentModelId
@@ -234,7 +314,11 @@ function buildSpeedModelOption(params: Readonly<{
             : 'standard',
         options: [
             { value: 'standard', name: 'Standard' },
-            { value: 'fast', name: 'Fast' },
+            {
+                value: 'fast',
+                name: speedChoice.name ?? normalizeSpeedTierLabel(speedChoice.value),
+                ...(speedChoice.description ? { description: speedChoice.description } : {}),
+            },
         ],
     };
 }
@@ -268,6 +352,7 @@ function normalizeSessionModelMasks(params: Readonly<{
         const speedOption = buildSpeedModelOption({
             authMethod: params.authMethod,
             modelId: id,
+            record,
             currentModelId: params.currentModelId,
             currentServiceTier: params.currentServiceTier,
         });

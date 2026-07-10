@@ -9,6 +9,14 @@ export type CodexAppServerTurnFailureAuthContext = Readonly<{
     groupId: string | null;
 }>;
 
+export type CodexAppServerTurnFailureSourceAccountIdentity = Readonly<{
+    providerAccountId?: string | null;
+    accountLabel?: string | null;
+    profileId?: string | null;
+    groupId?: string | null;
+    generation?: string | number | null;
+}>;
+
 const CODEX_APP_SERVER_AUTH_ACCOUNT_CHANGED_MESSAGE =
     'Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.';
 const CODEX_APP_SERVER_CONTEXT_WINDOW_EXHAUSTED_MESSAGE_MARKERS = [
@@ -147,9 +155,13 @@ export function shouldDeferCodexAppServerTurnFailureToPromptLoop(error: unknown)
 export function createCodexAppServerTurnFailure(params: Readonly<{
     value: unknown;
     authContext?: CodexAppServerTurnFailureAuthContext | null;
+    sourceAccountIdentity?: CodexAppServerTurnFailureSourceAccountIdentity | null;
 }>): Error {
     const payload = readCodexAppServerErrorPayload(params.value);
-    const authContext = params.authContext ?? { profileId: null, groupId: null };
+    const authContext = params.authContext ?? {
+        profileId: params.sourceAccountIdentity?.profileId ?? null,
+        groupId: params.sourceAccountIdentity?.groupId ?? null,
+    };
     return new CodexAppServerTurnFailure(
         payload ? formatCodexAppServerErrorPayloadMessage(payload) ?? 'Codex app-server turn failed' : 'Codex app-server turn failed',
         {
@@ -174,6 +186,13 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
                     serviceId: 'openai-codex',
                     profileId: authContext.profileId,
                     groupId: authContext.groupId,
+                    sourceAccountIdentity: params.sourceAccountIdentity
+                        ? {
+                            providerAccountId: params.sourceAccountIdentity.providerAccountId,
+                            accountLabel: params.sourceAccountIdentity.accountLabel,
+                            groupGeneration: params.sourceAccountIdentity.generation,
+                        }
+                        : null,
                 })
                 : null,
         },

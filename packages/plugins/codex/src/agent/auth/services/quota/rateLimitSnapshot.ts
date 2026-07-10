@@ -4,7 +4,9 @@ import {
   type ConnectedServiceProfileId,
   type ConnectedServiceQuotaMeterV1,
   type ConnectedServiceQuotaSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+
+import { mapCodexRateLimitResetCredits } from './rateLimitResetCredits.js';
 
 export const CODEX_RATE_LIMIT_SNAPSHOT_STALE_AFTER_MS = 5 * 60 * 1000;
 
@@ -43,6 +45,7 @@ export function unwrapCodexRateLimitSnapshot(rawSnapshot: unknown): unknown {
   const record = isRecord(rawSnapshot) ? rawSnapshot : null;
   if (record && isRecord(record.rateLimits)) return record.rateLimits;
   if (record && isRecord(record.rate_limits)) return record.rate_limits;
+  if (record && isRecord(record.rate_limit)) return record.rate_limit;
   return rawSnapshot;
 }
 
@@ -90,8 +93,13 @@ export function mapCodexRateLimitSnapshotToQuotaSnapshot(params: Readonly<{
   fetchedAt: number;
   staleAfterMs?: number;
   rawSnapshot: unknown;
+  rawResetCredits?: unknown;
 }>): ConnectedServiceQuotaSnapshotV1 {
   const activeAccountId = readString(params.activeAccountId);
+  const recoveryCredits = mapCodexRateLimitResetCredits({
+    rawUsage: params.rawSnapshot,
+    rawResetCredits: params.rawResetCredits,
+  });
   return ConnectedServiceQuotaSnapshotV1Schema.parse({
     v: 1,
     serviceId: params.serviceId,
@@ -101,6 +109,7 @@ export function mapCodexRateLimitSnapshotToQuotaSnapshot(params: Readonly<{
     staleAfterMs: params.staleAfterMs ?? CODEX_RATE_LIMIT_SNAPSHOT_STALE_AFTER_MS,
     planLabel: readCodexRateLimitSnapshotPlanLabel(params.rawSnapshot),
     accountLabel: readCodexRateLimitSnapshotAccountLabel(params.rawSnapshot) ?? readString(params.accountLabel),
+    ...(recoveryCredits ? { recoveryCredits } : {}),
     meters: mapCodexRateLimitSnapshotToUsageMeters(params.rawSnapshot),
   });
 }

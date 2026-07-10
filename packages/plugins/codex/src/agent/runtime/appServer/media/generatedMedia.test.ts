@@ -11,7 +11,7 @@ describe('extractCodexGeneratedMediaCandidate', () => {
       itemId: 'img_1',
       origin: {
         source: 'provider-generated',
-        providerEventId: 'img_1',
+        agentEventId: 'img_1',
         generationId: 'img_1',
       },
       source: {
@@ -30,7 +30,7 @@ describe('extractCodexGeneratedMediaCandidate', () => {
       itemId: 'img_2',
       origin: {
         source: 'provider-generated',
-        providerEventId: 'img_2',
+        agentEventId: 'img_2',
         generationId: 'img_2',
       },
       source: {
@@ -49,7 +49,7 @@ describe('extractCodexGeneratedMediaCandidate', () => {
       itemId: 'img_3',
       origin: {
         source: 'provider-generated',
-        providerEventId: 'img_3',
+        agentEventId: 'img_3',
         generationId: 'img_3',
       },
       source: {

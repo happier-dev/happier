@@ -1,10 +1,8 @@
-import { randomUUID } from 'node:crypto';
-
 import type {
   TerminalRuntimeDirectTranscriptMirrorHandleV1,
   TerminalRuntimeLaunchRequestV1,
-} from '@happier-dev/agents';
-import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/plugin-sdk/sessions';
 
 import type { CodexRolloutCandidate } from '../../rollout/discovery/indexData.js';
 import { sendCodexProjectedToolEvent } from '../core/projectedToolEvent.js';
@@ -14,6 +12,13 @@ import {
 } from './invocation.js';
 import { createCodexTerminalRuntimeProjection } from './projection.js';
 import { resolveCodexTerminalRuntimeTranscriptBinding } from './transcriptBinding.js';
+
+const MISSING_PROVIDER_TRANSCRIPT_ITEM_ID_DIAGNOSTIC_ID = 'codex-terminal-direct-transcript:item-skipped:missing-id';
+const MISSING_PROVIDER_TRANSCRIPT_ITEM_ID_EVENT_KIND = 'codex-terminal-direct-transcript-item-skipped';
+
+type CodexTerminalDirectTranscriptMirrorDiagnostics = {
+  missingProviderTranscriptItemId: boolean;
+};
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -31,10 +36,6 @@ function readActiveServerDir(request: TerminalRuntimeLaunchRequestV1): string {
     ?? request.directory;
 }
 
-function buildStableLocalId(item: ExternalSessionTranscriptRawMessageV1): string {
-  return readString(item.id) ?? randomUUID();
-}
-
 function readCodexRawData(item: ExternalSessionTranscriptRawMessageV1): Readonly<Record<string, unknown>> | null {
   const raw = readRecord(item.raw);
   if (!raw || raw.role !== 'agent') {
@@ -47,19 +48,44 @@ function readCodexRawData(item: ExternalSessionTranscriptRawMessageV1): Readonly
   return readRecord(content.data);
 }
 
+async function publishMissingProviderTranscriptItemIdDiagnostic(params: Readonly<{
+  request: TerminalRuntimeLaunchRequestV1;
+  diagnostics: CodexTerminalDirectTranscriptMirrorDiagnostics;
+}>): Promise<void> {
+  if (params.diagnostics.missingProviderTranscriptItemId) {
+    return;
+  }
+  params.diagnostics.missingProviderTranscriptItemId = true;
+  await params.request.services?.send({
+    kind: 'sessionEvent',
+    event: {
+      kind: MISSING_PROVIDER_TRANSCRIPT_ITEM_ID_EVENT_KIND,
+      reason: 'missing_provider_transcript_item_id',
+      agentId: 'codex',
+    },
+    id: MISSING_PROVIDER_TRANSCRIPT_ITEM_ID_DIAGNOSTIC_ID,
+  }).catch(() => ({ ok: false as const, error: 'publish_failed' }));
+}
+
 async function handleDirectTranscriptItem(params: Readonly<{
   item: ExternalSessionTranscriptRawMessageV1;
   request: TerminalRuntimeLaunchRequestV1;
   processedItemIds: Set<string>;
+  diagnostics: CodexTerminalDirectTranscriptMirrorDiagnostics;
   mirror: ReturnType<typeof createCodexTerminalRuntimeProjection>;
 }>): Promise<void> {
   const stableItemId = readString(params.item.id);
-  if (stableItemId) {
-    if (params.processedItemIds.has(stableItemId)) {
-      return;
-    }
-    params.processedItemIds.add(stableItemId);
+  if (!stableItemId) {
+    await publishMissingProviderTranscriptItemIdDiagnostic({
+      request: params.request,
+      diagnostics: params.diagnostics,
+    });
+    return;
   }
+  if (params.processedItemIds.has(stableItemId)) {
+    return;
+  }
+  params.processedItemIds.add(stableItemId);
 
   const raw = readRecord(params.item.raw);
   if (!raw) {
@@ -74,6 +100,13 @@ async function handleDirectTranscriptItem(params: Readonly<{
     await params.request.services?.send({
       kind: 'userText',
       text,
+      opts: {
+        localId: stableItemId,
+        meta: {
+          importedFrom: 'codex-terminal-direct-transcript',
+          providerTranscriptItemId: stableItemId,
+        },
+      },
     });
     return;
   }
@@ -88,18 +121,17 @@ async function handleDirectTranscriptItem(params: Readonly<{
     if (!message) {
       return;
     }
-    const localId = buildStableLocalId(params.item);
     await params.request.services?.send({
       kind: 'agentMessageCommitted',
-      provider: 'codex',
+      agentId: 'codex',
       body: {
         type: 'message',
         message,
-        id: localId,
+        id: stableItemId,
         ...(sidechainId ? { sidechainId } : {}),
       },
       opts: {
-        localId,
+        localId: stableItemId,
       },
     });
     return;
@@ -126,14 +158,14 @@ async function handleDirectTranscriptItem(params: Readonly<{
         sendAgentMessage: async (_agentId, body) => {
           await params.request.services?.send({
             kind: 'agentMessageCommitted',
-            provider: 'codex',
+            agentId: 'codex',
             body,
             opts: {
               localId: body.id,
             },
           });
         },
-        sendCodexMessage: async (body) => {
+        sendProviderMessage: async ({ body }) => {
           await params.request.services?.send({
             kind: 'providerDispatch',
             body,
@@ -147,6 +179,7 @@ async function handleDirectTranscriptItem(params: Readonly<{
         input: data.input,
         sidechainId,
       },
+      messageId: stableItemId,
     });
     return;
   }
@@ -172,14 +205,14 @@ async function handleDirectTranscriptItem(params: Readonly<{
         sendAgentMessage: async (_agentId, body) => {
           await params.request.services?.send({
             kind: 'agentMessageCommitted',
-            provider: 'codex',
+            agentId: 'codex',
             body,
             opts: {
               localId: body.id,
             },
           });
         },
-        sendCodexMessage: async (body) => {
+        sendProviderMessage: async ({ body }) => {
           await params.request.services?.send({
             kind: 'providerDispatch',
             body,
@@ -193,6 +226,7 @@ async function handleDirectTranscriptItem(params: Readonly<{
         sidechainId,
         ...(data.isError === true ? { isError: true } : {}),
       },
+      messageId: stableItemId,
     });
   }
 }
@@ -224,9 +258,12 @@ export async function openCodexTerminalDirectTranscriptMirror(params: Readonly<{
     return null;
   }
   const processedItemIds = new Set<string>();
+  const diagnostics: CodexTerminalDirectTranscriptMirrorDiagnostics = {
+    missingProviderTranscriptItemId: false,
+  };
   return await projection.openDirectTranscriptMirror({
     binding: {
-      providerId: binding.providerId,
+      agentId: binding.agentId,
       source: binding.source,
       remoteSessionId: binding.remoteSessionId,
     },
@@ -236,6 +273,7 @@ export async function openCodexTerminalDirectTranscriptMirror(params: Readonly<{
           item,
           request: params.request,
           processedItemIds,
+          diagnostics,
           mirror: projection,
         });
       }

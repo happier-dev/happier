@@ -1,15 +1,18 @@
 import { createHash } from 'node:crypto';
 
-import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
-import type { CodexAuthStoreProviderAccountIdProof } from '../runtime/auth/accountId.js';
+import type {
+  CodexActiveProviderAccount,
+  CodexAuthStoreProviderAccountIdProof,
+} from '../runtime/auth/accountId.js';
 
 export type CodexUsageSubjectRef =
   | Readonly<{
       providerId: 'openai-codex';
       kind: 'providerSubject';
       accountSubjectId: string;
-      proof: 'connected_service_provider_account_id' | 'auth_store_chatgpt_account_id';
+      proof: 'live_app_server_account_id' | 'connected_service_provider_account_id' | 'auth_store_chatgpt_account_id';
     }>
   | Readonly<{
       providerId: 'openai-codex';
@@ -23,6 +26,7 @@ export type CodexUsageSubjectRef =
 
 export type ResolveCodexUsageSubjectRefInput = Readonly<{
   connectedServiceRecord?: ConnectedServiceCredentialRecordV1 | null;
+  liveProviderAccount?: CodexActiveProviderAccount | null;
   authStoreProviderAccountIdProof?: CodexAuthStoreProviderAccountIdProof | null;
   provisionalDiscriminator?: string | null;
   accountLabel?: string | null;
@@ -31,6 +35,11 @@ export type ResolveCodexUsageSubjectRefInput = Readonly<{
 function readProviderAccountId(record: ConnectedServiceCredentialRecordV1 | null | undefined): string | null {
   if (!record || record.kind !== 'oauth') return null;
   const value = record.oauth.providerAccountId;
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function readLiveProviderAccountId(account: CodexActiveProviderAccount | null | undefined): string | null {
+  const value = account?.providerAccountId;
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
@@ -51,6 +60,16 @@ function readProvisionalDiscriminator(input: ResolveCodexUsageSubjectRefInput): 
 }
 
 export function resolveCodexUsageSubjectRef(input: ResolveCodexUsageSubjectRefInput): CodexUsageSubjectRef {
+  const liveProviderAccountId = readLiveProviderAccountId(input.liveProviderAccount);
+  if (liveProviderAccountId) {
+    return {
+      providerId: 'openai-codex',
+      kind: 'providerSubject',
+      accountSubjectId: liveProviderAccountId,
+      proof: 'live_app_server_account_id',
+    };
+  }
+
   const connectedServiceProviderAccountId = readProviderAccountId(input.connectedServiceRecord);
   const authStoreProof = input.authStoreProviderAccountIdProof;
   if (

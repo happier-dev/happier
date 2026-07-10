@@ -1,7 +1,7 @@
 import {
     readHappierStructuredInputV1FromMeta,
     type HappierStructuredInputV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 type MetadataRecord = Record<string, unknown>;
 

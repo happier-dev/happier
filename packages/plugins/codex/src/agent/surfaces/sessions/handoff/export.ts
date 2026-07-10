@@ -2,11 +2,12 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import type { ExternalSessionsSource } from '@happier-dev/protocol';
 import {
   ExternalSessionsSourceSchema,
   readRuntimeDescriptorV1FromMetadata,
-} from '@happier-dev/protocol';
+  type ExternalSessionsSource,
+} from '@happier-dev/plugin-sdk/sessions';
+import { expandHomePath } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 import {
   readCanonicalCodexRuntimeDescriptorV1,
@@ -20,7 +21,12 @@ import type { CodexSessionHandoffBundle } from './bundle.js';
 
 function resolveCodexHome(env: NodeJS.ProcessEnv): string {
   const raw = typeof env.CODEX_HOME === 'string' ? env.CODEX_HOME.trim() : '';
-  return raw || join(homedir(), '.codex');
+  const homeDir = typeof env.HOME === 'string' && env.HOME.trim().length > 0
+    ? env.HOME.trim()
+    : typeof env.USERPROFILE === 'string' && env.USERPROFILE.trim().length > 0
+      ? env.USERPROFILE.trim()
+      : homedir();
+  return raw ? expandHomePath(raw, homeDir) : join(homeDir, '.codex');
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -64,7 +70,7 @@ function resolveCodexSource(metadata: Record<string, unknown>): ExternalSessions
     readRuntimeDescriptorV1FromMetadata(metadata),
   );
   const externalSession = asRecord(metadata.externalSessionV1);
-  const externalSessionSource = externalSession?.providerId === 'codex'
+  const externalSessionSource = externalSession?.agentId === 'codex'
     ? parseExternalSessionsSource(externalSession.source)
     : null;
   if (externalSessionSource?.kind === 'codexHome') {
@@ -136,7 +142,7 @@ export async function exportCodexSessionBundle(params: Readonly<{
   );
 
   return {
-    providerId: 'codex',
+    agentId: 'codex',
     remoteSessionId: params.remoteSessionId,
     affinity: {
       backendMode,

@@ -1,4 +1,3 @@
-import { AGENTS_CORE } from '@happier-dev/agents';
 import { describe, expect, it } from 'vitest';
 
 import { codexCloudConnectDescriptor } from './connect.js';
@@ -9,8 +8,8 @@ describe('Codex cloud connect descriptor', () => {
       id: 'codex',
       displayName: 'Codex',
       vendorDisplayName: 'OpenAI Codex',
-      vendorKey: AGENTS_CORE.codex.cloudConnect?.vendorKey,
-      status: AGENTS_CORE.codex.cloudConnect?.status,
+      vendorKey: 'openai',
+      status: 'wired',
     });
     expect(codexCloudConnectDescriptor.customAuthenticator?.authenticate).toBeTypeOf('function');
   });

@@ -1,13 +1,18 @@
-import { AGENTS_CORE } from '@happier-dev/agents';
+import { getProviderConnectedServicesAdapter } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 import { authenticateCodexCloudConnect } from './authenticate.js';
+
+const codexCloudConnect = getProviderConnectedServicesAdapter('codex')?.cloudConnect;
+if (!codexCloudConnect) {
+  throw new Error('Codex cloud connect facts are unavailable');
+}
 
 export const codexCloudConnectDescriptor = {
   id: 'codex',
   displayName: 'Codex',
   vendorDisplayName: 'OpenAI Codex',
-  vendorKey: AGENTS_CORE.codex.cloudConnect!.vendorKey,
-  status: AGENTS_CORE.codex.cloudConnect!.status,
+  vendorKey: codexCloudConnect.vendorKey,
+  status: codexCloudConnect.status,
   customAuthenticator: {
     authenticate: authenticateCodexCloudConnect,
   },

@@ -1,12 +1,12 @@
 import { join, relative, resolve } from 'node:path';
 
-import type { ExternalSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/sessions';
 
 import { inferCodexExternalSessionsSourceFromHome } from '../../rollout/discovery/homeEntries.js';
 import { parseCodexRolloutSessionIdFromFilename } from '../../rollout/discovery/indexData.js';
 
 export type CodexTerminalRuntimeTranscriptBinding = Readonly<{
-    providerId: 'codex';
+    agentId: 'codex';
     source: ExternalSessionsSource;
     remoteSessionId: string;
     env?: NodeJS.ProcessEnv;
@@ -51,7 +51,7 @@ export function resolveCodexTerminalRuntimeTranscriptBinding(params: Readonly<{
     }
 
     return {
-        providerId: 'codex',
+        agentId: 'codex',
         source: inferCodexExternalSessionsSourceFromHome({
             codexHome,
             activeServerDir: params.activeServerDir,

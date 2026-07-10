@@ -3,7 +3,7 @@ import type {
     SkillCatalogV1,
     VendorPluginCatalogItemV1,
     VendorPluginCatalogV1,
-} from '@happier-dev/protocol/runtime';
+} from '@happier-dev/plugin-sdk/experimental/runtime/catalog';
 
 type MetadataRecord = Record<string, unknown>;
 const CODEX_CATALOG_BACKEND_ID = 'codex';

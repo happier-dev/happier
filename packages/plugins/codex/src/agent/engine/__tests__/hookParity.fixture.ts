@@ -13,19 +13,19 @@ export type CodexHookParityRow = Readonly<{
 }>;
 
 export const CODEX_HOOK_PARITY_ROWS = [
-  { id: 'session.spawn_new', role: 'host-bridge-emitted', catalogStatus: 'catalog-backed' },
+  { id: 'session.spawned', role: 'host-bridge-emitted', catalogStatus: 'catalog-backed' },
   { id: 'session.message.send', role: 'host-bridge-emitted', catalogStatus: 'catalog-backed' },
-  { id: 'execution_run.start', role: 'host-bridge-emitted', catalogStatus: 'catalog-backed' },
-  { id: 'execution_run.send', role: 'host-bridge-emitted', catalogStatus: 'catalog-backed' },
-  { id: 'execution_run.stop', role: 'host-bridge-emitted', catalogStatus: 'catalog-backed' },
-  { id: 'execution_run.terminal', role: 'host-bridge-emitted', catalogStatus: 'catalog-backed' },
+  { id: 'executionRun.started', role: 'host-bridge-emitted', catalogStatus: 'catalog-backed' },
+  { id: 'executionRun.messageSent', role: 'host-bridge-emitted', catalogStatus: 'catalog-backed' },
+  { id: 'executionRun.stopped', role: 'host-bridge-emitted', catalogStatus: 'catalog-backed' },
+  { id: 'executionRun.completed', role: 'host-bridge-emitted', catalogStatus: 'catalog-backed' },
   {
-    id: 'backend.resolveRuntimePrerequisites',
+    id: 'agent.resolvePrerequisites',
     role: 'codex-handled',
     catalogStatus: 'catalog-backed',
   },
-  { id: 'spawn.augmentEnv', role: 'codex-handled', catalogStatus: 'catalog-backed' },
-  { id: 'provider.response.after', role: 'codex-handled', catalogStatus: 'catalog-backed' },
+  { id: 'agent.spawnEnv.augment', role: 'codex-handled', catalogStatus: 'catalog-backed' },
+  { id: 'agent.response.after', role: 'codex-handled', catalogStatus: 'catalog-backed' },
   { id: 'tool.call.before', role: 'codex-handled', catalogStatus: 'catalog-backed' },
   { id: 'tool.result.after', role: 'codex-handled', catalogStatus: 'catalog-backed' },
   { id: 'resource.discovery', role: 'codex-handled', catalogStatus: 'catalog-backed' },
@@ -47,12 +47,12 @@ export const CODEX_HOOK_PARITY_ROWS = [
     catalogStatus: 'catalog-backed',
   },
   {
-    id: 'subagent.start',
+    id: 'subagent.started',
     role: 'extension-projector-emitted',
     catalogStatus: 'catalog-backed',
   },
   {
-    id: 'subagent.end',
+    id: 'subagent.ended',
     role: 'extension-projector-emitted',
     catalogStatus: 'catalog-backed',
   },

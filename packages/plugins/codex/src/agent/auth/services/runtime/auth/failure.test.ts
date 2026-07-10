@@ -19,6 +19,11 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
       serviceId: 'openai-codex',
       profileId: 'work',
       groupId: 'pool',
+      sourceAccountIdentity: {
+        providerAccountId: 'acct_source',
+        accountLabel: 'source@example.test',
+        groupGeneration: 42,
+      },
     });
 
     expect(result).toMatchObject({
@@ -33,6 +38,9 @@ describe('classifyCodexConnectedServiceAuthFailure', () => {
       rateLimits: { primary: { used_percent: 100 } },
       source: 'structured_provider_error',
       recoveryAction: { kind: 'quota_recovery_required' },
+      sourceProviderAccountId: 'acct_source',
+      sourceAccountLabel: 'source@example.test',
+      groupGeneration: 42,
     });
   });
 

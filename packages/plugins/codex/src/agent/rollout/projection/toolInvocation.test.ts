@@ -9,6 +9,8 @@ describe('codex terminal-mode rollout tool mapping', () => {
     const expectedInventory = [
         'shell',
         'shell_command',
+        'change_title',
+        'session_title_set',
         'exec_command',
         'spawn_agent',
         'wait_agent',
@@ -68,6 +70,29 @@ describe('codex terminal-mode rollout tool mapping', () => {
     it('canonicalizes apply_patch as Patch (default-visible)', () => {
         expect(canonicalizeCodexRolloutToolName('apply_patch')).toEqual({
             canonicalToolName: 'Patch',
+            visibility: 'default',
+        });
+    });
+
+    it('canonicalizes title-control aliases as change_title (default-visible)', () => {
+        expect(canonicalizeCodexRolloutToolName('change_title')).toEqual({
+            canonicalToolName: 'change_title',
+            visibility: 'default',
+        });
+        expect(canonicalizeCodexRolloutToolName('session_title_set')).toEqual({
+            canonicalToolName: 'change_title',
+            visibility: 'default',
+        });
+        expect(canonicalizeCodexRolloutToolName('happier_change_title')).toEqual({
+            canonicalToolName: 'change_title',
+            visibility: 'default',
+        });
+        expect(canonicalizeCodexRolloutToolName('mcp__happy__change_title')).toEqual({
+            canonicalToolName: 'change_title',
+            visibility: 'default',
+        });
+        expect(canonicalizeCodexRolloutToolName('mcp__happier__session_title_set')).toEqual({
+            canonicalToolName: 'change_title',
             visibility: 'default',
         });
     });

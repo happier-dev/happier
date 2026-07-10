@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type {
   SessionScopedServicesV1,
   TerminalRuntimeHostOrchestrationV1,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/plugin-sdk/sessions';
 
 import { createCodexTerminalRuntimeSurface } from './launch.js';
 
@@ -124,13 +125,14 @@ describe('createCodexTerminalRuntimeSurface', () => {
     const mirrorRequest = vi.mocked(host.projection.openDirectTranscriptMirror).mock.calls[0]?.[0];
     expect(mirrorRequest).toEqual(expect.objectContaining({
       binding: expect.objectContaining({
-        providerId: 'codex',
+        agentId: 'codex',
         remoteSessionId: 'codex-session-1',
       }),
     }));
 
     await mirrorRequest?.onItems([{
       id: 'item-1',
+      createdAtMs: 1_771_234_567_000,
       raw: {
         role: 'user',
         content: {
@@ -149,7 +151,328 @@ describe('createCodexTerminalRuntimeSurface', () => {
     expect(services.send).toHaveBeenCalledWith({
       kind: 'userText',
       text: 'hello from terminal',
+      opts: {
+        localId: 'item-1',
+        meta: {
+          importedFrom: 'codex-terminal-direct-transcript',
+          providerTranscriptItemId: 'item-1',
+        },
+      },
     });
+  });
+
+  it('uses provider item ids as stable user local ids across recreated mirrors', async () => {
+    const services = createSessionServicesFixture();
+    const surface = createCodexTerminalRuntimeSurface({
+      baseProcessEnv: {
+        CODEX_HOME: '/tmp/codex-home',
+      },
+      deps: {
+        now: () => Date.parse('2026-06-10T10:00:00Z'),
+        homeDir: () => '/tmp/home',
+        createDirectory: vi.fn(),
+        discoverRolloutFileOnce: vi.fn(async () => ({
+          filePath: '/tmp/codex-home/sessions/rollout-2026-06-10T10-00-01-codex-session-1.jsonl',
+          sessionMeta: {
+            id: 'codex-session-1',
+            timestamp: '2026-06-10T10:00:01Z',
+            cwd: '/repo',
+          },
+        })),
+      },
+    });
+    const item = {
+      id: 'item-replayed-user',
+      createdAtMs: 1_771_234_567_000,
+      raw: {
+        role: 'user',
+        content: {
+          type: 'text',
+          text: 'hello after mirror replay',
+        },
+      },
+    };
+
+    const runMirror = async (): Promise<void> => {
+      const { host, resolveTermination } = createHostFixture();
+      const launch = surface.launch?.({
+        sessionId: 'session-1',
+        directory: '/repo',
+        metadata: {
+          activeServerDir: '/repo',
+          rolloutDiscovery: {
+            initialTimeoutMs: 1,
+            initialPollIntervalMs: 1,
+            extendedPollIntervalMs: 1,
+          },
+        },
+        services,
+        host,
+        signal: new AbortController().signal,
+      });
+      await vi.waitFor(() => {
+        expect(host.projection.openDirectTranscriptMirror).toHaveBeenCalledTimes(1);
+      });
+      const mirrorRequest = vi.mocked(host.projection.openDirectTranscriptMirror).mock.calls[0]?.[0];
+      await mirrorRequest?.onItems([item]);
+      resolveTermination({ type: 'exited', code: 0 });
+      await expect(launch).resolves.toEqual({ type: 'process_exited', exitCode: 0 });
+    };
+
+    await runMirror();
+    await runMirror();
+
+    const userTextRequests = vi.mocked(services.send).mock.calls
+      .map(([request]) => request)
+      .filter((request): request is { kind: 'userText'; text: string; opts: { localId: string; meta: Record<string, unknown> } } =>
+        typeof request === 'object'
+        && request !== null
+        && 'kind' in request
+        && request.kind === 'userText',
+      );
+    expect(userTextRequests).toEqual([
+      {
+        kind: 'userText',
+        text: 'hello after mirror replay',
+        opts: {
+          localId: 'item-replayed-user',
+          meta: {
+            importedFrom: 'codex-terminal-direct-transcript',
+            providerTranscriptItemId: 'item-replayed-user',
+          },
+        },
+      },
+      {
+        kind: 'userText',
+        text: 'hello after mirror replay',
+        opts: {
+          localId: 'item-replayed-user',
+          meta: {
+            importedFrom: 'codex-terminal-direct-transcript',
+            providerTranscriptItemId: 'item-replayed-user',
+          },
+        },
+      },
+    ]);
+  });
+
+  it('uses provider item ids as stable tool local ids across recreated mirrors', async () => {
+    const services = createSessionServicesFixture();
+    const surface = createCodexTerminalRuntimeSurface({
+      baseProcessEnv: {
+        CODEX_HOME: '/tmp/codex-home',
+      },
+      deps: {
+        now: () => Date.parse('2026-06-10T10:00:00Z'),
+        homeDir: () => '/tmp/home',
+        createDirectory: vi.fn(),
+        discoverRolloutFileOnce: vi.fn(async () => ({
+          filePath: '/tmp/codex-home/sessions/rollout-2026-06-10T10-00-01-codex-session-1.jsonl',
+          sessionMeta: {
+            id: 'codex-session-1',
+            timestamp: '2026-06-10T10:00:01Z',
+            cwd: '/repo',
+          },
+        })),
+      },
+    });
+    const toolRows = [
+      {
+        id: 'item-tool-call',
+        createdAtMs: 1_771_234_567_000,
+        raw: {
+          role: 'agent',
+          content: {
+            type: 'codex',
+            data: {
+              type: 'tool-call',
+              callId: 'call-1',
+              name: 'exec_command',
+              input: { cmd: 'echo ok' },
+            },
+          },
+        },
+      },
+      {
+        id: 'item-tool-result',
+        createdAtMs: 1_771_234_567_001,
+        raw: {
+          role: 'agent',
+          content: {
+            type: 'codex',
+            data: {
+              type: 'tool-call-result',
+              callId: 'call-1',
+              output: { ok: true },
+            },
+          },
+        },
+      },
+    ];
+
+    const runMirror = async (): Promise<void> => {
+      const { host, resolveTermination } = createHostFixture();
+      const launch = surface.launch?.({
+        sessionId: 'session-1',
+        directory: '/repo',
+        metadata: {
+          activeServerDir: '/repo',
+          rolloutDiscovery: {
+            initialTimeoutMs: 1,
+            initialPollIntervalMs: 1,
+            extendedPollIntervalMs: 1,
+          },
+        },
+        services,
+        host,
+        signal: new AbortController().signal,
+      });
+      await vi.waitFor(() => {
+        expect(host.projection.openDirectTranscriptMirror).toHaveBeenCalledTimes(1);
+      });
+      const mirrorRequest = vi.mocked(host.projection.openDirectTranscriptMirror).mock.calls[0]?.[0];
+      await mirrorRequest?.onItems(toolRows);
+      resolveTermination({ type: 'exited', code: 0 });
+      await expect(launch).resolves.toEqual({ type: 'process_exited', exitCode: 0 });
+    };
+
+    await runMirror();
+    await runMirror();
+
+    const providerDispatchRequests = vi.mocked(services.send).mock.calls
+      .map(([request]) => request)
+      .filter((request): request is { kind: 'providerDispatch'; body: { type: string; id: string } } =>
+        typeof request === 'object'
+        && request !== null
+        && 'kind' in request
+        && request.kind === 'providerDispatch',
+      );
+    expect(providerDispatchRequests).toEqual([
+      {
+        kind: 'providerDispatch',
+        body: expect.objectContaining({
+          type: 'tool-call',
+          id: 'item-tool-call',
+        }),
+      },
+      {
+        kind: 'providerDispatch',
+        body: expect.objectContaining({
+          type: 'tool-call-result',
+          id: 'item-tool-result',
+        }),
+      },
+      {
+        kind: 'providerDispatch',
+        body: expect.objectContaining({
+          type: 'tool-call',
+          id: 'item-tool-call',
+        }),
+      },
+      {
+        kind: 'providerDispatch',
+        body: expect.objectContaining({
+          type: 'tool-call-result',
+          id: 'item-tool-result',
+        }),
+      },
+    ]);
+  });
+
+  it('skips id-less provider transcript rows instead of synthesizing local ids', async () => {
+    const services = createSessionServicesFixture();
+    const { host, resolveTermination } = createHostFixture();
+    const surface = createCodexTerminalRuntimeSurface({
+      baseProcessEnv: {
+        CODEX_HOME: '/tmp/codex-home',
+      },
+      deps: {
+        now: () => Date.parse('2026-06-10T10:00:00Z'),
+        homeDir: () => '/tmp/home',
+        createDirectory: vi.fn(),
+        discoverRolloutFileOnce: vi.fn(async () => ({
+          filePath: '/tmp/codex-home/sessions/rollout-2026-06-10T10-00-01-codex-session-1.jsonl',
+          sessionMeta: {
+            id: 'codex-session-1',
+            timestamp: '2026-06-10T10:00:01Z',
+            cwd: '/repo',
+          },
+        })),
+      },
+    });
+
+    const launch = surface.launch?.({
+      sessionId: 'session-1',
+      directory: '/repo',
+      metadata: {
+        activeServerDir: '/repo',
+        rolloutDiscovery: {
+          initialTimeoutMs: 1,
+          initialPollIntervalMs: 1,
+          extendedPollIntervalMs: 1,
+        },
+      },
+      services,
+      host,
+      signal: new AbortController().signal,
+    });
+    await vi.waitFor(() => {
+      expect(host.projection.openDirectTranscriptMirror).toHaveBeenCalledTimes(1);
+    });
+    const mirrorRequest = vi.mocked(host.projection.openDirectTranscriptMirror).mock.calls[0]?.[0];
+    const idlessRows = [
+      {
+        createdAtMs: 1_771_234_567_000,
+        raw: {
+          role: 'user',
+          content: {
+            type: 'text',
+            text: 'malformed user row',
+          },
+        },
+      },
+      {
+        createdAtMs: 1_771_234_567_001,
+        raw: {
+          role: 'agent',
+          content: {
+            type: 'codex',
+            data: {
+              type: 'message',
+              message: 'malformed assistant row',
+            },
+          },
+        },
+      },
+    ];
+
+    // Deliberately malformed boundary fixture: protocol-valid external rows require ids.
+    await mirrorRequest?.onItems(idlessRows as unknown as ExternalSessionTranscriptRawMessageV1[]);
+    resolveTermination({ type: 'exited', code: 0 });
+
+    await expect(launch).resolves.toEqual({ type: 'process_exited', exitCode: 0 });
+    const sends = vi.mocked(services.send).mock.calls.map(([request]) => request);
+    expect(sends.filter((request) =>
+      request.kind === 'userText' || request.kind === 'agentMessageCommitted',
+    )).toEqual([]);
+    expect(sends.filter((request) =>
+      request.kind === 'sessionEvent'
+      && 'event' in request
+      && typeof request.event === 'object'
+      && request.event !== null
+      && 'kind' in request.event
+      && request.event.kind === 'codex-terminal-direct-transcript-item-skipped',
+    )).toEqual([
+      {
+        kind: 'sessionEvent',
+        event: {
+          kind: 'codex-terminal-direct-transcript-item-skipped',
+          reason: 'missing_provider_transcript_item_id',
+          agentId: 'codex',
+        },
+        id: 'codex-terminal-direct-transcript:item-skipped:missing-id',
+      },
+    ]);
   });
 
   it('uses the default Codex home for direct transcript binding when CODEX_HOME is absent', async () => {

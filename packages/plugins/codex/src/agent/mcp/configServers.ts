@@ -2,9 +2,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import type { DaemonMcpServersDetectWarningV1, DetectedMcpServerV1 } from '@happier-dev/protocol';
+import type { DaemonMcpServersDetectWarningV1, DetectedMcpServerV1 } from '@happier-dev/plugin-sdk/mcp';
 
-export type DetectCodexMcpServersResult = Readonly<{
+export type ReadCodexMcpConfigServersResult = Readonly<{
     servers: ReadonlyArray<DetectedMcpServerV1>;
     warnings: ReadonlyArray<DaemonMcpServersDetectWarningV1>;
 }>;
@@ -96,9 +96,9 @@ function parseCodexMcpSection(body: string): ParsedCodexMcpSection {
     return { command, args, enabled };
 }
 
-export async function detectCodexMcpServers(
+export async function readCodexMcpConfigServers(
     params: Readonly<{ env?: NodeJS.ProcessEnv }>,
-): Promise<DetectCodexMcpServersResult> {
+): Promise<ReadCodexMcpConfigServersResult> {
     const env = params.env ?? process.env;
     const path = resolveCodexConfigTomlPath(env);
     if (!existsSync(path)) return { servers: [], warnings: [] };

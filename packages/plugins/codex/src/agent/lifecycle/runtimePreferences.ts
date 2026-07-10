@@ -1,7 +1,7 @@
 import {
   normalizeCodexBackendMode,
   type CodexBackendMode,
-} from '@happier-dev/protocol';
+} from '../../protocol/runtimeDescriptorV1.js';
 
 import { resolveCodexBackendModeForRun } from './backendMode.js';
 
@@ -12,19 +12,33 @@ function resolveCodexSettingsBackendMode(settings: Readonly<Record<string, unkno
   });
 }
 
+export type CodexSessionRuntimePreferences = Readonly<{
+  codexBackendMode: CodexBackendMode;
+  providerAcceptancePendingMaterialization?: 'commitAtMaterialize';
+}>;
+
+function buildCodexSessionRuntimePreferences(
+  codexBackendMode: CodexBackendMode,
+): CodexSessionRuntimePreferences {
+  return {
+    codexBackendMode,
+    ...(codexBackendMode === 'appServer'
+      ? { providerAcceptancePendingMaterialization: 'commitAtMaterialize' as const }
+      : {}),
+  };
+}
+
 export function resolveCodexSessionRuntimePreferences(params: Readonly<{
   settings: Readonly<Record<string, unknown>>;
   processEnv: NodeJS.ProcessEnv;
   startedBy?: 'terminal' | 'daemon';
-}>): Readonly<{
-  codexBackendMode: CodexBackendMode;
-}> {
+}>): CodexSessionRuntimePreferences {
   if (params.startedBy === 'daemon') {
     const daemonSelectedBackendMode = normalizeCodexBackendMode(params.processEnv.HAPPIER_CODEX_BACKEND_MODE);
     if (daemonSelectedBackendMode) {
-      return { codexBackendMode: daemonSelectedBackendMode };
+      return buildCodexSessionRuntimePreferences(daemonSelectedBackendMode);
     }
   }
 
-  return { codexBackendMode: resolveCodexSettingsBackendMode(params.settings) };
+  return buildCodexSessionRuntimePreferences(resolveCodexSettingsBackendMode(params.settings));
 }

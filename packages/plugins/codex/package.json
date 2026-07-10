@@ -10,6 +10,11 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./ui": {
+      "types": "./dist/ui/index.d.ts",
+      "react-native": "./dist/ui/index.js",
+      "default": "./dist/ui/index.js"
+    },
     "./agent/contributions/runtime": {
       "types": "./dist/agent/contributions/runtime.d.ts",
       "default": "./dist/agent/contributions/runtime.js"
@@ -77,10 +82,6 @@
     "./agent/runtime/appServer/turns/failure": {
       "types": "./dist/agent/runtime/appServer/turns/failure.d.ts",
       "default": "./dist/agent/runtime/appServer/turns/failure.js"
-    },
-    "./agent/runtime/appServer/recovery/suppressionWait": {
-      "types": "./dist/agent/runtime/appServer/recovery/suppressionWait.d.ts",
-      "default": "./dist/agent/runtime/appServer/recovery/suppressionWait.js"
     },
     "./agent/runtime/appServer/recovery/switchProgress": {
       "types": "./dist/agent/runtime/appServer/recovery/switchProgress.d.ts",
@@ -198,9 +199,9 @@
       "types": "./dist/agent/executionRuns/transport.d.ts",
       "default": "./dist/agent/executionRuns/transport.js"
     },
-    "./agent/mcp/detectCodexMcpServers": {
-      "types": "./dist/agent/mcp/detectCodexMcpServers.d.ts",
-      "default": "./dist/agent/mcp/detectCodexMcpServers.js"
+    "./agent/mcp/configServers": {
+      "types": "./dist/agent/mcp/configServers.d.ts",
+      "default": "./dist/agent/mcp/configServers.js"
     },
     "./agent/acp/availability": {
       "types": "./dist/agent/acp/availability.d.ts",
@@ -221,6 +222,10 @@
     "./agent/acp/permissionMode": {
       "types": "./dist/agent/acp/permissionMode.d.ts",
       "default": "./dist/agent/acp/permissionMode.js"
+    },
+    "./agent/installables/codexAcp": {
+      "types": "./dist/agent/installables/codexAcp.d.ts",
+      "default": "./dist/agent/installables/codexAcp.js"
     },
     "./agent/acp/sessionLoad": {
       "types": "./dist/agent/acp/sessionLoad.d.ts",
@@ -436,14 +441,13 @@
     "package.json"
   ],
   "scripts": {
+    "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node ../../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
     "test": "vitest run",
     "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@happier-dev/agents": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
-    "@happier-dev/protocol": "0.0.0",
     "zod": "4.3.6"
   },
   "devDependencies": {

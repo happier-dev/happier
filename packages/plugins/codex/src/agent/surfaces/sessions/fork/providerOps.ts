@@ -1,10 +1,12 @@
 import {
   readSessionMetadataRuntimeDescriptor,
   resolveVendorResumeIdFromSessionMetadata,
-  type ForkRequestV1,
-  type ForkResultV1,
-  type ForkSurfaceV1,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk/sessions';
+import type {
+  ForkRequestV1,
+  ForkResultV1,
+  ForkSurfaceV1,
+} from '@happier-dev/plugin-sdk';
 
 import { resolvePersistedCodexRuntimeIdentity } from '../../../identity/runtimeDescriptor.js';
 import { buildCodexAgentRuntimeDescriptor } from '../../../../protocol/runtimeDescriptorV1.js';

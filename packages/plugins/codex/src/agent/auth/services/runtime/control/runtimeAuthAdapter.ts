@@ -1,7 +1,7 @@
-import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 import {
-  applyCodexConnectedServiceAuthGeneration,
+  applyCodexConnectedServiceAuthTransportRecycle,
   evaluateCodexConnectedServiceHotApplyEligibility,
   recoverCodexConnectedServiceRestartResumeOnce,
 } from '../auth/application.js';
@@ -94,9 +94,54 @@ function readAsyncCallback(value: unknown): (() => Promise<void>) | null {
     : null;
 }
 
+function readRuntimeApplyCallback(value: unknown): ((request: unknown) => Promise<unknown>) | null {
+  return typeof value === 'function'
+    ? async (request) => await value(request)
+    : null;
+}
+
+function readDurabilityFailureReason(value: unknown): string | null {
+  const durability = readRecord(value);
+  if (durability?.persisted !== false) return null;
+  return readString(durability.errorCode) ?? 'auth_store_persistence_failed_after_live_apply';
+}
+
+function readRuntimeApplyPartialStateResult(
+  record: Record<string, unknown>,
+  reason: string,
+): RuntimeAuthAdapterResult {
+  const activeAccountId = readString(record.activeAccountId);
+  return {
+    applied: false,
+    appliedVia: 'direct_live_hot_auth',
+    partialState: 'runtime_auth_partially_applied',
+    reason,
+    error: readString(record.error) ?? reason,
+    recovery: readString(record.recovery) ?? 'restart_resume',
+    ...(activeAccountId ? { activeAccountId } : {}),
+    ...(record.durability === undefined ? {} : { durability: record.durability }),
+    ...(record.verification === undefined ? {} : { verification: record.verification }),
+    ...(record.quotaSnapshotRef === undefined ? {} : { quotaSnapshotRef: record.quotaSnapshotRef }),
+  };
+}
+
 function readNonNegativeInteger(value: unknown): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
   return Math.trunc(value);
+}
+
+function readBoolean(value: unknown): boolean {
+  return value === true;
+}
+
+function readApplyReason(value: unknown): 'usage_limit' | 'same_provider_account_exhausted' | 'soft_threshold' | 'manual' | 'diagnostic' {
+  return value === 'usage_limit'
+    || value === 'same_provider_account_exhausted'
+    || value === 'soft_threshold'
+    || value === 'manual'
+    || value === 'diagnostic'
+    ? value
+    : 'manual';
 }
 
 function readForcedWorkspaceId(input: RuntimeAuthTargetInput): string | null {
@@ -111,6 +156,104 @@ function classifyProbeError(error: unknown): Readonly<{
   return {
     retryable: code === 'codex_app_server_control_unavailable',
     reason: code ?? 'active_account_probe_failed',
+  };
+}
+
+function buildRuntimeApplyExpected(
+  selection: Record<string, unknown> | null,
+  record: ConnectedServiceCredentialRecordV1,
+): Record<string, unknown> {
+  const expected: Record<string, unknown> = {
+    profileId: readString(selection?.activeProfileId ?? selection?.profileId) ?? record.profileId,
+  };
+  const groupId = readString(selection?.groupId);
+  if (groupId) expected.groupId = groupId;
+  const generation = readNonNegativeInteger(selection?.generation);
+  if (generation !== null) expected.generation = generation;
+  return expected;
+}
+
+function buildRuntimeApplySelection(
+  selection: Record<string, unknown> | null,
+  record: ConnectedServiceCredentialRecordV1,
+): Record<string, unknown> {
+  const groupId = readString(selection?.groupId);
+  if (groupId) {
+    return {
+      kind: 'group',
+      serviceId: 'openai-codex',
+      groupId,
+      activeProfileId: readString(selection?.activeProfileId ?? selection?.profileId) ?? record.profileId,
+      ...(readString(selection?.fallbackProfileId) ? { fallbackProfileId: readString(selection?.fallbackProfileId) } : {}),
+      generation: readNonNegativeInteger(selection?.generation) ?? 0,
+    };
+  }
+  return {
+    kind: 'profile',
+    serviceId: 'openai-codex',
+    profileId: readString(selection?.profileId) ?? record.profileId,
+  };
+}
+
+function buildRuntimeApplyRequest(
+  input: RuntimeAuthTargetInput,
+  record: ConnectedServiceCredentialRecordV1,
+): Record<string, unknown> {
+  const selection = readSelection(input);
+  const forcedLoginMethod = readString(selection?.forcedLoginMethod);
+  return {
+    serviceId: 'openai-codex',
+    reason: readApplyReason(selection?.applyReason),
+    requireDirectLiveHotApply: readBoolean(selection?.requireDirectLiveHotApply),
+    expected: buildRuntimeApplyExpected(selection, record),
+    authGeneration: {
+      credential: record,
+      forcedWorkspaceId: readForcedWorkspaceId(input),
+      selection: buildRuntimeApplySelection(selection, record),
+      ...(forcedLoginMethod ? { forcedLoginMethod } : {}),
+    },
+  };
+}
+
+function readRuntimeApplyResult(result: unknown): RuntimeAuthAdapterResult {
+  const record = readRecord(result);
+  if (record?.ok === true) {
+    const durabilityFailureReason = readDurabilityFailureReason(record.durability);
+    if (durabilityFailureReason) {
+      return readRuntimeApplyPartialStateResult(record, durabilityFailureReason);
+    }
+    return {
+      applied: true,
+      appliedVia: readString(record.appliedVia) ?? 'direct_live_hot_auth',
+      ...(record.activeAccountId === undefined ? {} : { activeAccountId: record.activeAccountId }),
+      ...(record.verification === undefined ? {} : { verification: record.verification }),
+      ...(record.durability === undefined ? {} : { durability: record.durability }),
+      ...(record.quotaSnapshotRef === undefined ? {} : { quotaSnapshotRef: record.quotaSnapshotRef }),
+    };
+  }
+  if (record?.ok === false) {
+    const appliedVia = readString(record.appliedVia);
+    const activeAccountId = readString(record.activeAccountId);
+    const reason = readString(record.errorCode) ?? readString(record.error) ?? 'live_hot_auth_failed';
+    if (
+      appliedVia === 'direct_live_hot_auth'
+      && (activeAccountId || record.partialState === 'runtime_auth_partially_applied')
+    ) {
+      return readRuntimeApplyPartialStateResult(record, reason);
+    }
+    return {
+      applied: false,
+      reason,
+      ...(record.error === undefined ? {} : { error: record.error }),
+      ...(record.appliedVia === undefined ? {} : { appliedVia: record.appliedVia }),
+      ...(record.activeAccountId === undefined ? {} : { activeAccountId: record.activeAccountId }),
+      ...(record.recovery === undefined ? {} : { recovery: record.recovery }),
+    };
+  }
+  return {
+    applied: false,
+    reason: 'invalid_runtime_apply_response',
+    recovery: 'restart_resume',
   };
 }
 
@@ -136,23 +279,39 @@ export function createCodexConnectedServiceRuntimeAuthAdapter(): CodexConnectedS
       const eligibility = evaluateCodexConnectedServiceHotApplyEligibility({
         candidate: record,
         forcedWorkspaceId: readForcedWorkspaceId(input),
+        forcedLoginMethod: readString(readSelection(input)?.forcedLoginMethod),
       });
       if (!eligibility.eligible) return { supported: false, reason: eligibility.reason };
-      if (typeof readSelection(input)?.invalidateTransports !== 'function') {
+      const selection = readSelection(input);
+      if (readRuntimeApplyCallback(selection?.applyConnectedServiceAuthGeneration)) {
+        return { supported: true, mode: 'direct_live_hot_auth' };
+      }
+      if (readBoolean(selection?.requireDirectLiveHotApply)) {
+        return { supported: false, reason: 'live_hot_auth_unavailable', recovery: 'restart_resume' };
+      }
+      if (typeof selection?.invalidateTransports !== 'function') {
         return { supported: false, reason: 'transport_invalidation_unavailable', recovery: 'restart_resume' };
       }
-      return { supported: true };
+      return { supported: true, mode: 'transport_recycle', recovery: 'restart_resume' };
     },
     async hotApply(input: RuntimeAuthTargetInput) {
       const record = readCredentialRecord(input);
       const selection = readSelection(input);
-      const client = readClient(selection?.client);
       if (!record) return { applied: false, reason: 'missing_record' };
+      const runtimeApply = readRuntimeApplyCallback(selection?.applyConnectedServiceAuthGeneration);
+      if (runtimeApply) {
+        return readRuntimeApplyResult(await runtimeApply(buildRuntimeApplyRequest(input, record)));
+      }
+      if (readBoolean(selection?.requireDirectLiveHotApply)) {
+        return { applied: false, reason: 'live_hot_auth_unavailable', recovery: 'restart_resume' };
+      }
+      const client = readClient(selection?.client);
       if (!client) return { applied: false, reason: 'missing_client', recovery: 'restart_resume' };
-      return await applyCodexConnectedServiceAuthGeneration({
+      return await applyCodexConnectedServiceAuthTransportRecycle({
         client,
         candidate: record,
         forcedWorkspaceId: readForcedWorkspaceId(input),
+        forcedLoginMethod: readString(selection?.forcedLoginMethod),
         invalidateTransports: readAsyncCallback(selection?.invalidateTransports),
       });
     },

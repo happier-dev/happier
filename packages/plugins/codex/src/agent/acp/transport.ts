@@ -1,4 +1,4 @@
-import { CHANGE_TITLE_TOOL_NAME_ALIASES, isChangeTitleToolNameAlias } from '@happier-dev/protocol/tools/v2';
+import { CHANGE_TITLE_TOOL_NAME_ALIASES, isChangeTitleToolNameAlias } from '@happier-dev/plugin-sdk/experimental/acp';
 
 export type CodexAcpToolPattern = Readonly<{
   name: string;

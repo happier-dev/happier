@@ -1,8 +1,24 @@
+import {
+    ACP_HAPPIER_MCP_BRIDGE_STATIC_APPROVAL_TOOL_NAMES,
+    resolveAcpToolPermissionPolicy,
+} from '@happier-dev/plugin-sdk/experimental/acp';
+
+import {
+    createCodexInjectedMcpServerKey,
+    isFirstPartyHappierMcpBridgeServerName,
+} from '../../../mcp/serverKeys.js';
+
 export type CodexAppServerMcpServerConfig = Readonly<{
     command: string;
     args?: readonly string[];
     env?: Readonly<Record<string, string>>;
 }>;
+
+const CODEX_HAPPIER_MCP_STATIC_APPROVAL_TOOL_NAME_SET = new Set(
+    ACP_HAPPIER_MCP_BRIDGE_STATIC_APPROVAL_TOOL_NAMES.filter((toolName) => (
+        resolveAcpToolPermissionPolicy('plan')[toolName] === 'allow'
+    )),
+);
 
 function quoteTomlString(value: string): string {
     return JSON.stringify(value);
@@ -19,14 +35,6 @@ function serializeTomlInlineTable(values: Readonly<Record<string, string>>): str
     return `{${entries.join(',')}}`;
 }
 
-function sanitizeServerKeyFragment(name: string): string {
-    const normalized = name
-        .trim()
-        .replace(/[^A-Za-z0-9_-]+/g, '_')
-        .replace(/^_+|_+$/g, '');
-    return normalized.length > 0 ? normalized : 'server';
-}
-
 function assignInjectedServerKeys(serverNames: readonly string[]): Map<string, string> {
     const assigned = new Map<string, string>();
     const usedKeys = new Set<string>();
@@ -38,7 +46,7 @@ function assignInjectedServerKeys(serverNames: readonly string[]): Map<string, s
             continue;
         }
 
-        const baseKey = `happier__${sanitizeServerKeyFragment(serverName)}`;
+        const baseKey = createCodexInjectedMcpServerKey(serverName);
         let candidate = baseKey;
         let suffix = 2;
         while (usedKeys.has(candidate)) {
@@ -50,6 +58,13 @@ function assignInjectedServerKeys(serverNames: readonly string[]): Map<string, s
     }
 
     return assigned;
+}
+
+function appendHappierMcpStaticApprovalOverrides(overrides: string[], injectedKey: string): void {
+    for (const toolName of ACP_HAPPIER_MCP_BRIDGE_STATIC_APPROVAL_TOOL_NAMES) {
+        if (!CODEX_HAPPIER_MCP_STATIC_APPROVAL_TOOL_NAME_SET.has(toolName)) continue;
+        overrides.push(`mcp_servers.${injectedKey}.tools.${toolName}.approval_mode=${quoteTomlString('approve')}`);
+    }
 }
 
 export function buildCodexAppServerConfigOverrides(
@@ -76,6 +91,9 @@ export function buildCodexAppServerConfigOverrides(
             overrides.push(`mcp_servers.${injectedKey}.env=${serializeTomlInlineTable(config.env)}`);
         }
         overrides.push(`mcp_servers.${injectedKey}.enabled=true`);
+        if (isFirstPartyHappierMcpBridgeServerName(serverName)) {
+            appendHappierMcpStaticApprovalOverrides(overrides, injectedKey);
+        }
     }
 
     return overrides;

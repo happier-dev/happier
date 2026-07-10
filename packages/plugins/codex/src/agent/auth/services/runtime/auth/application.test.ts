@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
-import { applyCodexConnectedServiceAuthGeneration } from './application.js';
+import {
+    applyCodexConnectedServiceAuthGeneration,
+    applyCodexConnectedServiceAuthTransportRecycle,
+} from './application.js';
 
 describe('Codex connected-service runtime auth application', () => {
-    it('falls back to restart/resume when transport invalidation fails after login/start', async () => {
+    it('reports transport recycle fallback separately when transport invalidation fails after login/start', async () => {
         const candidate = buildConnectedServiceCredentialRecord({
             now: 1000,
             serviceId: 'openai-codex',
@@ -27,7 +30,7 @@ describe('Codex connected-service runtime auth application', () => {
             throw new Error('transport is gone');
         });
 
-        await expect(applyCodexConnectedServiceAuthGeneration({
+        await expect(applyCodexConnectedServiceAuthTransportRecycle({
             client,
             candidate,
             forcedWorkspaceId: 'workspace-work',
@@ -42,7 +45,46 @@ describe('Codex connected-service runtime auth application', () => {
         expect(invalidateTransports).toHaveBeenCalledOnce();
     });
 
-    it('sends Codex app-server the flat chatgptAuthTokens login payload', async () => {
+    it('labels retained login/start plus transport invalidation as transport recycle', async () => {
+        const candidate = buildConnectedServiceCredentialRecord({
+            now: 1000,
+            serviceId: 'openai-codex',
+            profileId: 'work',
+            kind: 'oauth',
+            expiresAt: 2000,
+            oauth: {
+                accessToken: 'access',
+                refreshToken: 'refresh',
+                idToken: 'id',
+                scope: null,
+                tokenType: null,
+                providerAccountId: 'workspace-work',
+                providerEmail: null,
+            },
+        });
+        const client = { request: vi.fn(async () => ({ ok: true })) };
+        const invalidateTransports = vi.fn(async () => undefined);
+
+        await expect(applyCodexConnectedServiceAuthTransportRecycle({
+            client,
+            candidate,
+            forcedWorkspaceId: 'workspace-work',
+            invalidateTransports,
+        })).resolves.toEqual({
+            applied: true,
+            via: 'transport_recycle',
+            appliedVia: 'transport_recycle',
+        });
+
+        expect(client.request).toHaveBeenCalledWith('account/login/start', {
+            type: 'chatgptAuthTokens',
+            accessToken: 'access',
+            chatgptAccountId: 'workspace-work',
+        });
+        expect(invalidateTransports).toHaveBeenCalledOnce();
+    });
+
+    it('applies direct live auth through account/login/start without transport invalidation', async () => {
         const candidate = buildConnectedServiceCredentialRecord({
             now: 1000,
             serviceId: 'openai-codex',
@@ -59,20 +101,195 @@ describe('Codex connected-service runtime auth application', () => {
                 providerEmail: null,
             },
         });
-        const client = { request: vi.fn(async () => ({ ok: true })) };
+        const order: string[] = [];
+        const client = {
+            request: vi.fn(async () => {
+                order.push('login');
+                return { ok: true };
+            }),
+        };
         const invalidateTransports = vi.fn(async () => undefined);
+        const persistAuthStore = vi.fn(async () => undefined);
+        const updateRefreshSelection = vi.fn(async () => {
+            order.push('refresh-selection');
+            return async () => {
+                order.push('rollback');
+            };
+        });
 
         await expect(applyCodexConnectedServiceAuthGeneration({
             client,
             candidate,
             forcedWorkspaceId: 'workspace-work',
+            persistAuthStore,
+            refreshSelection: {
+                kind: 'group',
+                serviceId: 'openai-codex',
+                groupId: 'team',
+                activeProfileId: 'work',
+                fallbackProfileId: 'backup',
+                generation: 2,
+            },
+            updateRefreshSelection,
             invalidateTransports,
-        })).resolves.toEqual({ applied: true, via: 'hot' });
+        })).resolves.toEqual({
+            applied: true,
+            appliedVia: 'direct_live_hot_auth',
+            activeAccountId: 'workspace-work',
+            durability: { persisted: true },
+        });
 
         expect(client.request).toHaveBeenCalledWith('account/login/start', {
             type: 'chatgptAuthTokens',
             accessToken: 'access',
             chatgptAccountId: 'workspace-work',
         });
+        expect(updateRefreshSelection).toHaveBeenCalledWith({
+            kind: 'group',
+            serviceId: 'openai-codex',
+            groupId: 'team',
+            activeProfileId: 'work',
+            fallbackProfileId: 'backup',
+            generation: 2,
+        });
+        expect(order).toEqual(['refresh-selection', 'login']);
+        expect(persistAuthStore).toHaveBeenCalledOnce();
+        expect(invalidateTransports).not.toHaveBeenCalled();
+    });
+
+    it('rolls back an armed refresh bridge selection when live login fails before mutation', async () => {
+        const candidate = buildConnectedServiceCredentialRecord({
+            now: 1000,
+            serviceId: 'openai-codex',
+            profileId: 'work',
+            kind: 'oauth',
+            expiresAt: 2000,
+            oauth: {
+                accessToken: 'access',
+                refreshToken: 'refresh',
+                idToken: 'id',
+                scope: null,
+                tokenType: null,
+                providerAccountId: 'workspace-work',
+                providerEmail: null,
+            },
+        });
+        const order: string[] = [];
+        const client = {
+            request: vi.fn(async () => {
+                order.push('login');
+                throw new Error('forced_chatgpt_workspace_id rejected supplied chatgptAccountId');
+            }),
+        };
+        const updateRefreshSelection = vi.fn(async () => {
+            order.push('refresh-selection');
+            return async () => {
+                order.push('rollback');
+            };
+        });
+
+        await expect(applyCodexConnectedServiceAuthGeneration({
+            client,
+            candidate,
+            forcedWorkspaceId: null,
+            refreshSelection: {
+                kind: 'group',
+                serviceId: 'openai-codex',
+                groupId: 'team',
+                activeProfileId: 'work',
+                fallbackProfileId: 'backup',
+                generation: 2,
+            },
+            updateRefreshSelection,
+        })).resolves.toEqual({
+            applied: false,
+            reason: 'workspace_incompatible',
+        });
+
+        expect(updateRefreshSelection).toHaveBeenCalledOnce();
+        expect(order).toEqual(['refresh-selection', 'login', 'rollback']);
+    });
+
+    it('applies direct live auth while a Codex turn is in flight', async () => {
+        const candidate = buildConnectedServiceCredentialRecord({
+            now: 1000,
+            serviceId: 'openai-codex',
+            profileId: 'work',
+            kind: 'oauth',
+            expiresAt: 2000,
+            oauth: {
+                accessToken: 'access',
+                refreshToken: 'refresh',
+                idToken: 'id',
+                scope: null,
+                tokenType: null,
+                providerAccountId: 'workspace-work',
+                providerEmail: null,
+            },
+        });
+        const client = { request: vi.fn(async () => ({ ok: true })) };
+        const persistAuthStore = vi.fn(async () => undefined);
+        const updateRefreshSelection = vi.fn(async () => undefined);
+
+        await expect(applyCodexConnectedServiceAuthGeneration({
+            client,
+            candidate,
+            forcedWorkspaceId: 'workspace-work',
+            persistAuthStore,
+            refreshSelection: {
+                kind: 'profile',
+                serviceId: 'openai-codex',
+                profileId: 'work',
+            },
+            updateRefreshSelection,
+        })).resolves.toEqual({
+            applied: true,
+            appliedVia: 'direct_live_hot_auth',
+            activeAccountId: 'workspace-work',
+            durability: { persisted: true },
+        });
+
+        expect(client.request).toHaveBeenCalledWith('account/login/start', {
+            type: 'chatgptAuthTokens',
+            accessToken: 'access',
+            chatgptAccountId: 'workspace-work',
+        });
+        expect(updateRefreshSelection).toHaveBeenCalledWith({
+            kind: 'profile',
+            serviceId: 'openai-codex',
+            profileId: 'work',
+        });
+        expect(persistAuthStore).toHaveBeenCalledOnce();
+    });
+
+    it('does not fabricate exact account identity from labels when providerAccountId is missing', async () => {
+        const candidate = buildConnectedServiceCredentialRecord({
+            now: 1000,
+            serviceId: 'openai-codex',
+            profileId: 'work',
+            kind: 'oauth',
+            expiresAt: 2000,
+            oauth: {
+                accessToken: 'access',
+                refreshToken: 'refresh',
+                idToken: 'id',
+                scope: null,
+                tokenType: null,
+                providerAccountId: null,
+                providerEmail: 'work@example.test',
+            },
+        });
+        const client = { request: vi.fn(async () => ({ ok: true })) };
+
+        await expect(applyCodexConnectedServiceAuthGeneration({
+            client,
+            candidate,
+            forcedWorkspaceId: null,
+        })).resolves.toEqual({
+            applied: false,
+            reason: 'provider_account_identity_unavailable',
+        });
+
+        expect(client.request).not.toHaveBeenCalled();
     });
 });

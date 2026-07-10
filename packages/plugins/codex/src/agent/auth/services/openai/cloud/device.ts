@@ -1,3 +1,5 @@
+import { sleep as sdkSleep } from '@happier-dev/plugin-sdk/experimental/timeout';
+
 import type { CodexAuthTokens } from './types.js';
 import {
   assertNonEmptyString,
@@ -69,7 +71,7 @@ export async function authenticateCodexDevice(params: Readonly<{
   onUserCode?: (params: { verificationUrl: string; userCode: string }) => void;
 }>): Promise<CodexAuthTokens> {
   const fetcher = params.fetcher ?? fetch;
-  const sleep = params.sleep ?? (async (ms) => await new Promise((resolve) => setTimeout(resolve, ms)));
+  const sleep = params.sleep ?? sdkSleep;
 
   const usercodeRes = await fetcher(`${OPENAI_CODEX_AUTH_BASE_URL}/api/accounts/deviceauth/usercode`, {
     method: 'POST',

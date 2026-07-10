@@ -2,7 +2,7 @@ import {
   resolveConnectedServicesProviderStateSharingPolicyV1,
   type AccountSettings,
   type ConnectedServicesProviderStateSharingPolicyV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 export const codexHomeSyncProviderLabel = 'Codex';
 

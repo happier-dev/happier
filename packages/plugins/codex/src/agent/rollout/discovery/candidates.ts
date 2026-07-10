@@ -2,7 +2,7 @@ import type { Dirent } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
-import type { ExternalSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/sessions';
 
 import type { CodexExternalSessionHomeEntry } from './homeEntries.js';
 import { homeEntries } from './homeEntries.js';

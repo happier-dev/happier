@@ -1,10 +1,8 @@
 import {
   ProviderAccountUsageSnapshotV1Schema,
   buildProviderAccountUsageRecordId,
-  normalizeProviderAccountUsageAliases,
-  type ProviderAccountUsageAliasV1,
   type ProviderAccountUsageSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/experimental/cloud/usage';
 
 import {
   CODEX_RATE_LIMIT_SNAPSHOT_STALE_AFTER_MS,
@@ -13,22 +11,17 @@ import {
   readCodexRateLimitSnapshotPlanLabel,
 } from '../quota/rateLimitSnapshot.js';
 import { resolveCodexRuntimeRateLimitsState } from '../quota/runtimeRateLimits.js';
+import { mapCodexRateLimitResetCredits } from '../quota/rateLimitResetCredits.js';
 import type { CodexUsageSubjectRef } from './identity.js';
-
-export type CodexProviderAccountUsageAliasInput =
-  | Readonly<{ kind: 'appServerNative'; sessionId?: string; localCredentialRef?: string }>
-  | Readonly<{ kind: 'nativeCli'; sessionId?: string; localCredentialRef?: string }>
-  | Readonly<{ kind: 'connectedServiceProfile'; serviceId: 'openai-codex'; profileId: string }>
-  | Readonly<{ kind: 'connectedServiceGroupMember'; serviceId: 'openai-codex'; profileId: string; groupId: string }>;
 
 export type MapCodexRateLimitSnapshotToProviderAccountUsageSnapshotInput = Readonly<{
   subject: CodexUsageSubjectRef;
   rawSnapshot: unknown;
+  rawResetCredits?: unknown;
   observedAtMs: number;
   fetchedAtMs: number;
   accountLabel?: string | null;
   staleAfterMs?: number;
-  aliases?: readonly CodexProviderAccountUsageAliasInput[];
 }>;
 
 function readString(value: unknown): string | null {
@@ -37,17 +30,6 @@ function readString(value: unknown): string | null {
 
 function normalizeTimestampMs(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
-}
-
-function buildAlias(
-  alias: CodexProviderAccountUsageAliasInput,
-  accountSubjectId: string,
-): ProviderAccountUsageAliasV1 {
-  return {
-    ...alias,
-    providerId: 'openai-codex',
-    accountSubjectId,
-  };
 }
 
 function buildRecordKey(subject: CodexUsageSubjectRef): ProviderAccountUsageSnapshotV1['recordKey'] {
@@ -64,6 +46,10 @@ export function mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot(
 ): ProviderAccountUsageSnapshotV1 {
   const recordKey = buildRecordKey(params.subject);
   const state = resolveCodexRuntimeRateLimitsState(params.rawSnapshot).status;
+  const recoveryCredits = mapCodexRateLimitResetCredits({
+    rawUsage: params.rawSnapshot,
+    rawResetCredits: params.rawResetCredits,
+  });
   return ProviderAccountUsageSnapshotV1Schema.parse({
     v: 1,
     recordId: buildProviderAccountUsageRecordId(recordKey),
@@ -73,9 +59,6 @@ export function mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot(
       kind: params.subject.kind,
       id: params.subject.accountSubjectId,
     },
-    aliases: normalizeProviderAccountUsageAliases(
-      (params.aliases ?? []).map((alias) => buildAlias(alias, params.subject.accountSubjectId)),
-    ),
     observedAtMs: normalizeTimestampMs(params.observedAtMs),
     fetchedAtMs: normalizeTimestampMs(params.fetchedAtMs),
     staleAfterMs: params.staleAfterMs ?? CODEX_RATE_LIMIT_SNAPSHOT_STALE_AFTER_MS,
@@ -84,6 +67,7 @@ export function mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot(
     state,
     planLabel: readCodexRateLimitSnapshotPlanLabel(params.rawSnapshot),
     accountLabel: readCodexRateLimitSnapshotAccountLabel(params.rawSnapshot) ?? readString(params.accountLabel),
+    ...(recoveryCredits ? { recoveryCredits } : {}),
     meters: state === 'loaded_data'
       ? mapCodexRateLimitSnapshotToUsageMeters(params.rawSnapshot)
       : [],

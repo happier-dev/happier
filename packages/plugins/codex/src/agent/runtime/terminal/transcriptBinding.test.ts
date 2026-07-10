@@ -14,7 +14,7 @@ describe('resolveCodexTerminalRuntimeTranscriptBinding', () => {
         });
 
         expect(binding).toEqual({
-            providerId: 'codex',
+            agentId: 'codex',
             env: process.env,
             remoteSessionId: '123e4567-e89b-12d3-a456-426614174000',
             source: {
@@ -36,7 +36,7 @@ describe('resolveCodexTerminalRuntimeTranscriptBinding', () => {
         });
 
         expect(binding).toEqual({
-            providerId: 'codex',
+            agentId: 'codex',
             env: process.env,
             remoteSessionId: '123e4567-e89b-12d3-a456-426614174000',
             source: {

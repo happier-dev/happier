@@ -1,4 +1,7 @@
-import type { UsageObservationScope } from '@happier-dev/protocol';
+import type {
+    SessionContextUsageSnapshotV1,
+    UsageObservationScope,
+} from '@happier-dev/plugin-sdk/usage';
 
 import { estimateCodexUsageCost, type CodexUsageNumberMap } from './pricing.js';
 
@@ -80,6 +83,7 @@ function readUsageNumberMap(record: Record<string, unknown>): CodexUsageNumberMa
 export function buildCodexAppServerTokenCountObservationInput(params: Readonly<{
     notificationParams: unknown;
     modelId?: string | null;
+    observedAtMs?: number;
 }>): CodexAppServerTokenCountObservationInput | null {
     const record = asRecord(params.notificationParams);
     if (!record) return null;
@@ -93,10 +97,26 @@ export function buildCodexAppServerTokenCountObservationInput(params: Readonly<{
 
     const defaultScope: UsageObservationScope = totalUsage ? 'session_cumulative' : 'turn_delta';
     const tokens = readUsageNumberMap(usageRecord);
+    const contextWindowTokens = asFiniteNonNegativeNumber(
+        tokenUsage.modelContextWindow ?? tokenUsage.model_context_window,
+    );
+    const lastUsageTokens = deltaUsage ? readUsageNumberMap(deltaUsage) : null;
     const cost = estimateCodexUsageCost({
         modelId: params.modelId ?? null,
         tokens,
     });
+    const contextSnapshot = lastUsageTokens ? {
+        v: 1,
+        modelId: params.modelId ?? null,
+        usedTokens: lastUsageTokens.total,
+        windowTokens: contextWindowTokens,
+        totalProcessedTokens: totalUsage ? tokens?.total ?? null : null,
+        baselineTokens: 12_000,
+        isAutoCompactEnabled: null,
+        categories: null,
+        observedAtMs: params.observedAtMs ?? Date.now(),
+        source: 'provider_turn',
+    } satisfies SessionContextUsageSnapshotV1 : null;
 
     return {
         provider: 'codex',
@@ -107,7 +127,11 @@ export function buildCodexAppServerTokenCountObservationInput(params: Readonly<{
             ...(params.modelId ? { modelId: params.modelId } : {}),
             source: 'codex-app-server-token-usage',
             scope: defaultScope,
-            context_window_tokens: tokenUsage.modelContextWindow ?? tokenUsage.model_context_window,
+            ...(contextWindowTokens != null ? {
+                context_used_tokens: lastUsageTokens?.total ?? null,
+                context_window_tokens: contextWindowTokens,
+            } : {}),
+            ...(contextSnapshot ? { contextSnapshot } : {}),
             ...(cost ? { cost } : {}),
         },
     };

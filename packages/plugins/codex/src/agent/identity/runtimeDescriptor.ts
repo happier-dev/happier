@@ -4,10 +4,10 @@ import {
   readCanonicalCodexAgentRuntimeDescriptorV1,
 } from '../../protocol/runtimeDescriptorV1.js';
 
-type RuntimeDescriptorEnvelopeV1<TProviderId extends string = string> = Readonly<{
+type RuntimeDescriptorEnvelopeV1<TAgentId extends string = string> = Readonly<{
   v: 1;
-  providerId: TProviderId;
-  provider: Readonly<Record<string, unknown>>;
+  agentId: TAgentId;
+  agent: Readonly<Record<string, unknown>>;
 } & Record<string, unknown>>;
 
 export type CodexSessionMetadataConnectedServiceBinding = Readonly<
@@ -49,25 +49,38 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function readRuntimeDescriptorV1(value: unknown): RuntimeDescriptorEnvelopeV1 | null {
   const descriptor = asRecord(value);
-  if (!descriptor || descriptor.v !== 1 || typeof descriptor.providerId !== 'string' || !descriptor.providerId.trim()) {
+  if (!descriptor || descriptor.v !== 1) {
     return null;
   }
-  const provider = asRecord(descriptor.provider);
-  if (!provider) return null;
+  const agentId = readAgentIdCompat(descriptor);
+  if (!agentId) return null;
+  const rawAgentPayload = asRecord(descriptor.agent) ?? asRecord(descriptor.provider); // legacy `provider` payload-key read-compat
+  if (!rawAgentPayload) return null;
+  const agentPayload = Object.hasOwn(rawAgentPayload, 'agentExtra')
+    ? rawAgentPayload
+    : (() => {
+      const { providerExtra: legacyExtra, ...rest } = rawAgentPayload; // legacy `providerExtra` read-compat
+      return legacyExtra === undefined ? rawAgentPayload : { ...rest, agentExtra: legacyExtra };
+    })();
+  const {
+    providerId: _legacyProviderId,
+    provider: _legacyProviderPayload,
+    ...canonicalDescriptor
+  } = descriptor;
   return {
-    ...descriptor,
+    ...canonicalDescriptor,
     v: 1,
-    providerId: descriptor.providerId,
-    provider,
+    agentId,
+    agent: agentPayload,
   } as RuntimeDescriptorEnvelopeV1;
 }
 
-function readRuntimeDescriptorV1ForProvider<TProviderId extends string>(
+function readRuntimeDescriptorV1ForAgent<TAgentId extends string>(
   value: unknown,
-  providerId: TProviderId,
-): RuntimeDescriptorEnvelopeV1<TProviderId> | null {
+  agentId: TAgentId,
+): RuntimeDescriptorEnvelopeV1<TAgentId> | null {
   const descriptor = readRuntimeDescriptorV1(value);
-  return descriptor?.providerId === providerId ? descriptor as RuntimeDescriptorEnvelopeV1<TProviderId> : null;
+  return descriptor?.agentId === agentId ? descriptor as RuntimeDescriptorEnvelopeV1<TAgentId> : null;
 }
 
 function readRuntimeDescriptorV1FromMetadata(metadata: unknown): RuntimeDescriptorEnvelopeV1 | null {
@@ -87,6 +100,16 @@ function normalizeTrimmedString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed || null;
+}
+
+function readAgentIdCompat(record: Readonly<Record<string, unknown>>): string | null {
+  const hasAgentId = Object.hasOwn(record, 'agentId');
+  const hasProviderId = Object.hasOwn(record, 'providerId');
+  const agentId = normalizeTrimmedString(record.agentId);
+  const providerId = normalizeTrimmedString(record.providerId);
+  if ((hasAgentId && !agentId) || (hasProviderId && !providerId)) return null;
+  if (agentId && providerId && agentId !== providerId) return null;
+  return agentId ?? providerId;
 }
 
 function normalizeCodexRuntimeControlMode(value: unknown): CodexRuntimeControlMode | null {
@@ -139,7 +162,7 @@ function readLegacyCodexSessionMetadataRuntimeDescriptor(
   if (!backendMode) return null;
 
   return toCodexRuntimeDescriptor({
-    providerId: 'codex',
+    agentId: 'codex',
     backendMode,
     providerSessionId: normalizeTrimmedString(metadataRecord.codexSessionId),
     home: null,
@@ -154,11 +177,10 @@ function readGenericCodexSessionMetadataRuntimeDescriptor(
   metadataRecord: Record<string, unknown>,
 ): CodexRuntimeDescriptor | null {
   const rawDescriptorInput = readRawRuntimeDescriptorV1FromMetadata(metadataRecord);
-  const rawDescriptor = asRecord(rawDescriptorInput);
-  const descriptor = readRuntimeDescriptorV1ForProvider(
+  const descriptor = readRuntimeDescriptorV1ForAgent(
     readRuntimeDescriptorV1FromMetadata(metadataRecord) ?? rawDescriptorInput,
     'codex',
-  ) ?? (rawDescriptor?.providerId === 'codex' ? rawDescriptorInput : null);
+  );
   const canonicalDescriptor = readCanonicalCodexAgentRuntimeDescriptorV1(descriptor);
   return canonicalDescriptor ? toCodexRuntimeDescriptor(canonicalDescriptor) : null;
 }
@@ -216,7 +238,8 @@ function hasGenericCodexState(metadata: Record<string, unknown> | null): boolean
     'acpConfigOptionsV1',
   ].some((key) => {
     const value = asRecord(metadata?.[key]);
-    return value?.provider === 'codex';
+    // legacy `provider` state-record read-compat (pre-rename persisted metadata)
+    return (value?.agentId ?? value?.provider) === 'codex';
   });
 }
 
@@ -228,31 +251,31 @@ function readCodexRuntimeDescriptorV1BackendMode(value: unknown): PersistedCodex
 
 function readCodexSessionLinkBackendMode(value: unknown): PersistedCodexRuntimeIdentity['backendMode'] | null {
   const link = asRecord(value);
-  if (!link || link.v !== 1 || link.providerId !== 'codex') return null;
+  // legacy `providerId` external-link read-compat (pre-rename persisted metadata)
+  if (!link || link.v !== 1 || (link.agentId ?? link.providerId) !== 'codex') return null;
   return normalizeCodexRuntimeControlMode(link.codexBackendMode);
 }
 
-function readCodexRuntimeDescriptorProviderControlMode(
+function readCodexRuntimeDescriptorAgentControlMode(
   value: unknown,
 ): PersistedCodexRuntimeIdentity['backendMode'] | null {
-  const descriptor = asRecord(value);
-  if (!descriptor || descriptor.v !== 1 || descriptor.providerId !== 'codex') return null;
-  const provider = asRecord(descriptor.provider);
-  if (!provider) return null;
+  const descriptor = readRuntimeDescriptorV1ForAgent(value, 'codex');
+  if (!descriptor) return null;
+  const agentPayload = descriptor.agent;
 
-  const providerExtra = asRecord(provider.providerExtra);
-  const runtimeHandle = providerExtra?.v === 1
-    ? asRecord(providerExtra.runtimeHandle) ?? asRecord(providerExtra.runtimeAffinity)
+  const agentExtra = asRecord(agentPayload.agentExtra);
+  const runtimeHandle = agentExtra?.v === 1
+    ? asRecord(agentExtra.runtimeHandle) ?? asRecord(agentExtra.runtimeAffinity)
     : null;
   return normalizeCodexRuntimeControlMode(runtimeHandle?.backendMode)
-    ?? normalizeCodexRuntimeControlMode(provider.backendMode);
+    ?? normalizeCodexRuntimeControlMode(agentPayload.backendMode);
 }
 
 export function resolvePersistedCodexRuntimeIdentity(metadata: unknown): PersistedCodexRuntimeIdentity | null {
   const metadataRecord = asRecord(metadata);
   if (!metadataRecord) return null;
 
-  const rawDescriptorMode = readCodexRuntimeDescriptorProviderControlMode(
+  const rawDescriptorMode = readCodexRuntimeDescriptorAgentControlMode(
     readRawRuntimeDescriptorV1FromMetadata(metadataRecord),
   );
   if (rawDescriptorMode) {

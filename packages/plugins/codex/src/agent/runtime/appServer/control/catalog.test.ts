@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { HostRuntimeControlServiceV1 } from '@happier-dev/agents';
+import type { HostRuntimeControlServiceV1 } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 import {
   listCodexRuntimeSkills,

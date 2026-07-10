@@ -28,7 +28,7 @@ describe('codex session handoff bundle', () => {
       activeServerDir: '/active-server',
     });
 
-    expect(result.providerId).toBe('codex');
+    expect(result.agentId).toBe('codex');
     expect(result.remoteSessionId).toBe('thread_1');
     expect(result.affinity).toEqual({
       backendMode: 'appServer',
@@ -123,7 +123,7 @@ describe('codex session handoff bundle', () => {
         codexBackendMode: 'appServer',
         externalSessionV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           machineId: 'machine_1',
           remoteSessionId: 'thread_connected',
           source: {
@@ -170,8 +170,8 @@ describe('codex session handoff bundle', () => {
         codexBackendMode: 'appServer',
         agentRuntimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
-          provider: {
+          agentId: 'codex',
+          agent: {
             backendMode: 'appServer',
             providerSessionId: 'thread_runtime',
             home: 'connectedService',
@@ -189,14 +189,14 @@ describe('codex session handoff bundle', () => {
 
     expect(result.affinity?.runtimeDescriptor).toMatchObject({
       v: 1,
-      providerId: 'codex',
-      provider: {
+      agentId: 'codex',
+      agent: {
         backendMode: 'appServer',
         providerSessionId: 'thread_runtime',
         home: 'connectedService',
         connectedServiceId: 'openai-codex',
         connectedServiceGroupId: 'group-1',
-        providerExtra: {
+        agentExtra: {
           owner: 'codex',
           schemaId: 'codex.agentRuntimeDescriptorExtra',
           v: 1,
@@ -232,8 +232,8 @@ describe('codex session handoff bundle', () => {
         codexBackendMode: 'appServer',
         agentRuntimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
-          provider: {
+          agentId: 'codex',
+          agent: {
             backendMode: 'appServer',
             providerSessionId: 'thread_runtime_only',
             home: 'connectedService',
@@ -280,7 +280,7 @@ describe('codex session handoff bundle', () => {
         codexBackendMode: 'appServer',
         externalSessionV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           machineId: 'machine_1',
           remoteSessionId: 'thread_homepath',
           source: {
@@ -292,8 +292,8 @@ describe('codex session handoff bundle', () => {
         },
         agentRuntimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
-          provider: {
+          agentId: 'codex',
+          agent: {
             backendMode: 'appServer',
             providerSessionId: 'thread_homepath',
             home: 'user',
@@ -323,7 +323,7 @@ describe('codex session handoff bundle', () => {
 
     const result = await importCodexSessionBundle({
       bundle: {
-        providerId: 'codex',
+        agentId: 'codex',
         remoteSessionId: 'thread_1',
         affinity: {
           backendMode: 'appServer',
@@ -363,6 +363,45 @@ describe('codex session handoff bundle', () => {
     await expect(readFile(importedPath, 'utf8')).resolves.toBe('{"event":"hello"}\n');
   });
 
+  it('imports rollout files into CODEX_HOME expanded from the caller environment home', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-import-home-'));
+    const targetPath = join(tmpdir(), 'repo-target-home');
+
+    const result = await importCodexSessionBundle({
+      bundle: {
+        agentId: 'codex',
+        remoteSessionId: 'thread_home_tilde',
+        affinity: {
+          backendMode: 'appServer',
+        },
+        files: [
+          {
+            relativePath: 'sessions/2026/03/08/rollout-2026-03-08T10-00-00-thread_home_tilde.jsonl',
+            contentBase64: Buffer.from('{"event":"tilde"}\n', 'utf8').toString('base64'),
+          },
+        ],
+      },
+      targetPath,
+      env: {
+        HOME: homeDir,
+        USERPROFILE: homeDir,
+        CODEX_HOME: '~/target-codex',
+      },
+    });
+
+    const codexHome = join(homeDir, 'target-codex');
+    expect(result.externalSource).toEqual({
+      kind: 'codexHome',
+      home: 'user',
+      homePath: codexHome,
+    });
+    expect(result.resume.environmentVariables).toEqual({ CODEX_HOME: codexHome });
+    await expect(readFile(
+      join(codexHome, 'sessions', '2026', '03', '08', 'rollout-2026-03-08T10-00-00-thread_home_tilde.jsonl'),
+      'utf8',
+    )).resolves.toBe('{"event":"tilde"}\n');
+  });
+
   it('does not import source-machine codex homePath affinity into the target runtime descriptor', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-import-homepath-'));
     const targetPath = join(tmpdir(), 'repo-target-homepath');
@@ -370,7 +409,7 @@ describe('codex session handoff bundle', () => {
 
     const result = await importCodexSessionBundle({
       bundle: {
-        providerId: 'codex',
+        agentId: 'codex',
         remoteSessionId: 'thread_homepath',
         affinity: {
           backendMode: 'appServer',
@@ -381,8 +420,8 @@ describe('codex session handoff bundle', () => {
           },
           runtimeDescriptor: {
             v: 1,
-            providerId: 'codex',
-            provider: {
+            agentId: 'codex',
+            agent: {
               backendMode: 'appServer',
               providerSessionId: 'thread_homepath',
               home: 'user',
@@ -410,8 +449,8 @@ describe('codex session handoff bundle', () => {
     });
     expect(result.runtimeDescriptorV1).toMatchObject({
       v: 1,
-      providerId: 'codex',
-      provider: {
+      agentId: 'codex',
+      agent: {
         home: 'user',
         homePath: codexHome,
       },
@@ -424,7 +463,7 @@ describe('codex session handoff bundle', () => {
 
     const result = await importCodexSessionBundle({
       bundle: {
-        providerId: 'codex',
+        agentId: 'codex',
         remoteSessionId: 'thread_connected',
         affinity: {
           backendMode: 'appServer',
@@ -436,8 +475,8 @@ describe('codex session handoff bundle', () => {
           },
           runtimeDescriptor: {
             v: 1,
-            providerId: 'codex',
-            provider: {
+            agentId: 'codex',
+            agent: {
               backendMode: 'appServer',
               providerSessionId: 'thread_connected',
               home: 'connectedService',
@@ -467,8 +506,8 @@ describe('codex session handoff bundle', () => {
     });
     expect(result.runtimeDescriptorV1).toMatchObject({
       v: 1,
-      providerId: 'codex',
-      provider: {
+      agentId: 'codex',
+      agent: {
         backendMode: 'appServer',
         providerSessionId: 'thread_connected',
         home: 'connectedService',
@@ -485,7 +524,7 @@ describe('codex session handoff bundle', () => {
 
     const result = await importCodexSessionBundle({
       bundle: {
-        providerId: 'codex',
+        agentId: 'codex',
         remoteSessionId: 'thread_2',
         affinity: {
           backendMode: 'appServer',
@@ -523,7 +562,7 @@ describe('codex session handoff bundle', () => {
 
     const result = await importCodexSessionBundle({
       bundle: {
-        providerId: 'codex',
+        agentId: 'codex',
         remoteSessionId: 'thread_acp',
         affinity: {
           backendMode: 'acp',
@@ -552,7 +591,7 @@ describe('codex session handoff bundle', () => {
 
     const result = await importCodexSessionBundle({
       bundle: {
-        providerId: 'codex',
+        agentId: 'codex',
         remoteSessionId: 'thread_source',
         affinity: {
           backendMode: 'appServer',
@@ -577,8 +616,8 @@ describe('codex session handoff bundle', () => {
 
     expect(result.runtimeDescriptorV1).toMatchObject({
       v: 1,
-      providerId: 'codex',
-      provider: {
+      agentId: 'codex',
+      agent: {
         backendMode: 'appServer',
         providerSessionId: 'thread_source',
         home: 'connectedService',
@@ -594,18 +633,18 @@ describe('codex session handoff bundle', () => {
 
     const result = await importCodexSessionBundle({
       bundle: {
-        providerId: 'codex',
+        agentId: 'codex',
         remoteSessionId: 'thread_affinity',
         affinity: {
           backendMode: 'appServer',
           runtimeDescriptor: {
             v: 1,
-            providerId: 'codex',
-            provider: {
+            agentId: 'codex',
+            agent: {
               backendMode: 'mcp',
               providerSessionId: 'thread_legacy',
               home: 'user',
-              providerExtra: {
+              agentExtra: {
                 owner: 'codex',
                 schemaId: 'codex.agentRuntimeDescriptorExtra',
                 v: 1,
@@ -637,8 +676,8 @@ describe('codex session handoff bundle', () => {
     });
     expect(result.runtimeDescriptorV1).toMatchObject({
       v: 1,
-      providerId: 'codex',
-      provider: {
+      agentId: 'codex',
+      agent: {
         backendMode: 'appServer',
         providerSessionId: 'thread_affinity',
         home: 'connectedService',
@@ -654,7 +693,7 @@ describe('codex session handoff bundle', () => {
 
     const result = await importCodexSessionBundle({
       bundle: {
-        providerId: 'codex',
+        agentId: 'codex',
         remoteSessionId: 'thread_mcp_import',
         affinity: {
           backendMode: 'mcp' as never,
@@ -676,8 +715,8 @@ describe('codex session handoff bundle', () => {
       codexBackendMode: 'appServer',
     });
     expect(result.runtimeDescriptorV1).toMatchObject({
-      providerId: 'codex',
-      provider: {
+      agentId: 'codex',
+      agent: {
         backendMode: 'appServer',
         providerSessionId: 'thread_mcp_import',
       },
@@ -690,7 +729,7 @@ describe('codex session handoff bundle', () => {
 
     await expect(importCodexSessionBundle({
       bundle: {
-        providerId: 'codex',
+        agentId: 'codex',
         remoteSessionId: 'thread_3',
         files: [
           {

@@ -2,6 +2,11 @@ import {
     canonicalizeCodexRolloutToolName,
     normalizeCodexRolloutToolInput,
 } from './toolInvocation.js';
+import {
+    formatCodexMcpToolSource,
+    readCodexMcpToolSource,
+    type CodexRolloutToolSource,
+} from './mcpToolSource.js';
 
 export type CodexRolloutAction =
     | { type: 'codex-session-id'; id: string }
@@ -14,12 +19,6 @@ export type CodexRolloutAction =
     | { type: 'subagent-spawn'; threadId: string; prompt: string | null; nickname: string | null; role: string | null }
     | { type: 'subagent-complete'; threadId: string; status: 'completed' | 'interrupted'; summaryText: string | null }
     | { type: 'debug'; message: string; value?: unknown };
-
-export type CodexRolloutToolSource = Readonly<{
-    kind: 'mcp';
-    serverName: string;
-    toolName: string;
-}>;
 
 type RolloutEnvelope = { timestamp?: string; type?: string; payload?: unknown };
 
@@ -107,42 +106,6 @@ function withLocalControlMeta(input: unknown): unknown {
 function readStringField(record: Record<string, unknown>, key: string): string | null {
     const value = record[key];
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
-function parseMcpToolName(name: string): { serverName: string; toolName: string } | null {
-    const normalized = name.trim();
-    const match = normalized.match(/^mcp__(.+?)__(.+)$/);
-    if (!match?.[1] || !match[2]) return null;
-    return {
-        serverName: match[1],
-        toolName: match[2],
-    };
-}
-
-function readMcpToolSource(payload: Record<string, unknown>, name: string): CodexRolloutToolSource | undefined {
-    const parsedName = parseMcpToolName(name);
-    const serverName =
-        readStringField(payload, 'server')
-        ?? readStringField(payload, 'mcpServer')
-        ?? readStringField(payload, 'mcp_server')
-        ?? readStringField(payload, 'serverName')
-        ?? readStringField(payload, 'server_name')
-        ?? null;
-    if (!serverName) return undefined;
-
-    const toolName =
-        readStringField(payload, 'tool')
-        ?? readStringField(payload, 'toolName')
-        ?? readStringField(payload, 'tool_name')
-        ?? parsedName?.toolName
-        ?? readStringField(payload, 'name');
-    if (!toolName) return undefined;
-
-    return {
-        kind: 'mcp',
-        serverName,
-        toolName,
-    };
 }
 
 function readCollaborationStatus(statusValue: unknown): { status: 'completed' | 'interrupted'; summaryText: string | null } | null {
@@ -284,8 +247,8 @@ export function mapCodexRolloutEventToActions(event: unknown, opts: { debug: boo
             }];
         }
 
-        const source = readMcpToolSource(payload, name);
-        const rawToolName = source ? `mcp__${source.serverName}__${source.toolName}` : name;
+        const source = readCodexMcpToolSource(payload, name);
+        const rawToolName = source ? formatCodexMcpToolSource(source) : name;
         const { canonicalToolName, visibility } = canonicalizeCodexRolloutToolName(rawToolName);
         if (visibility === 'ignore') return [];
         if (visibility === 'debug-only' && !opts.debug) return [];
@@ -323,8 +286,8 @@ export function mapCodexRolloutEventToActions(event: unknown, opts: { debug: boo
         const callId = typeof payload.call_id === 'string' ? String(payload.call_id) : '';
         if (!name || !callId) return [];
 
-        const source = readMcpToolSource(payload, name);
-        const rawToolName = source ? `mcp__${source.serverName}__${source.toolName}` : name;
+        const source = readCodexMcpToolSource(payload, name);
+        const rawToolName = source ? formatCodexMcpToolSource(source) : name;
         const { canonicalToolName, visibility } = canonicalizeCodexRolloutToolName(rawToolName);
         if (visibility === 'ignore') return [];
         if (visibility === 'debug-only' && !opts.debug) return [];

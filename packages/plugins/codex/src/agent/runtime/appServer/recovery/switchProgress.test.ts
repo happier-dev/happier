@@ -6,11 +6,26 @@ import {
 } from './switchProgress.js';
 
 describe('resolveCodexUsageLimitSwitchProgress', () => {
-  it('retries when the switch lands on a genuinely different account', () => {
+  it('does not treat a different selected profile as progress without provider verification', () => {
     const progress = resolveCodexUsageLimitSwitchProgress({
       switchAttemptStatus: 'switched',
       exhaustedProfileId: 'work',
       selectedProfileId: 'backup',
+      verificationStatus: null,
+      resetAtMs: 5_000,
+      nowMs: 1_000,
+    });
+
+    expect(progress).toEqual({ kind: 'wait_until_reset', nextCheckAtMs: 5_000 });
+    expect(mapCodexUsageLimitSwitchProgressToProof(progress)).toBeNull();
+  });
+
+  it('retries when the switch has exact provider verification', () => {
+    const progress = resolveCodexUsageLimitSwitchProgress({
+      switchAttemptStatus: 'switched',
+      exhaustedProfileId: 'work',
+      selectedProfileId: 'work',
+      verificationStatus: 'verified',
       resetAtMs: 5_000,
       nowMs: 1_000,
     });
@@ -19,11 +34,26 @@ describe('resolveCodexUsageLimitSwitchProgress', () => {
     expect(mapCodexUsageLimitSwitchProgressToProof(progress)).toBe('fresh_candidate_selected');
   });
 
+  it('does not treat weak Codex proof as immediate retry progress', () => {
+    const progress = resolveCodexUsageLimitSwitchProgress({
+      switchAttemptStatus: 'observed_generation',
+      exhaustedProfileId: 'work',
+      selectedProfileId: 'backup',
+      verificationStatus: 'weakly_verified',
+      resetAtMs: 5_000,
+      nowMs: 1_000,
+    });
+
+    expect(progress).toEqual({ kind: 'wait_until_reset', nextCheckAtMs: 5_000 });
+    expect(mapCodexUsageLimitSwitchProgressToProof(progress)).toBeNull();
+  });
+
   it('waits until reset when the switch lands on the same account', () => {
     const progress = resolveCodexUsageLimitSwitchProgress({
       switchAttemptStatus: 'switched',
       exhaustedProfileId: 'work',
       selectedProfileId: 'work',
+      verificationStatus: null,
       resetAtMs: 5_000,
       nowMs: 1_000,
     });
@@ -37,6 +67,7 @@ describe('resolveCodexUsageLimitSwitchProgress', () => {
       switchAttemptStatus: 'switched',
       exhaustedProfileId: 'work',
       selectedProfileId: 'work',
+      verificationStatus: null,
       resetAtMs: null,
       nowMs: 1_000,
     });
@@ -52,6 +83,7 @@ describe('resolveCodexUsageLimitSwitchProgress', () => {
       switchAttemptStatus: 'no_eligible_member',
       exhaustedProfileId: 'work',
       selectedProfileId: null,
+      verificationStatus: null,
       resetAtMs: 5_000,
       nowMs: 1_000,
     });
@@ -65,6 +97,7 @@ describe('resolveCodexUsageLimitSwitchProgress', () => {
       switchAttemptStatus: 'no_eligible_member',
       exhaustedProfileId: 'work',
       selectedProfileId: null,
+      verificationStatus: null,
       resetAtMs: null,
       nowMs: 1_000,
     });
@@ -78,6 +111,7 @@ describe('resolveCodexUsageLimitSwitchProgress', () => {
       switchAttemptStatus: 'observed_generation',
       exhaustedProfileId: 'work',
       selectedProfileId: null,
+      verificationStatus: null,
       resetAtMs: 5_000,
       nowMs: 1_000,
     });
@@ -90,6 +124,7 @@ describe('resolveCodexUsageLimitSwitchProgress', () => {
       switchAttemptStatus: 'switched',
       exhaustedProfileId: 'work',
       selectedProfileId: 'work',
+      verificationStatus: null,
       resetAtMs: null,
       nowMs: 1_000,
       fallbackNextCheckAtMs: 3_000,
@@ -103,6 +138,7 @@ describe('resolveCodexUsageLimitSwitchProgress', () => {
       switchAttemptStatus: 'generation_apply_failed',
       exhaustedProfileId: 'work',
       selectedProfileId: null,
+      verificationStatus: null,
       resetAtMs: 5_000,
       nowMs: 1_000,
       errorCode: 'hot_apply_failed',
@@ -117,6 +153,7 @@ describe('resolveCodexUsageLimitSwitchProgress', () => {
         switchAttemptStatus: status,
         exhaustedProfileId: 'work',
         selectedProfileId: null,
+        verificationStatus: null,
         resetAtMs: 5_000,
         nowMs: 1_000,
       });

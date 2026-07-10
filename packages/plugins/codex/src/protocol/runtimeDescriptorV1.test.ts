@@ -10,9 +10,10 @@ import {
 describe('Codex runtime descriptor v1', () => {
   it('owns the provider codec inside the plugin leaf', () => {
     const source = readFileSync(new URL('./runtimeDescriptorV1.ts', import.meta.url), 'utf8');
+    const protocolSpecifier = '@happier-dev/' + 'protocol';
 
-    expect(source).not.toContain("from '@happier-dev/protocol");
-    expect(source).not.toContain('from "@happier-dev/protocol');
+    expect(source).not.toContain(`from '${protocolSpecifier}`);
+    expect(source).not.toContain(`from "${protocolSpecifier}`);
   });
 
   it('keeps connected-service group descriptors canonical', () => {
@@ -26,7 +27,7 @@ describe('Codex runtime descriptor v1', () => {
     });
 
     expect(readCanonicalCodexAgentRuntimeDescriptorV1(descriptor)).toEqual({
-      providerId: 'codex',
+      agentId: 'codex',
       backendMode: 'appServer',
       providerSessionId: 'thread-1',
       home: 'connectedService',
@@ -40,7 +41,7 @@ describe('Codex runtime descriptor v1', () => {
   it('keeps legacy runtimeAffinity provider-extra carriers readable', () => {
     expect(readCanonicalCodexAgentRuntimeDescriptorV1({
       v: 1,
-      providerId: 'codex',
+      agentId: 'codex',
       provider: {
         backendMode: 'appServer',
         providerExtra: {
@@ -62,7 +63,7 @@ describe('Codex runtime descriptor v1', () => {
   it('ignores provider-extra carriers without the Codex owner and schema', () => {
     expect(readCanonicalCodexAgentRuntimeDescriptorV1({
       v: 1,
-      providerId: 'codex',
+      agentId: 'codex',
       provider: {
         backendMode: 'appServer',
         providerSessionId: 'canonical-thread',
@@ -80,5 +81,14 @@ describe('Codex runtime descriptor v1', () => {
       backendMode: 'appServer',
       providerSessionId: 'canonical-thread',
     });
+  });
+
+  it('fails closed when canonical and deployed identity fields conflict', () => {
+    expect(readCanonicalCodexAgentRuntimeDescriptorV1({
+      v: 1,
+      agentId: 'codex',
+      providerId: 'opencode',
+      provider: { backendMode: 'appServer' },
+    })).toBeNull();
   });
 });

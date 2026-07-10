@@ -1,7 +1,7 @@
 import {
-  EXTENSION_HOOK_CATALOG_V1,
-  getExtensionHookDefinitionV1,
-} from '@happier-dev/protocol';
+  PLUGIN_HOOK_CATALOG_V1,
+  getPluginHookDefinitionV1,
+} from '@happier-dev/plugin-sdk/hooks';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -11,15 +11,15 @@ import {
 } from './hookParity.fixture.js';
 
 const EXPECTED_B6_HOOK_IDS = [
-  'session.spawn_new',
+  'session.spawned',
   'session.message.send',
-  'execution_run.start',
-  'execution_run.send',
-  'execution_run.stop',
-  'execution_run.terminal',
-  'backend.resolveRuntimePrerequisites',
-  'spawn.augmentEnv',
-  'provider.response.after',
+  'executionRun.started',
+  'executionRun.messageSent',
+  'executionRun.stopped',
+  'executionRun.completed',
+  'agent.resolvePrerequisites',
+  'agent.spawnEnv.augment',
+  'agent.response.after',
   'tool.call.before',
   'tool.result.after',
   'resource.discovery',
@@ -28,8 +28,8 @@ const EXPECTED_B6_HOOK_IDS = [
   'session.attached',
   'session.detached',
   'approval.decision.made',
-  'subagent.start',
-  'subagent.end',
+  'subagent.started',
+  'subagent.ended',
 ] as const;
 
 const BROAD_SURFACE_LABELS = [
@@ -56,11 +56,11 @@ describe('Codex B.6 hook parity fixture', () => {
   });
 
   it('verifies catalog-backed hooks against the accepted protocol hook catalog', () => {
-    const catalogIds = new Set(EXTENSION_HOOK_CATALOG_V1.map((entry) => entry.id));
+    const catalogIds = new Set(PLUGIN_HOOK_CATALOG_V1.map((entry) => entry.id));
 
     for (const hookId of CODEX_CATALOG_BACKED_HOOK_IDS) {
       expect(catalogIds.has(hookId)).toBe(true);
-      expect(getExtensionHookDefinitionV1(hookId)?.id).toBe(hookId);
+      expect(getPluginHookDefinitionV1(hookId)?.id).toBe(hookId);
     }
   });
 
@@ -69,7 +69,7 @@ describe('Codex B.6 hook parity fixture', () => {
 
     for (const row of CODEX_HOOK_PARITY_ROWS) {
       expect(row.catalogStatus).toBe('catalog-backed');
-      expect(getExtensionHookDefinitionV1(row.id)?.id).toBe(row.id);
+      expect(getPluginHookDefinitionV1(row.id)?.id).toBe(row.id);
     }
   });
 });

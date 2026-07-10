@@ -2,7 +2,7 @@ import type {
     TerminalRuntimeControlProjectionV1,
     TerminalRuntimeProjectionHostServiceV1,
     TerminalRuntimeSubagentProjectionV1,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk';
 
 import { normalizeCodexTerminalSessionId } from './invocation.js';
 
@@ -70,7 +70,7 @@ function buildSubagentStartProjection(
     const prompt = normalizeText(projection.prompt);
     return Object.freeze({
         providerId: 'codex',
-        providerKind: CODEX_TERMINAL_NATIVE_SUBAGENT_PROVIDER_KIND,
+        agentKind: CODEX_TERMINAL_NATIVE_SUBAGENT_PROVIDER_KIND,
         subagentId: threadId,
         sidechainId: threadId,
         label: nickname ?? role ?? 'Codex subagent',
@@ -94,12 +94,12 @@ function buildSubagentCompletionProjection(
     const status = projection.status === 'interrupted' ? 'aborted' : 'completed';
     return Object.freeze({
         providerId: 'codex',
-        providerKind: CODEX_TERMINAL_NATIVE_SUBAGENT_PROVIDER_KIND,
+        agentKind: CODEX_TERMINAL_NATIVE_SUBAGENT_PROVIDER_KIND,
         subagentId: threadId,
         sidechainId: threadId,
         status,
         lifecycleDetail: {
-            providerState: projection.status,
+            agentState: projection.status,
             reason: projection.status === 'interrupted' ? 'provider_interrupted' : 'provider_completed',
             ...(projection.summaryText ? { summaryText: projection.summaryText } : {}),
         },

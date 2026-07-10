@@ -39,6 +39,24 @@ describe('Codex app-server wire fields', () => {
       id: 'cmd-1',
       type: 'commandExecution',
     })).toBeNull();
+
+    expect(readProviderEventTurnId({
+      item: {
+        id: 'fc_1',
+        type: 'function_call',
+        internal_chat_message_metadata_passthrough: {
+          turn_id: 'turn-from-item-metadata',
+        },
+      },
+    })).toBe('turn-from-item-metadata');
+
+    expect(readProviderEventTurnId({
+      type: 'function_call_output',
+      call_id: 'call_1',
+      internal_chat_message_metadata_passthrough: {
+        turn_id: 'turn-from-record-metadata',
+      },
+    })).toBe('turn-from-record-metadata');
   });
 
   it('reads nested and top-level lifecycle statuses', () => {

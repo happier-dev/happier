@@ -3,13 +3,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { sendCodexProjectedToolEvent } from './projectedToolEvent.js';
 
 describe('sendCodexProjectedToolEvent', () => {
-  it('sends main-thread tool events as Codex transcript messages', async () => {
-    const sendCodexMessage = vi.fn();
+  it('sends main-thread tool events as canonical provider transcript messages', async () => {
+    const sendProviderMessage = vi.fn();
 
     await sendCodexProjectedToolEvent({
       session: {
         sendAgentMessage: vi.fn(),
-        sendCodexMessage,
+        sendProviderMessage,
       },
       event: {
         type: 'tool-result',
@@ -19,12 +19,14 @@ describe('sendCodexProjectedToolEvent', () => {
       },
     });
 
-    expect(sendCodexMessage).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'tool-call-result',
-      callId: 'call-1',
-      output: { ok: true },
-      id: expect.any(String),
-    }));
+    expect(sendProviderMessage).toHaveBeenCalledWith({
+      body: expect.objectContaining({
+        type: 'tool-call-result',
+        callId: 'call-1',
+        output: { ok: true },
+        id: expect.any(String),
+      }),
+    });
   });
 
   it('sends sidechain tool events as agent messages', async () => {
@@ -33,7 +35,7 @@ describe('sendCodexProjectedToolEvent', () => {
     await sendCodexProjectedToolEvent({
       session: {
         sendAgentMessage,
-        sendCodexMessage: vi.fn(),
+        sendProviderMessage: vi.fn(),
       },
       event: {
         type: 'tool-call',
@@ -53,4 +55,3 @@ describe('sendCodexProjectedToolEvent', () => {
     }));
   });
 });
-

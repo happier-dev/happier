@@ -196,4 +196,26 @@ describe('resolveCodexPreflightSessionControlsPolicy', () => {
     });
     expect(fixture.readDisposeCount()).toBe(1);
   });
+
+  it('does not inherit runtime RPC-log diagnostics for preflight probes', async () => {
+    const fixture = createPreflightExecFixture();
+    const env = await makeAuthEnv({
+      OPENAI_API_KEY: 'sk-test',
+      HAPPIER_CODEX_APP_SERVER_RPC_LOG_PATH: '/tmp/ambient-codex-rpc.jsonl',
+      HAPPIER_CODEX_APP_SERVER_RPC_LOG_MAX_BYTES: '1234',
+      HAPPIER_CODEX_APP_SERVER_RPC_LOG_ROTATE_COUNT: '3',
+    });
+
+    const models = await sessionControls.codexPreflightSessionControlsProbeConfig.probeModelsRaw?.({
+      exec: fixture.exec,
+      cwd: '/workspace',
+      timeoutMs: 2_000,
+      accountSettings: null,
+      env,
+    });
+
+    expect(models).toHaveLength(1);
+    expect(fixture.specs[0]?.lifecycle?.diagnostics).toBeUndefined();
+    expect(fixture.readDisposeCount()).toBe(1);
+  });
 });

@@ -2,7 +2,7 @@ import {
   SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
   type SessionRuntimeIssueV1,
   type SessionUsageLimitRecoveryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/experimental/cloud/usage';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -21,7 +21,7 @@ function createUsageLimitIssue(
     code: 'usage_limit',
     source: 'usage_limit',
     provider: 'codex',
-    providerTurnId: 'turn-1',
+    agentTurnId: 'turn-1',
     occurredAt: 1_700_000_000_000,
     usageLimit,
   };

@@ -1,4 +1,4 @@
-import type { TerminalRuntimeRunResultV1 } from '@happier-dev/agents';
+import type { TerminalRuntimeRunResultV1 } from '@happier-dev/plugin-sdk';
 
 type QueueModeWithLocalId = { localId?: string | null };
 

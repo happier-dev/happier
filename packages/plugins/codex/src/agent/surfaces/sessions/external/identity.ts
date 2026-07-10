@@ -1,28 +1,30 @@
-import type { CodexBackendMode } from '@happier-dev/agents';
 import {
   createSessionStateSyncEngine,
-  normalizeCodexBackendMode,
   resolveFingerprintPublication,
   rollbackFingerprintPublication,
   type MetadataUpdatePort,
   type SessionStateFieldWriteValue,
-} from '@happier-dev/agents';
-import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+} from '@happier-dev/plugin-sdk/sessions';
 import type {
   ExternalSessionsSource,
-  RuntimeDescriptorV1,
   RuntimeDescriptorMetadataCarrier,
+  RuntimeDescriptorV1,
   SessionMetadata,
   SessionStateCapabilitiesV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/sessions';
+import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/plugin-sdk/sessions';
 
 import { readCanonicalCodexRuntimeDescriptorV1 } from '../../../identity/runtimeDescriptor.js';
-import { buildCodexAgentRuntimeDescriptor } from '../../../../protocol/runtimeDescriptorV1.js';
+import {
+  buildCodexAgentRuntimeDescriptor,
+  normalizeCodexBackendMode,
+  type CodexBackendMode,
+} from '../../../../protocol/runtimeDescriptorV1.js';
 import { inferCodexExternalSessionsSourceFromHome } from './sourceValidation.js';
 
 type LinkedExternalSessionMetadataCompatV1 = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
   v: 1;
-  providerId: string;
+  agentId: string;
   machineId: string;
   remoteSessionId: string;
   source: ExternalSessionsSource;
@@ -30,7 +32,7 @@ type LinkedExternalSessionMetadataCompatV1 = Readonly<Partial<RuntimeDescriptorM
 };
 
 type CodexExternalSessionMetadataV1 = LinkedExternalSessionMetadataCompatV1 & {
-  providerId: 'codex';
+  agentId: 'codex';
 };
 
 type CodexBackendModeCompat = CodexBackendMode | 'mcp';
@@ -281,7 +283,7 @@ export function buildCodexExternalSessionMetadata(
   const externalSessionBase: CodexExternalSessionMetadataV1 = {
     ...(previousExternalSession ?? {}),
     v: 1,
-    providerId: 'codex',
+    agentId: 'codex',
     machineId,
     remoteSessionId: providerSessionId,
     source: inferCodexExternalSessionsSourceFromHome(params),

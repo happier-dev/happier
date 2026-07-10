@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { readCodexEnvironmentAuthState } from './environment.js';
+import { readCodexEnvironmentAuthState, readCodexEnvironmentAuthTokens } from './environment.js';
 
 function buildJwt(payload: Record<string, unknown>): string {
   return [
@@ -58,6 +58,84 @@ describe('readCodexEnvironmentAuthState', () => {
     expect(readCodexEnvironmentAuthState({ HOME: dir, USERPROFILE: dir })).toEqual({
       method: 'credentials_file',
       accountLabel: 'valid@example.test',
+    });
+  });
+
+  it('reads usable credentials-file access tokens and ChatGPT account ids', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-codex-auth-state-'));
+    tempDirs.push(dir);
+    await mkdir(join(dir, '.codex'), { recursive: true });
+    await writeFile(
+      join(dir, '.codex', 'auth.json'),
+      JSON.stringify({
+        tokens: {
+          id_token: buildJwt({
+            email: 'valid@example.test',
+            chatgpt_account_id: 'acct-chatgpt',
+            exp: 4_102_444_800,
+          }),
+          access_token: buildJwt({ exp: 4_102_444_800 }),
+        },
+      }),
+      'utf8',
+    );
+
+    expect(readCodexEnvironmentAuthTokens({ HOME: dir, USERPROFILE: dir })).toEqual({
+      idToken: expect.any(String),
+      accessToken: expect.any(String),
+      accountId: 'acct-chatgpt',
+      accountLabel: 'valid@example.test',
+    });
+  });
+
+  it('reads exact ChatGPT account ids from Codex auth store tokens', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-codex-auth-state-'));
+    tempDirs.push(dir);
+    await mkdir(join(dir, '.codex'), { recursive: true });
+    await writeFile(
+      join(dir, '.codex', 'auth.json'),
+      JSON.stringify({
+        tokens: {
+          id_token: buildJwt({
+            email: 'valid@example.test',
+            exp: 4_102_444_800,
+          }),
+          access_token: buildJwt({ exp: 4_102_444_800 }),
+          account_id: 'acct-from-store',
+        },
+      }),
+      'utf8',
+    );
+
+    expect(readCodexEnvironmentAuthTokens({ HOME: dir, USERPROFILE: dir })).toEqual({
+      idToken: expect.any(String),
+      accessToken: expect.any(String),
+      accountId: 'acct-from-store',
+      accountLabel: 'valid@example.test',
+    });
+  });
+
+  it('expands CODEX_HOME from the caller environment home when reading credentials-file tokens', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-codex-auth-home-'));
+    tempDirs.push(dir);
+    await mkdir(join(dir, 'custom-codex'), { recursive: true });
+    await writeFile(
+      join(dir, 'custom-codex', 'auth.json'),
+      JSON.stringify({
+        tokens: {
+          id_token: buildJwt({ email: 'tilde@example.test', exp: 4_102_444_800 }),
+        },
+      }),
+      'utf8',
+    );
+
+    expect(readCodexEnvironmentAuthState({
+      HOME: dir,
+      USERPROFILE: dir,
+      CODEX_HOME: '~/custom-codex',
+    })).toEqual({
+      method: 'credentials_file',
+      accountLabel: 'tilde@example.test',
     });
   });
 

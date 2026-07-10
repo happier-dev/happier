@@ -1,4 +1,3 @@
-import { resolveCodexSessionBackendMode } from '@happier-dev/agents';
 import type { ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
 
 import { readCodexEnvironmentAuthState, type CodexEnvironmentAuthMethod } from '../../cli/auth/environment.js';
@@ -7,6 +6,7 @@ import {
   readCodexAppServerSessionControls,
   type CodexAppServerSessionControlsSnapshot,
 } from '../../runtime/appServer/state/controls.js';
+import { resolveCodexSessionBackendMode } from '../backendMode.js';
 
 export type CodexPreflightSessionControlsPolicy = Readonly<{
   processEnv: Readonly<{
@@ -23,6 +23,26 @@ export type CodexPreflightSessionControlsProbeParams = Readonly<{
   env?: NodeJS.ProcessEnv;
 }>;
 
+const CODEX_PREFLIGHT_RUNTIME_DIAGNOSTIC_ENV_KEYS = [
+  'HAPPIER_CODEX_APP_SERVER_RPC_LOG_PATH',
+  'HAPPIER_CODEX_APP_SERVER_RPC_LOG_MAX_BYTES',
+  'HAPPIER_CODEX_APP_SERVER_RPC_LOG_ROTATE_COUNT',
+] as const;
+
+function buildCodexPreflightProcessEnv(
+  env: NodeJS.ProcessEnv,
+  policy: CodexPreflightSessionControlsPolicy,
+): NodeJS.ProcessEnv {
+  const processEnv: NodeJS.ProcessEnv = {
+    ...env,
+    ...policy.processEnv,
+  };
+  for (const key of CODEX_PREFLIGHT_RUNTIME_DIAGNOSTIC_ENV_KEYS) {
+    delete processEnv[key];
+  }
+  return processEnv;
+}
+
 async function readCodexPreflightSessionControls(
   params: CodexPreflightSessionControlsProbeParams,
 ): Promise<CodexAppServerSessionControlsSnapshot | null> {
@@ -36,10 +56,7 @@ async function readCodexPreflightSessionControls(
 
   const client = await createCodexAppServerClient({
     exec: params.exec,
-    processEnv: {
-      ...env,
-      ...policy.processEnv,
-    },
+    processEnv: buildCodexPreflightProcessEnv(env, policy),
     cwd: params.cwd,
   });
   try {

@@ -11,7 +11,7 @@ export function normalizeCodexBackendMode(value: unknown): CodexBackendMode | nu
   return null;
 }
 
-type CodexRuntimeDescriptorProviderExtra = Readonly<{
+type CodexRuntimeDescriptorAgentExtra = Readonly<{
   owner: 'codex';
   schemaId: 'codex.agentRuntimeDescriptorExtra';
   v: 1;
@@ -27,7 +27,7 @@ type CodexRuntimeDescriptorProviderExtra = Readonly<{
   runtimeAffinity?: Readonly<Record<string, unknown>>;
 }>;
 
-type CodexAgentRuntimeDescriptorProvider = Readonly<{
+type CodexAgentRuntimeDescriptorAgentPayload = Readonly<{
   backendMode: CodexBackendMode;
   providerSessionId?: string;
   homePath?: string;
@@ -35,17 +35,17 @@ type CodexAgentRuntimeDescriptorProvider = Readonly<{
   connectedServiceId?: string;
   connectedServiceProfileId?: string;
   connectedServiceGroupId?: string;
-  providerExtra?: CodexRuntimeDescriptorProviderExtra;
+  agentExtra?: CodexRuntimeDescriptorAgentExtra;
 }>;
 
 export type CodexAgentRuntimeDescriptorV1 = Readonly<{
   v: 1;
-  providerId: 'codex';
-  provider: CodexAgentRuntimeDescriptorProvider;
+  agentId: 'codex';
+  agent: CodexAgentRuntimeDescriptorAgentPayload;
 } & Record<string, unknown>>;
 
 export type CanonicalCodexAgentRuntimeDescriptorV1 = Readonly<{
-  providerId: 'codex';
+  agentId: 'codex';
   backendMode: CodexBackendMode | null;
   providerSessionId: string | null;
   home: 'user' | 'connectedService' | null;
@@ -77,9 +77,19 @@ function normalizeTrimmedString(value: unknown): string | null {
   return trimmed || null;
 }
 
+function readAgentIdCompat(record: Readonly<Record<string, unknown>>): string | null {
+  const hasAgentId = Object.hasOwn(record, 'agentId');
+  const hasProviderId = Object.hasOwn(record, 'providerId');
+  const agentId = normalizeTrimmedString(record.agentId);
+  const providerId = normalizeTrimmedString(record.providerId);
+  if ((hasAgentId && !agentId) || (hasProviderId && !providerId)) return null;
+  if (agentId && providerId && agentId !== providerId) return null;
+  return agentId ?? providerId;
+}
+
 function readProviderSessionIdCompat(record: Readonly<Record<string, unknown>>): string | null {
   return normalizeTrimmedString(record.providerSessionId)
-    ?? normalizeTrimmedString(record.vendorSessionId);
+    ?? normalizeTrimmedString(record.vendorSessionId); // legacy vendorSessionId read-compat
 }
 
 function normalizeCodexHome(value: unknown): CanonicalCodexAgentRuntimeDescriptorV1['home'] {
@@ -114,9 +124,9 @@ function normalizeCodexConnectedServiceFields(params: Readonly<{
   };
 }
 
-function buildCodexRuntimeHandleProviderExtra(
+function buildCodexRuntimeHandleAgentExtra(
   params: BuildCodexAgentRuntimeDescriptorParams,
-): CodexRuntimeDescriptorProviderExtra {
+): CodexRuntimeDescriptorAgentExtra {
   const providerSessionId = normalizeTrimmedString(params.providerSessionId);
   const home = normalizeCodexHome(params.home);
   const connectedServiceFields = normalizeCodexConnectedServiceFields({
@@ -154,7 +164,7 @@ function readCodexRuntimeHandleCompatCarrier(value: unknown): Record<string, unk
   return asRecord(extra.runtimeHandle) ?? asRecord(extra.runtimeAffinity);
 }
 
-function readCanonicalCodexProviderExtra(value: unknown) {
+function readCanonicalCodexAgentExtra(value: unknown) {
   const runtimeHandle = readCodexRuntimeHandleCompatCarrier(value);
   if (!runtimeHandle) return null;
 
@@ -174,19 +184,30 @@ function readCanonicalCodexProviderExtra(value: unknown) {
   };
 }
 
-function readCodexRuntimeDescriptorV1(value: unknown): CodexAgentRuntimeDescriptorV1 | null {
+export function readCodexAgentRuntimeDescriptorV1(value: unknown): CodexAgentRuntimeDescriptorV1 | null {
   const descriptor = asRecord(value);
-  if (!descriptor || descriptor.v !== 1 || descriptor.providerId !== 'codex') return null;
-  const provider = asRecord(descriptor.provider);
-  if (!provider) return null;
-  const backendMode = normalizeCodexBackendMode(provider.backendMode);
+  if (!descriptor || descriptor.v !== 1 || readAgentIdCompat(descriptor) !== 'codex') return null;
+  const rawAgentPayload = asRecord(descriptor.agent) ?? asRecord(descriptor.provider); // legacy `provider` payload-key read-compat
+  if (!rawAgentPayload) return null;
+  const backendMode = normalizeCodexBackendMode(rawAgentPayload.backendMode);
   if (!backendMode) return null;
+  const agentPayload = Object.hasOwn(rawAgentPayload, 'agentExtra')
+    ? rawAgentPayload
+    : (() => {
+      const { providerExtra: legacyExtra, ...rest } = rawAgentPayload; // legacy `providerExtra` read-compat
+      return legacyExtra === undefined ? rawAgentPayload : { ...rest, agentExtra: legacyExtra };
+    })();
+  const {
+    providerId: _legacyProviderId,
+    provider: _legacyProviderPayload,
+    ...canonicalDescriptor
+  } = descriptor;
   return {
-    ...descriptor,
+    ...canonicalDescriptor,
     v: 1,
-    providerId: 'codex',
-    provider: {
-      ...provider,
+    agentId: 'codex',
+    agent: {
+      ...agentPayload,
       backendMode,
     },
   } as CodexAgentRuntimeDescriptorV1;
@@ -207,8 +228,8 @@ export function buildCodexAgentRuntimeDescriptorV1(
 
   return {
     v: 1,
-    providerId: 'codex',
-    provider: {
+    agentId: 'codex',
+    agent: {
       backendMode: params.backendMode,
       ...(providerSessionId ? { providerSessionId } : {}),
       ...(home ? { home } : {}),
@@ -220,7 +241,7 @@ export function buildCodexAgentRuntimeDescriptorV1(
         ? { connectedServiceGroupId: connectedServiceFields.connectedServiceGroupId }
         : {}),
       ...(connectedServiceFields.homePath ? { homePath: connectedServiceFields.homePath } : {}),
-      providerExtra: buildCodexRuntimeHandleProviderExtra({
+      agentExtra: buildCodexRuntimeHandleAgentExtra({
         ...params,
         providerSessionId,
         home,
@@ -235,24 +256,24 @@ export const buildCodexAgentRuntimeDescriptor = buildCodexAgentRuntimeDescriptor
 export function readCanonicalCodexAgentRuntimeDescriptorV1(
   value: unknown,
 ): CanonicalCodexAgentRuntimeDescriptorV1 | null {
-  const descriptor = readCodexRuntimeDescriptorV1(value);
+  const descriptor = readCodexAgentRuntimeDescriptorV1(value);
   if (!descriptor) return null;
-  const providerExtra = readCanonicalCodexProviderExtra(descriptor.provider.providerExtra);
-  const home = providerExtra?.home ?? normalizeCodexHome(descriptor.provider.home);
+  const agentExtra = readCanonicalCodexAgentExtra(descriptor.agent.agentExtra);
+  const home = agentExtra?.home ?? normalizeCodexHome(descriptor.agent.home);
   const connectedServiceFields = normalizeCodexConnectedServiceFields({
     home,
-    connectedServiceId: providerExtra?.connectedServiceId ?? normalizeTrimmedString(descriptor.provider.connectedServiceId),
+    connectedServiceId: agentExtra?.connectedServiceId ?? normalizeTrimmedString(descriptor.agent.connectedServiceId),
     connectedServiceProfileId:
-      providerExtra?.connectedServiceProfileId ?? normalizeTrimmedString(descriptor.provider.connectedServiceProfileId),
+      agentExtra?.connectedServiceProfileId ?? normalizeTrimmedString(descriptor.agent.connectedServiceProfileId),
     connectedServiceGroupId:
-      providerExtra?.connectedServiceGroupId ?? normalizeTrimmedString(descriptor.provider.connectedServiceGroupId),
-    homePath: providerExtra?.homePath ?? normalizeTrimmedString(descriptor.provider.homePath),
+      agentExtra?.connectedServiceGroupId ?? normalizeTrimmedString(descriptor.agent.connectedServiceGroupId),
+    homePath: agentExtra?.homePath ?? normalizeTrimmedString(descriptor.agent.homePath),
   });
 
   return {
-    providerId: 'codex',
-    backendMode: providerExtra?.backendMode ?? normalizeCodexBackendMode(descriptor.provider.backendMode),
-    providerSessionId: providerExtra?.providerSessionId ?? readProviderSessionIdCompat(descriptor.provider),
+    agentId: 'codex',
+    backendMode: agentExtra?.backendMode ?? normalizeCodexBackendMode(descriptor.agent.backendMode),
+    providerSessionId: agentExtra?.providerSessionId ?? readProviderSessionIdCompat(descriptor.agent),
     home,
     ...connectedServiceFields,
   };

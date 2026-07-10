@@ -1,4 +1,8 @@
-import type { RuntimeEventV1, SessionRollbackTarget, SessionTurnV1 } from '@happier-dev/protocol';
+import type {
+    RuntimeEventV1,
+    SessionRollbackTarget,
+    SessionTurnV1,
+} from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 import {
     resolveCodexAppServerRollbackPlanFromSessionTurns,
@@ -187,24 +191,24 @@ export function createCodexAppServerSessionTurnRollbackTracker(params: Readonly<
                     if (event.kind === 'turn-start') {
                         return {
                             ...current,
-                            provider: 'codex',
-                            ...(event.providerTurnId ? { providerTurnId: event.providerTurnId } : {}),
+                            agentId: 'codex',
+                            ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
                             status: 'in_progress',
                             startedAt: current.startedAt || timestamp,
                             updatedAt: timestamp,
                         };
                     }
-                    if (event.kind === 'turn-provider-id-observed') {
+                    if (event.kind === 'turn-agent-id-observed') {
                         return {
                             ...current,
-                            providerTurnId: event.providerTurnId,
+                            agentTurnId: event.agentTurnId,
                             updatedAt: timestamp,
                         };
                     }
                     if (event.kind === 'turn-input-appended') {
                         return {
                             ...current,
-                            ...(event.providerTurnId ? { providerTurnId: event.providerTurnId } : {}),
+                            ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
                             transcriptAnchors: typeof event.userMessageSeq === 'number'
                                 ? mergeTranscriptAnchors(current.transcriptAnchors, {
                                     userMessageSeqs: [event.userMessageSeq],
@@ -216,7 +220,7 @@ export function createCodexAppServerSessionTurnRollbackTracker(params: Readonly<
                     if (event.kind === 'turn-complete') {
                         return {
                             ...current,
-                            ...(event.providerTurnId ? { providerTurnId: event.providerTurnId } : {}),
+                            ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
                             status: 'completed',
                             terminalAt: timestamp,
                             updatedAt: timestamp,
@@ -225,7 +229,7 @@ export function createCodexAppServerSessionTurnRollbackTracker(params: Readonly<
                     if (event.kind === 'turn-failed') {
                         return {
                             ...current,
-                            ...(event.providerTurnId ? { providerTurnId: event.providerTurnId } : {}),
+                            ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
                             status: 'failed',
                             terminalAt: timestamp,
                             lastRuntimeIssue: event.issue,
@@ -235,7 +239,7 @@ export function createCodexAppServerSessionTurnRollbackTracker(params: Readonly<
                     if (event.kind === 'turn-cancelled') {
                         return {
                             ...current,
-                            ...(event.providerTurnId ? { providerTurnId: event.providerTurnId } : {}),
+                            ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
                             status: 'cancelled',
                             terminalAt: timestamp,
                             updatedAt: timestamp,
@@ -244,7 +248,7 @@ export function createCodexAppServerSessionTurnRollbackTracker(params: Readonly<
                     if (event.kind === 'turn-rollback-boundary-observed') {
                         return {
                             ...current,
-                            ...(event.providerTurnId ? { providerTurnId: event.providerTurnId } : {}),
+                            ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
                             transcriptAnchors: mergeTranscriptAnchors(current.transcriptAnchors, {
                                 ...(typeof event.startUserMessageSeq === 'number'
                                     ? { startUserMessageSeq: event.startUserMessageSeq }
@@ -258,8 +262,8 @@ export function createCodexAppServerSessionTurnRollbackTracker(params: Readonly<
                             }),
                             rollback: {
                                 state: 'eligible',
-                                ...(typeof event.providerRollbackOrdinal === 'number'
-                                    ? { providerRollbackOrdinal: event.providerRollbackOrdinal }
+                                ...(typeof event.agentRollbackOrdinal === 'number'
+                                    ? { agentRollbackOrdinal: event.agentRollbackOrdinal }
                                     : {}),
                                 updatedAt: timestamp,
                             },
@@ -271,8 +275,8 @@ export function createCodexAppServerSessionTurnRollbackTracker(params: Readonly<
                             ...current,
                             rollback: {
                                 state: 'rolled_back',
-                                ...(typeof event.providerRollbackOrdinal === 'number'
-                                    ? { providerRollbackOrdinal: event.providerRollbackOrdinal }
+                                ...(typeof event.agentRollbackOrdinal === 'number'
+                                    ? { agentRollbackOrdinal: event.agentRollbackOrdinal }
                                     : {}),
                                 updatedAt: timestamp,
                             },

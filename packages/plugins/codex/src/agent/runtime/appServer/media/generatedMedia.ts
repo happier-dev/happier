@@ -4,7 +4,7 @@ type RecordLike = Record<string, unknown>;
 
 export type CodexGeneratedMediaOrigin = Readonly<{
   source: 'provider-generated';
-  providerEventId: string;
+  agentEventId: string;
   generationId: string;
 }>;
 
@@ -57,7 +57,7 @@ function isAbsoluteSavedPath(value: string): boolean {
 function buildOrigin(itemId: string): CodexGeneratedMediaOrigin {
   return {
     source: 'provider-generated',
-    providerEventId: itemId,
+    agentEventId: itemId,
     generationId: itemId,
   };
 }

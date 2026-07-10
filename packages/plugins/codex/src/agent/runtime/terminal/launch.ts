@@ -3,12 +3,13 @@ import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 
 import type {
+  SubscriptionV1,
   TerminalRuntimeLaunchRequestV1,
   TerminalRuntimeProcessTerminationV1,
   TerminalRuntimeRunResultV1,
   TerminalRuntimeSurfaceV1,
-  SubscriptionV1,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugin-sdk';
+import { composeSessionIsolationEnvironment } from '@happier-dev/plugin-sdk/experimental/runtime/session';
 
 import { discoverCodexRolloutFileOnce, type CodexRolloutCandidate } from '../../rollout/discovery/indexData.js';
 import {
@@ -226,7 +227,13 @@ async function launchCodexTerminalRuntime(
 
   await publishControlState(request, 'local', 'codex_terminal_runtime_launcher_start');
 
-  const childEnv = buildCodexTerminalChildEnv({ env: params.baseProcessEnv });
+  const scopedEnvironment = composeSessionIsolationEnvironment({
+    inheritedEnvironment: params.baseProcessEnv,
+    isolationEnvironment: request.isolation?.env,
+    environment: request.env,
+    unsetEnvKeys: request.isolation?.unsetEnvKeys,
+  });
+  const childEnv = buildCodexTerminalChildEnv({ env: scopedEnvironment });
   const homeDir = params.deps.homeDir();
   const sessionsRootDir = resolveCodexTerminalSessionsRootDir({
     env: childEnv,
@@ -275,6 +282,7 @@ async function launchCodexTerminalRuntime(
     args: [...executable.args, ...codexArgs],
     cwd: request.directory,
     env: childEnv,
+    unsetEnvKeys: request.isolation?.unsetEnvKeys,
     stdio: 'inherit',
     windowsHide: true,
     signal: request.signal,

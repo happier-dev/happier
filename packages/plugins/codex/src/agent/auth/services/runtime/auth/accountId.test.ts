@@ -112,6 +112,13 @@ describe('readCodexAuthStoreProviderAccountId', () => {
       providerAccountId: 'acct-auth',
       providerEmail: 'profile@example.test',
     });
+    expect(readCodexActiveProviderAccount({
+      chatgpt_account_id: 'acct-chatgpt-root',
+      auth: { chatgpt_account_id: 'acct-chatgpt-auth' },
+    })).toEqual({
+      providerAccountId: 'acct-chatgpt-root',
+      providerEmail: null,
+    });
   });
 
   it('normalizes auth-store account-id proof values from host callbacks', () => {
@@ -137,7 +144,7 @@ describe('readCodexAuthStoreProviderAccountId', () => {
     });
   });
 
-  it('verifies email-only Codex account/read responses against the materialized auth-store account id', () => {
+  it('does not accept Codex account adoption from auth-store proof when account/read omits the account id', () => {
     expect(verifyCodexActiveProviderAccount({
       expectedProviderAccountId: 'acct-work',
       expectedProviderEmail: 'work@example.test',
@@ -147,9 +154,73 @@ describe('readCodexAuthStoreProviderAccountId', () => {
       },
       authStoreProviderAccountIdProof: { status: 'resolved', accountId: 'acct-work' },
     })).toEqual({
-      status: 'verified',
-      providerAccountId: 'acct-work',
-      reason: 'provider_account_auth_store_and_email_verified',
+      status: 'unavailable',
+      retryable: true,
+      reason: 'active_account_probe_missing_account_id',
+    });
+  });
+
+  it('does not treat missing account/read email as a Codex adoption mismatch without a live account id', () => {
+    expect(verifyCodexActiveProviderAccount({
+      expectedProviderAccountId: 'acct-work',
+      expectedProviderEmail: 'work@example.test',
+      rawAccount: {
+        account: { type: 'chatgpt' },
+        requiresOpenaiAuth: true,
+      },
+      authStoreProviderAccountIdProof: { status: 'resolved', accountId: 'acct-work' },
+    })).toEqual({
+      status: 'unavailable',
+      retryable: true,
+      reason: 'active_account_probe_missing_account_id',
+    });
+  });
+
+  it('does not accept Codex account adoption from matching email when account/read omits the account id', () => {
+    expect(verifyCodexActiveProviderAccount({
+      expectedProviderAccountId: 'acct-work',
+      expectedProviderEmail: 'work@example.test',
+      rawAccount: {
+        account: { type: 'chatgpt', email: '  Work@Example.Test  ' },
+        requiresOpenaiAuth: true,
+      },
+      authStoreProviderAccountIdProof: { status: 'missing' },
+    })).toEqual({
+      status: 'unavailable',
+      retryable: true,
+      reason: 'active_account_probe_missing_account_id',
+    });
+  });
+
+  it('does not treat mismatching account/read email as a Codex adoption mismatch without a live account id', () => {
+    expect(verifyCodexActiveProviderAccount({
+      expectedProviderAccountId: 'acct-work',
+      expectedProviderEmail: 'work@example.test',
+      rawAccount: {
+        account: { type: 'chatgpt', email: 'other@example.test' },
+        requiresOpenaiAuth: true,
+      },
+      authStoreProviderAccountIdProof: { status: 'resolved', accountId: 'acct-work' },
+    })).toEqual({
+      status: 'unavailable',
+      retryable: true,
+      reason: 'active_account_probe_missing_account_id',
+    });
+  });
+
+  it('reports a retryable missing-account-id proof when neither active account nor auth store exposes an id', () => {
+    expect(verifyCodexActiveProviderAccount({
+      expectedProviderAccountId: 'acct-work',
+      expectedProviderEmail: null,
+      rawAccount: {
+        account: { type: 'chatgpt' },
+        requiresOpenaiAuth: true,
+      },
+      authStoreProviderAccountIdProof: { status: 'missing' },
+    })).toEqual({
+      status: 'unavailable',
+      retryable: true,
+      reason: 'active_account_probe_missing_account_id',
     });
   });
 

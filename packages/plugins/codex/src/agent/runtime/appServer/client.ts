@@ -12,6 +12,7 @@ import type {
     JsonRpcNotificationHandlerV1,
     JsonRpcRequestHandlerV1,
 } from '@happier-dev/plugin-sdk';
+import { expandHomePath, readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 import { readCodexAppServerRequestTimeoutMs, readCodexAppServerRpcTimeoutMs } from './client/timeout.js';
 
@@ -92,22 +93,13 @@ function readRpcLogRotateCount(env: CodexAppServerEnv): number {
 }
 
 function resolveHomeDirFromEnvironment(env: CodexAppServerEnv): string {
-    const home = typeof env.HOME === 'string' && env.HOME.trim().length > 0
-        ? env.HOME.trim()
-        : typeof env.USERPROFILE === 'string' && env.USERPROFILE.trim().length > 0
-            ? env.USERPROFILE.trim()
-            : homedir();
-    return home;
+    return readString(env.HOME) ?? readString(env.USERPROFILE) ?? homedir();
 }
 
 function expandHomeDirPath(value: string, env: CodexAppServerEnv): string {
     const trimmed = value.trim();
     if (!trimmed) return '';
-    if (trimmed === '~') return resolveHomeDirFromEnvironment(env);
-    if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
-        return resolve(resolveHomeDirFromEnvironment(env), trimmed.slice(2));
-    }
-    return trimmed;
+    return expandHomePath(trimmed, resolveHomeDirFromEnvironment(env));
 }
 
 export function resolveCodexHome(env: CodexAppServerEnv): string {
@@ -350,6 +342,7 @@ export async function createCodexAppServerClient(params: Readonly<{
     cwd?: string;
     configOverrides?: readonly string[];
     disableUserMcpServers?: boolean;
+    signal?: AbortSignal;
 }>): Promise<DisposableCodexAppServerClient> {
     const env = params.processEnv ?? process.env;
     const handle = await params.exec.spawnClient(buildCodexAppServerClientSpec({
@@ -357,7 +350,7 @@ export async function createCodexAppServerClient(params: Readonly<{
         env,
         configOverrides: params.configOverrides,
         disableUserMcpServers: params.disableUserMcpServers,
-    }));
+    }), params.signal ? { signal: params.signal } : undefined);
     const client = wrapCodexAppServerClient(handle, env);
     try {
         await client.request('initialize', {

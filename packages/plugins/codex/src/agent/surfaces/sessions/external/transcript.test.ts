@@ -1,4 +1,4 @@
-import type { ExternalSessionCandidateV1 } from '@happier-dev/protocol';
+import type { ExternalSessionCandidateV1 } from '@happier-dev/plugin-sdk/sessions';
 import { describe, expect, it } from 'vitest';
 
 import {

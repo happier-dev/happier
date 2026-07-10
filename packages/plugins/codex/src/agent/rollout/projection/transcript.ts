@@ -1,4 +1,4 @@
-import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/plugin-sdk/sessions';
 
 import type { CodexRolloutAction } from './actions.js';
 import { projectCodexRolloutActions } from './messages.js';

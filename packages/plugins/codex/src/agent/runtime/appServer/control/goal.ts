@@ -1,9 +1,11 @@
 import {
   readSessionMetadataRuntimeDescriptor,
-  resolvePersistedCodexProviderSessionId,
   type HostRuntimeControlServiceV1,
-} from '@happier-dev/agents';
-import { readDisplayableSessionWorkStateV1, type SessionWorkStateStatusV1 } from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/experimental/runtime/session';
+import {
+  readDisplayableSessionWorkStateV1,
+  type SessionWorkStateItemV1,
+} from '@happier-dev/plugin-sdk/experimental/sessions/workState';
 
 import {
   isCodexAppServerInvalidParamsError,
@@ -14,6 +16,7 @@ import {
   mergeCodexGoalIntoSessionWorkStateMetadata,
   removeCodexGoalFromSessionWorkStateMetadata,
 } from '../work/state.js';
+import { resolvePersistedCodexProviderSessionId } from '../../../identity/runtimeDescriptor.js';
 import {
   goalNotFound,
   goalObjectiveRequired,
@@ -104,7 +107,7 @@ function shouldReactivateForObjectiveEdit(params: Readonly<{
   return goalItem.status === 'blocked' && goalItem.statusReason === 'budgetLimited';
 }
 
-function normalizeNativeStatus(status: SessionWorkStateStatusV1 | undefined): 'active' | 'paused' | 'complete' | undefined | null {
+function normalizeNativeStatus(status: SessionWorkStateItemV1['status'] | undefined): 'active' | 'paused' | 'complete' | undefined | null {
   if (status === undefined) return undefined;
   if (status === 'active' || status === 'paused' || status === 'complete') return status;
   return null;
@@ -200,7 +203,7 @@ export async function setCodexGoal(
   const requestInput = input.params.request ?? {};
   const mutation: CodexAppServerGoalSetMutation = {
     ...(typeof requestInput.objective === 'string' ? { objective: requestInput.objective } : {}),
-    ...(typeof requestInput.status === 'string' ? { status: requestInput.status as SessionWorkStateStatusV1 } : {}),
+    ...(typeof requestInput.status === 'string' ? { status: requestInput.status as CodexAppServerGoalSetMutation['status'] } : {}),
     ...(Object.prototype.hasOwnProperty.call(requestInput, 'tokenBudget')
       ? { tokenBudget: requestInput.tokenBudget ?? null }
       : {}),

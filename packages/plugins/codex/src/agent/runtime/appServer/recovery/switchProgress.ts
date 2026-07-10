@@ -39,6 +39,7 @@ export function resolveCodexUsageLimitSwitchProgress(input: Readonly<{
   switchAttemptStatus: CodexUsageLimitSwitchAttemptStatus | null;
   exhaustedProfileId: string | null;
   selectedProfileId: string | null;
+  verificationStatus?: 'verified' | 'weakly_verified' | null;
   resetAtMs: number | null;
   nowMs: number;
   fallbackNextCheckAtMs?: number | null;
@@ -70,9 +71,7 @@ export function resolveCodexUsageLimitSwitchProgress(input: Readonly<{
       return waitUntilReset();
     case 'switched':
     case 'observed_generation': {
-      const exhausted = normalizeProfileId(input.exhaustedProfileId);
-      const selected = normalizeProfileId(input.selectedProfileId);
-      if (selected !== null && selected !== exhausted) {
+      if (input.verificationStatus === 'verified') {
         return { kind: 'retry' };
       }
       return waitUntilReset();

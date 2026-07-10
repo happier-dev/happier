@@ -5,7 +5,7 @@ import {
   isCodexAppServerMethodNotFoundError,
 } from './compatibility.js';
 
-export type CodexAppServerPermissionProfileId = ':read-only' | ':workspace' | ':danger-no-sandbox';
+export type CodexAppServerPermissionProfileId = ':read-only' | ':workspace';
 export type CodexAppServerPermissionSupport = 'unknown' | 'supported' | 'legacy';
 export type CodexAppServerPermissionTarget = 'thread' | 'turn';
 
@@ -25,15 +25,20 @@ function resolveCodexAppServerPermissionProfileId(
   const sandbox = readString(policy.sandbox);
   if (sandbox === 'read-only') return ':read-only';
   if (sandbox === 'workspace-write') return ':workspace';
-  if (sandbox === 'danger-full-access') return ':danger-no-sandbox';
+  if (sandbox === 'danger-full-access') return null;
 
   const sandboxPolicy = readRecord(policy.sandboxPolicy);
   const sandboxPolicyType = readString(sandboxPolicy?.type);
   if (sandboxPolicyType === 'readOnly') return ':read-only';
   if (sandboxPolicyType === 'workspaceWrite') return ':workspace';
-  if (sandboxPolicyType === 'dangerFullAccess') return ':danger-no-sandbox';
+  if (sandboxPolicyType === 'dangerFullAccess') return null;
 
   return null;
+}
+
+function canUseCodexAppServerPermissionProfile(policy: CodexAppServerPolicy): boolean {
+  const approvalPolicy = readString(policy.approvalPolicy);
+  return !approvalPolicy || approvalPolicy === 'never';
 }
 
 export function buildCodexAppServerLegacyPermissionParams(params: Readonly<{
@@ -61,8 +66,19 @@ export function buildCodexAppServerPermissionParams(params: Readonly<{
       target: params.target,
     });
   }
+  if (!canUseCodexAppServerPermissionProfile(params.policy)) {
+    return buildCodexAppServerLegacyPermissionParams({
+      policy: params.policy,
+      target: params.target,
+    });
+  }
   const id = resolveCodexAppServerPermissionProfileId(params.policy);
-  return id ? { permissions: { type: 'profile', id } } : {};
+  return id
+    ? { permissions: id }
+    : buildCodexAppServerLegacyPermissionParams({
+      policy: params.policy,
+      target: params.target,
+    });
 }
 
 export function shouldRetryWithoutCodexAppServerPermissionProfile(

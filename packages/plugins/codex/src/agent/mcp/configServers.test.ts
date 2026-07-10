@@ -4,9 +4,9 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { detectCodexMcpServers } from './detectCodexMcpServers.js';
+import { readCodexMcpConfigServers } from './configServers.js';
 
-describe('detectCodexMcpServers', () => {
+describe('readCodexMcpConfigServers', () => {
     it('reads Codex MCP stdio servers from the final plugin agent path', async () => {
         const configRoot = await mkdtemp(join(tmpdir(), 'codex-mcp-config-'));
         await writeFile(
@@ -26,7 +26,7 @@ describe('detectCodexMcpServers', () => {
             'utf8',
         );
 
-        const result = await detectCodexMcpServers({
+        const result = await readCodexMcpConfigServers({
             env: {
                 CODEX_HOME: configRoot,
             },
