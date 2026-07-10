@@ -10,6 +10,12 @@ describe('server enabled bit helpers', () => {
     expect(resolveServerEnabledBitPath('social.friends')).toEqual(['features', 'social', 'friends', 'enabled']);
     expect(resolveServerEnabledBitPath('updates.ota')).toEqual(['features', 'updates', 'ota', 'enabled']);
     expect(resolveServerEnabledBitPath('attachments.uploads')).toEqual(['features', 'attachments', 'uploads', 'enabled']);
+    expect(resolveServerEnabledBitPath('sharing.pendingDeliveryState')).toEqual([
+      'features',
+      'sharing',
+      'pendingDeliveryState',
+      'enabled',
+    ]);
     expect(resolveServerEnabledBitPath('machines.transfer.directPeer')).toEqual([
       'features',
       'machines',

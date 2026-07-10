@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
+import { FeaturesResponseSchema } from '../features.js';
 import type { FeatureDecision } from './decision.js';
 import { applyFeatureDependencies, evaluateFeatureDecisionBase } from './featureDecisionEngine.js';
+import { readServerEnabledBit } from './serverEnabledBit.js';
 
 function enabled(featureId: any): FeatureDecision {
   return {
@@ -138,5 +140,31 @@ describe('feature decision engine', () => {
 
     expect(out.state).toBe('disabled');
     expect(out.blockedBy).toBe('local_policy');
+  });
+
+  it('applies server enabled-bit dependency pruning to a fixed point', () => {
+    const response = FeaturesResponseSchema.parse({
+      features: {
+        localServices: {
+          enabled: true,
+          inventory: { enabled: true },
+          managed: { enabled: true },
+          preview: { enabled: true },
+          launcher: { enabled: true },
+        },
+        browser: {
+          enabled: false,
+          viewTargets: { enabled: true },
+        },
+      },
+      capabilities: {},
+    });
+
+    applyFeatureDependencies({ serverPayload: response });
+
+    expect(readServerEnabledBit(response, 'browser')).toBe(false);
+    expect(readServerEnabledBit(response, 'browser.viewTargets')).toBe(false);
+    expect(readServerEnabledBit(response, 'localServices.launcher')).toBe(false);
+    expect(readServerEnabledBit(response, 'localServices.inventory')).toBe(true);
   });
 });

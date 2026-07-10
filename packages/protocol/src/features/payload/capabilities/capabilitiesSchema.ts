@@ -35,6 +35,10 @@ import {
   DEFAULT_BROWSER_CAPABILITIES,
 } from './browserCapabilities.js';
 import {
+  DEFAULT_DEVICE_CAPABILITIES,
+  DeviceCapabilitiesSchema,
+} from './deviceCapabilities.js';
+import {
   DEFAULT_LOCAL_SERVICE_CAPABILITIES,
   LocalServiceCapabilitiesSchema,
 } from './localServiceCapabilities.js';
@@ -59,9 +63,13 @@ import {
   SessionCapabilitiesSchema,
 } from './sessionCapabilities.js';
 import {
+  DEFAULT_SHARING_CAPABILITIES,
+  SharingCapabilitiesSchema,
+} from './sharingCapabilities.js';
+import {
   DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
   LiveActivityRemoteUpdateCapabilityDiagnosticsSchema,
-} from '../../../liveActivities/remoteUpdateCapabilities.js';
+} from '../../../activity/live/remoteUpdateCapabilities.js';
 
 export const CapabilitiesSchema = z.object({
   bugReports: BugReportsCapabilitiesSchema.optional().default(DEFAULT_BUG_REPORTS_CAPABILITIES),
@@ -86,6 +94,7 @@ export const CapabilitiesSchema = z.object({
     }),
   localServices: LocalServiceCapabilitiesSchema.optional().default(DEFAULT_LOCAL_SERVICE_CAPABILITIES),
   browser: BrowserCapabilitiesSchema.optional().default(DEFAULT_BROWSER_CAPABILITIES),
+  devices: DeviceCapabilitiesSchema.optional().default(DEFAULT_DEVICE_CAPABILITIES),
   social: z
     .object({
       friends: SocialFriendsCapabilitiesSchema.optional().default(DEFAULT_SOCIAL_FRIENDS_CAPABILITIES),
@@ -100,6 +109,7 @@ export const CapabilitiesSchema = z.object({
     .default({ providers: {} }),
   auth: AuthCapabilitiesSchema.optional().default(DEFAULT_AUTH_CAPABILITIES),
   session: SessionCapabilitiesSchema.optional().default(DEFAULT_SESSION_CAPABILITIES),
+  sharing: SharingCapabilitiesSchema.optional().default(DEFAULT_SHARING_CAPABILITIES),
   liveActivities: z
     .object({
       remoteUpdates: LiveActivityRemoteUpdateCapabilityDiagnosticsSchema.optional().default(

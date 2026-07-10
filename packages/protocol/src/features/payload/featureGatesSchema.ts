@@ -87,6 +87,7 @@ export const FeatureGatesSchema = z.object({
       public: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
       contentKeys: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
       pendingQueueV2: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      pendingDeliveryState: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
     })
     .optional()
     .default({
@@ -94,6 +95,7 @@ export const FeatureGatesSchema = z.object({
       public: DEFAULT_GATE_DISABLED,
       contentKeys: DEFAULT_GATE_DISABLED,
       pendingQueueV2: DEFAULT_GATE_DISABLED,
+      pendingDeliveryState: DEFAULT_GATE_DISABLED,
     }),
   sessions: z
     .object({
@@ -135,6 +137,13 @@ export const FeatureGatesSchema = z.object({
         })
         .optional()
         .default({ enabled: false, directPeer: { enabled: false }, serverRouted: { enabled: false } }),
+      peerMediation: z
+        .object({
+          enabled: z.boolean(),
+          observability: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+        })
+        .optional()
+        .default({ enabled: false, observability: DEFAULT_GATE_DISABLED }),
       tunnel: z
         .object({
           enabled: z.boolean(),
@@ -163,6 +172,7 @@ export const FeatureGatesSchema = z.object({
     .default({
       enabled: false,
       transfer: { enabled: false, directPeer: { enabled: false }, serverRouted: { enabled: false } },
+      peerMediation: { enabled: false, observability: DEFAULT_GATE_DISABLED },
       tunnel: { enabled: false, directPeer: DEFAULT_GATE_DISABLED, serverRouted: DEFAULT_GATE_DISABLED },
       liveStream: { enabled: false, directPeer: DEFAULT_GATE_DISABLED, serverRouted: DEFAULT_GATE_DISABLED },
       rpc: { enabled: false, directPeer: DEFAULT_GATE_DISABLED },
@@ -172,6 +182,14 @@ export const FeatureGatesSchema = z.object({
       enabled: z.boolean(),
       inventory: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
       managed: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      launcher: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      actions: z
+        .object({
+          enabled: z.boolean(),
+          terminate: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+        })
+        .optional()
+        .default({ enabled: false, terminate: DEFAULT_GATE_DISABLED }),
       preview: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
       publicPreview: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
     })
@@ -180,8 +198,22 @@ export const FeatureGatesSchema = z.object({
       enabled: false,
       inventory: DEFAULT_GATE_DISABLED,
       managed: DEFAULT_GATE_DISABLED,
+      launcher: DEFAULT_GATE_DISABLED,
+      actions: { enabled: false, terminate: DEFAULT_GATE_DISABLED },
       preview: DEFAULT_GATE_DISABLED,
       publicPreview: DEFAULT_GATE_DISABLED,
+    }),
+  providers: z
+    .object({
+      enabled: z.boolean(),
+      localDiscovery: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      localModelManagement: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+    })
+    .optional()
+    .default({
+      enabled: false,
+      localDiscovery: DEFAULT_GATE_DISABLED,
+      localModelManagement: DEFAULT_GATE_DISABLED,
     }),
   browser: z
     .object({
@@ -189,6 +221,16 @@ export const FeatureGatesSchema = z.object({
       viewTargets: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
       internal: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
       sidecar: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      diagnostics: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      context: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      automation: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      recording: z
+        .object({
+          enabled: z.boolean(),
+          attachments: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+        })
+        .optional()
+        .default({ enabled: false, attachments: DEFAULT_GATE_DISABLED }),
     })
     .optional()
     .default({
@@ -196,6 +238,47 @@ export const FeatureGatesSchema = z.object({
       viewTargets: DEFAULT_GATE_DISABLED,
       internal: DEFAULT_GATE_DISABLED,
       sidecar: DEFAULT_GATE_DISABLED,
+      diagnostics: DEFAULT_GATE_DISABLED,
+      context: DEFAULT_GATE_DISABLED,
+      automation: DEFAULT_GATE_DISABLED,
+      recording: { enabled: false, attachments: DEFAULT_GATE_DISABLED },
+    }),
+  plugins: z
+    .object({
+      enabled: z.boolean(),
+      ui: z
+        .object({
+          enabled: z.boolean(),
+          hostedWeb: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+          embeddedWebBundles: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+          structuredMessages: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+          reactNativeBundles: z
+            .object({
+              enabled: z.boolean(),
+              devHotReload: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+            })
+            .optional()
+            .default({ enabled: false, devHotReload: DEFAULT_GATE_DISABLED }),
+        })
+        .optional()
+        .default({
+          enabled: false,
+          hostedWeb: DEFAULT_GATE_DISABLED,
+          embeddedWebBundles: DEFAULT_GATE_DISABLED,
+          structuredMessages: DEFAULT_GATE_DISABLED,
+          reactNativeBundles: { enabled: false, devHotReload: DEFAULT_GATE_DISABLED },
+        }),
+    })
+    .optional()
+    .default({
+      enabled: false,
+      ui: {
+        enabled: false,
+        hostedWeb: DEFAULT_GATE_DISABLED,
+        embeddedWebBundles: DEFAULT_GATE_DISABLED,
+        structuredMessages: DEFAULT_GATE_DISABLED,
+        reactNativeBundles: { enabled: false, devHotReload: DEFAULT_GATE_DISABLED },
+      },
     }),
   devices: z
     .object({
@@ -278,9 +361,22 @@ export const FeatureGatesSchema = z.object({
   terminal: z
     .object({
       embeddedPty: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+      transport: z
+        .object({
+          byteStream: FeatureGateSchema.optional().default(DEFAULT_GATE_DISABLED),
+        })
+        .optional()
+        .default({
+          byteStream: DEFAULT_GATE_DISABLED,
+        }),
     })
     .optional()
-    .default({ embeddedPty: DEFAULT_GATE_DISABLED }),
+    .default({
+      embeddedPty: DEFAULT_GATE_DISABLED,
+      transport: {
+        byteStream: DEFAULT_GATE_DISABLED,
+      },
+    }),
   voice: VoiceGateSchema.optional().default({ enabled: false, happierVoice: DEFAULT_GATE_DISABLED }),
   social: z
     .object({

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { SessionStateCapabilitiesV1Schema } from '../../../session/state/capabilitySchema.js';
+import { SessionStateCapabilitiesV1Schema } from '../../../sessions/state/capabilitySchema.js';
 
 export const DEFAULT_SESSION_MESSAGES_CAPABILITIES = Object.freeze({
   role: false,

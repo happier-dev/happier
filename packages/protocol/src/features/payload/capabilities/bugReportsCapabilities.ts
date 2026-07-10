@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { normalizeBugReportProviderUrl } from '../../../bugReports/sanitize.js';
+import { normalizeBugReportProviderUrl } from '../../../bugs/reports/sanitize.js';
 import { isRecord } from '../isRecord.js';
 
 export const BugReportsCapabilitiesSchema = z.object({

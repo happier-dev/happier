@@ -129,6 +129,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'server',
   },
+  'sharing.pendingDeliveryState': {
+    description: 'Durable provider-delivery state for pending queue v2.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['sharing.pendingQueueV2'],
+    representation: 'server',
+  },
   sessions: {
     description: 'Session-level product surfaces and control-plane capabilities.',
     defaultFailMode: 'fail_closed',
@@ -175,6 +181,18 @@ const FEATURE_CATALOG_DEFINITION = {
     description: 'Server-routed machine transfer fallback capability.',
     defaultFailMode: 'fail_closed',
     dependencies: ['machines.transfer'],
+    representation: 'server',
+  },
+  'machines.peerMediation': {
+    description: 'Peer mediation substrate for machine tunnels, live streams, grants, and relay-owned flows.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['machines'],
+    representation: 'client',
+  },
+  'machines.peerMediation.observability': {
+    description: 'Scoped peer mediation flow observability for tunnels, streams, preview requests, and relay diagnostics.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['machines.peerMediation'],
     representation: 'server',
   },
   'machines.tunnel': {
@@ -225,23 +243,46 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: ['machines.rpc'],
     representation: 'server',
   },
+  // Core local-services product gates are server-represented + default-allow (see
+  // localServicesFeature.ts). The server can disable the product for its users; the daemon
+  // stops scanning and the UI hides accordingly. Private `preview` (loopback-only, the user's
+  // own dev server) is also default-on (PRV-1, readFeatureEnv.ts); only `publicPreview` (real
+  // internet exposure) stays server-represented + fail-closed default-off below.
   localServices: {
     description: 'Local service inventory, preview, and exposure product surfaces.',
     defaultFailMode: 'fail_closed',
     dependencies: [],
-    representation: 'client',
+    representation: 'server',
   },
   'localServices.inventory': {
     description: 'Passive local service inventory and machine-scoped port provenance.',
     defaultFailMode: 'fail_closed',
     dependencies: ['localServices'],
-    representation: 'client',
+    representation: 'server',
   },
   'localServices.managed': {
     description: 'Managed local service launch, naming, health, and lifecycle surfaces.',
     defaultFailMode: 'fail_closed',
     dependencies: ['localServices.inventory'],
-    representation: 'client',
+    representation: 'server',
+  },
+  'localServices.launcher': {
+    description: 'Local service launchpad suggestions and preview discovery surfaces.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['localServices.inventory', 'browser.viewTargets'],
+    representation: 'server',
+  },
+  'localServices.actions': {
+    description: 'Governed local service actions for copy, preview, forget, and managed controls.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['localServices.inventory'],
+    representation: 'server',
+  },
+  'localServices.actions.terminate': {
+    description: 'Dangerous terminate action for eligible detected local service processes.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['localServices.actions'],
+    representation: 'server',
   },
   'localServices.preview': {
     description: 'Private session-scoped local service preview resources and UI surfaces.',
@@ -255,28 +296,138 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: ['localServices.preview'],
     representation: 'server',
   },
+  // Core browser product gates are server-represented + default-allow (see browserFeature.ts):
+  // on by default, the server can disable browser surfaces for its users.
   browser: {
     description: 'Browser view vocabulary, target dispatch, and browser-adjacent UI surfaces.',
     defaultFailMode: 'fail_closed',
     dependencies: [],
-    representation: 'client',
+    representation: 'server',
   },
   'browser.viewTargets': {
     description: 'Host-owned browser view target dispatch for previews, hosted UI, and external URLs.',
     defaultFailMode: 'fail_closed',
     dependencies: ['browser'],
-    representation: 'client',
+    representation: 'server',
   },
   'browser.internal': {
     description: 'Internal browser session/profile/view surfaces.',
     defaultFailMode: 'fail_closed',
     dependencies: ['browser.viewTargets'],
-    representation: 'client',
+    representation: 'server',
   },
+  // Browser capability tiers are server-represented. The server default owner enables the managed
+  // Chromium sidecar now that it is source-backed; dangerous agent-initiated exercise remains
+  // approval-gated (FINALIZATION-PLAN §4.1/§13.4; see readFeatureEnv.ts).
   'browser.sidecar': {
     description: 'Managed sidecar browser host capability for automation-heavy browser sessions.',
     defaultFailMode: 'fail_closed',
     dependencies: ['browser.internal'],
+    representation: 'server',
+  },
+  'browser.diagnostics': {
+    description: 'Browser diagnostics and devtools event surfaces with adapter fidelity metadata.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['browser.internal'],
+    representation: 'server',
+  },
+  'browser.context': {
+    description: 'Explicit browser context capture and composer/agent attachment surfaces.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['browser.internal'],
+    representation: 'server',
+  },
+  'browser.automation': {
+    description: 'Host-owned browser automation control and action timeline surfaces.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['browser.internal'],
+    // Server-represented + default-ALLOW: the automation *capability* is on by default now that the
+    // ActionExecutor front door + surface-keyed approval defaults have landed; dangerous
+    // agent-initiated exercise stays approval-gated, and a server admin can still disable agent
+    // automation independently of human browsing/devtools. The finer injectedPage/eval tiers below
+    // stay client + fail-closed (operator opt-in on top of this gate).
+    representation: 'server',
+  },
+  'browser.automation.injectedPage': {
+    description: 'Centralized injected-page browser automation runtime when adapter policy allows it.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['browser.automation'],
+    representation: 'client',
+  },
+  'browser.automation.eval': {
+    description: 'Policy-bound browser automation eval capability layered on diagnostics.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['browser.automation', 'browser.diagnostics'],
+    representation: 'client',
+  },
+  'browser.recording': {
+    description: 'Browser recording evidence artifact lifecycle and reference metadata.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['browser.internal'],
+    representation: 'server',
+  },
+  'browser.recording.attachments': {
+    description: 'Attach finalized browser recording evidence references to composer/session media flows.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['browser.recording', 'attachments.uploads', 'browser.context'],
+    representation: 'client',
+  },
+  // Core plugin platform + UI projection gates are server-represented + default-allow (see
+  // pluginsFeature.ts): on by default, the server can disable the plugin surface for its users.
+  // The plugin UI tiers below are ALSO server-represented + default-ALLOW server/build kill-switches
+  // (§4.1/§12.5/§13.5.3): install+enable+trust+runtime derives actual per-plugin availability at the
+  // daemon UI projection (5.1/5.2 trust derivation). The server bit is only a coarse kill-switch.
+  plugins: {
+    description: 'Plugin platform surfaces and contribution projection.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'server',
+  },
+  'plugins.ui': {
+    description: 'Plugin UI descriptor and executable UI tier projection.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['plugins'],
+    representation: 'server',
+  },
+  'plugins.ui.hostedWeb': {
+    description: 'Hosted web plugin UI surfaces embedded through host-owned preview frames and bridges.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['plugins.ui'],
+    representation: 'server',
+  },
+  // RN-WEB-LOADER / LEDGER DEC-6: embeddedWeb is RETIRED from the public
+  // authoring story (superseded by reactNative mode, which now also renders
+  // on web) — this gate stays live only to fail-closed-govern any residual
+  // ALREADY-INSTALLED embeddedWeb artifact's runtime rendering path; no new
+  // embeddedWeb contribution can be authored (`defineSurfaceContribution`'s
+  // `embeddedWeb` arm was removed). No `.devHotReload` child gate exists for
+  // it — that leaf was built then retired before it ever had a runtime
+  // consumer (RN-SCAFFOLD landed the SDK/protocol foundation; DEC-6 retired
+  // the authoring surface before the CLI-projection/host-loader half was
+  // built), so there is nothing to keep enabled here.
+  'plugins.ui.embeddedWebBundles': {
+    description: 'Retired (LEDGER DEC-6): governs only already-installed embeddedWeb plugin UI bundle rendering, not new authoring.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['plugins.ui'],
+    representation: 'server',
+  },
+  // Renderer allowlist (no code execution): server-represented + default-ALLOW kill-switch (§4.1).
+  'plugins.ui.structuredMessages': {
+    description: 'Plugin structured-message descriptors projected to the host transcript renderer allowlist.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['plugins.ui'],
+    representation: 'server',
+  },
+  'plugins.ui.reactNativeBundles': {
+    description: 'Trusted React Native plugin UI bundle execution with compatibility and fallback policy.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['plugins.ui'],
+    representation: 'server',
+  },
+  'plugins.ui.reactNativeBundles.devHotReload': {
+    description: 'Development hot reload for React Native plugin UI bundles.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['plugins.ui.reactNativeBundles'],
     representation: 'client',
   },
   devices: {
@@ -285,11 +436,14 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'client',
   },
+  // Server-represented + default-ALLOW (§4.1): viewing your own simulator is core dev UX. The
+  // server/build can disable it; the live-stream + browser.viewTargets dependency closure still
+  // gates actual availability. (Unblocks the Phase-8 simulator surface.)
   'devices.simulatorPreview': {
     description: 'Simulator and emulator preview panes over the live-stream substrate.',
     defaultFailMode: 'fail_closed',
     dependencies: ['devices', 'machines.liveStream', 'browser.viewTargets'],
-    representation: 'client',
+    representation: 'server',
   },
   'setup.relay.allowRelaySelection': {
     description: 'Build-time policy gate: whether relay selection surfaces are allowed at all.',
@@ -484,15 +638,21 @@ const FEATURE_CATALOG_DEFINITION = {
     representation: 'client',
   },
   'app.ui.releaseNotes': {
-    description: 'Curated release-notes story-deck modal (Notelet-style cards). Shares renderer with onboarding showcase.',
+    description: 'Curated release-notes story-deck modal (Notelet-style cards).',
     defaultFailMode: 'fail_closed',
     dependencies: [],
     representation: 'client',
   },
   'app.ui.onboardingShowcase': {
-    description: 'First-launch onboarding story-deck modal (shares renderer with release notes).',
+    description: 'Deprecated first-launch onboarding story-deck modal flag; retained fail-closed for compatibility.',
     defaultFailMode: 'fail_closed',
     dependencies: [],
+    representation: 'client',
+  },
+  'app.ui.onboardingTour': {
+    description: 'Unified onboarding tour and demo-mode journey surfaces.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['app.ui.sessionGettingStartedGuidance'],
     representation: 'client',
   },
   'app.ui.liveActivities': {
@@ -555,6 +715,30 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'server',
   },
+  'terminal.transport.byteStream': {
+    description: 'Byte-stream terminal transport using bounded base64 frames over machine RPC.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['terminal.embeddedPty'],
+    representation: 'server',
+  },
+  'terminal.renderer.native': {
+    description: 'Optional native terminal renderer experiments gated behind the byte-stream terminal foundation.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['terminal.transport.byteStream'],
+    representation: 'client',
+  },
+  'terminal.renderer.iosGhostty': {
+    description: 'Optional iOS Ghostty-based native terminal renderer experiment.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['terminal.renderer.native'],
+    representation: 'client',
+  },
+  'terminal.renderer.androidTermux': {
+    description: 'Optional Android Termux terminal-view native renderer experiment.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['terminal.renderer.native'],
+    representation: 'client',
+  },
   'mcp.servers': {
     description: 'MCP servers management and injection support.',
     defaultFailMode: 'fail_closed',
@@ -573,37 +757,67 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: [],
     representation: 'client',
   },
-  'providers.claude.unifiedTerminal': {
+  providers: {
+    description: 'First-class model-provider connections, catalogs, and agent bindings.',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'server',
+  },
+  'providers.localDiscovery': {
+    description: 'Machine-local provider discovery through the local-services listener inventory.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['providers', 'localServices.inventory'],
+    representation: 'server',
+  },
+  'providers.localModelManagement': {
+    description: 'Explicit, bounded local model-management actions for trusted provider contributions.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['providers'],
+    representation: 'server',
+  },
+  'agents.claude.unifiedTerminal': {
     description: 'Claude unified terminal runtime capability.',
     defaultFailMode: 'fail_closed',
     dependencies: ['sessions.direct'],
     representation: 'client',
   },
-  'providers.claude.unifiedTerminal.tuiRuntimeControl': {
+  'agents.claude.unifiedTerminal.tuiRuntimeControl': {
     description: 'Claude unified terminal TUI runtime-control controller (live model/effort/permission-mode controls). Falls back to restart/unsupported outcomes when disabled.',
     defaultFailMode: 'fail_closed',
-    dependencies: ['providers.claude.unifiedTerminal'],
+    dependencies: ['agents.claude.unifiedTerminal'],
     representation: 'client',
   },
-  'providers.codex.appServer.goals': {
-    description: 'Codex app-server native session goal controls and work-state projection.',
+  // Generalized, provider-agnostic umbrella gate for agent session goals + work-state goal
+  // projection. Capability-driven goal gating reads `agents.goals`; provider-specific goal sub-gates
+  // (e.g. `agents.codex.appServer.goals`) remain as independent back-compat flags so existing
+  // call sites and server configs keep working. The umbrella declares NO dependencies so enabling it
+  // never requires a provider sub-gate first — downstream gating ANDs `agents.goals` with the
+  // provider-contributed goal capability rather than relying on a catalog dependency edge.
+  'agents.goals': {
+    description: 'Generalized agent session goal controls and work-state goal projection (umbrella over provider-specific goal sub-gates).',
     defaultFailMode: 'fail_closed',
     dependencies: [],
     representation: 'client',
   },
-  'providers.codex.appServer.plugins': {
+  'agents.codex.appServer.goals': {
+    description: 'Codex app-server native session goal controls and work-state projection (provider-specific sub-gate under the generalized agents.goals umbrella).',
+    defaultFailMode: 'fail_closed',
+    dependencies: [],
+    representation: 'client',
+  },
+  'agents.codex.appServer.plugins': {
     description: 'Codex app-server readonly vendor plugin catalog and structured mentions.',
     defaultFailMode: 'fail_closed',
     dependencies: ['sessions.direct', 'prompts.skills.registries'],
     representation: 'client',
   },
-  'providers.codex.appServer.structuredInput': {
+  'agents.codex.appServer.structuredInput': {
     description: 'Codex app-server structured turn inputs for text, images, skills, and vendor plugin mentions.',
     defaultFailMode: 'fail_closed',
     dependencies: ['sessions.direct', 'attachments.uploads'],
     representation: 'client',
   },
-  'providers.codex.appServer.permissionProfiles': {
+  'agents.codex.appServer.permissionProfiles': {
     description: 'Codex app-server native permission profiles and runtime policy edits.',
     defaultFailMode: 'fail_closed',
     dependencies: ['sessions.direct'],

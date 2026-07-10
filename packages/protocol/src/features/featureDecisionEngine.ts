@@ -1,7 +1,9 @@
 import { createFeatureDecision, type FeatureDecision, type FeatureDecisionScope } from './decision.js';
+import type { FeaturesResponse } from '../features.js';
 import type { FeatureId } from './featureIds.js';
 import { FEATURE_CATALOG, FEATURE_IDS } from './catalog.js';
 import type { FeatureBuildPolicyEvaluation } from './buildPolicy.js';
+import { readServerEnabledBit, tryWriteServerEnabledBitInPlace } from './serverEnabledBit.js';
 
 export type FeatureDecisionBaseInput = Readonly<{
   featureId: FeatureId;
@@ -80,11 +82,26 @@ const DEPENDENCIES_BY_ID: ReadonlyMap<FeatureId, readonly FeatureId[]> = new Map
   FEATURE_IDS.map((featureId) => [featureId, FEATURE_CATALOG[featureId].dependencies] as const),
 );
 
-export function applyFeatureDependencies(params: Readonly<{
+type FeatureDependencyDecisionInput = Readonly<{
   featureId: FeatureId;
   baseDecision: FeatureDecision;
   resolveDependencyDecision: (dependencyId: FeatureId) => FeatureDecision;
-}>): FeatureDecision {
+}>;
+
+type ServerFeatureDependencyClosureInput = Readonly<{
+  serverPayload: FeaturesResponse;
+}>;
+
+export function applyFeatureDependencies(params: FeatureDependencyDecisionInput): FeatureDecision;
+export function applyFeatureDependencies(params: ServerFeatureDependencyClosureInput): void;
+export function applyFeatureDependencies(
+  params: FeatureDependencyDecisionInput | ServerFeatureDependencyClosureInput,
+): FeatureDecision | void {
+  if ('serverPayload' in params) {
+    applyServerFeatureDependencyClosureInPlace(params.serverPayload);
+    return;
+  }
+
   const dependencies = DEPENDENCIES_BY_ID.get(params.featureId) ?? [];
   if (dependencies.length === 0) return params.baseDecision;
 
@@ -133,4 +150,46 @@ export function applyFeatureDependencies(params: Readonly<{
     evaluatedAt: params.baseDecision.evaluatedAt,
     scope: params.baseDecision.scope,
   });
+}
+
+const SERVER_FEATURE_DEPENDENCY_SCOPE: FeatureDecisionScope = { scopeKind: 'runtime' };
+
+function evaluateServerEnabledBitDecision(
+  featureId: FeatureId,
+  serverEnabled: boolean,
+): FeatureDecision {
+  return evaluateFeatureDecisionBase({
+    featureId,
+    scope: SERVER_FEATURE_DEPENDENCY_SCOPE,
+    supportsClient: true,
+    buildPolicy: 'neutral',
+    localPolicyEnabled: true,
+    serverSupported: true,
+    serverEnabled,
+    evaluatedAt: 0,
+  });
+}
+
+function applyServerFeatureDependencyClosureInPlace(response: FeaturesResponse): void {
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const featureId of FEATURE_IDS) {
+      if (readServerEnabledBit(response, featureId) !== true) continue;
+
+      const decision = applyFeatureDependencies({
+        featureId,
+        baseDecision: evaluateServerEnabledBitDecision(featureId, true),
+        resolveDependencyDecision: (dependencyId) => evaluateServerEnabledBitDecision(
+          dependencyId,
+          readServerEnabledBit(response, dependencyId) === true,
+        ),
+      });
+
+      if (decision.state === 'enabled') continue;
+      if (tryWriteServerEnabledBitInPlace(response, featureId, false)) {
+        changed = true;
+      }
+    }
+  }
 }
