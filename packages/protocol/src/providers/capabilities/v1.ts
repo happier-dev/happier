@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { ProviderHttpsUrlSchema } from '../httpsUrlSchema.js';
+import { ProviderAgentTargetKeySchema } from '../ids.js';
 
 export const ProviderWireProtocolSchema = z.enum([
   'anthropic',
@@ -38,6 +39,8 @@ export const ProviderCompatibilityEvidenceV1Schema = z.object({
 export type ProviderCompatibilityEvidenceV1 = z.infer<typeof ProviderCompatibilityEvidenceV1Schema>;
 
 export const ProviderCompatibilityOverrideV1Schema = z.object({
+  agentTargetKey: ProviderAgentTargetKeySchema,
+  protocol: ProviderWireProtocolSchema,
   status: z.enum(['verified', 'experimental', 'incompatible']),
   reason: z.string().trim().min(1).max(1024),
   evidence: ProviderCompatibilityEvidenceV1Schema.optional(),
@@ -47,3 +50,20 @@ export const ProviderCompatibilityOverrideV1Schema = z.object({
   }
 });
 export type ProviderCompatibilityOverrideV1 = z.infer<typeof ProviderCompatibilityOverrideV1Schema>;
+
+export const ProviderCompatibilityOverridesV1Schema = z.array(ProviderCompatibilityOverrideV1Schema)
+  .max(128)
+  .superRefine((overrides, ctx) => {
+    const keys = new Set<string>();
+    overrides.forEach((override, index) => {
+      const key = JSON.stringify([override.agentTargetKey, override.protocol]);
+      if (keys.has(key)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [index],
+          message: 'Compatibility overrides must be unique by agent target and protocol',
+        });
+      }
+      keys.add(key);
+    });
+  });

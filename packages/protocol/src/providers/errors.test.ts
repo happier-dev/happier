@@ -13,6 +13,35 @@ describe('provider stable errors and compatibility envelopes', () => {
     expect(createProviderErrorV1('provider_model_unloaded', { modelLoadAvailable: true }).action).toBe('load_model');
   });
 
+  it('represents a disabled provider feature independently from connection enablement', () => {
+    expect(createProviderErrorV1('provider_feature_disabled')).toEqual({
+      v: 1,
+      code: 'provider_feature_disabled',
+      retryable: false,
+      action: 'review_features',
+    });
+  });
+
+  it('represents malformed settings and invalid connection mutations as stable review errors', () => {
+    expect(createProviderErrorV1('provider_settings_invalid')).toMatchObject({
+      code: 'provider_settings_invalid', retryable: false, action: 'review_connection',
+    });
+    expect(createProviderErrorV1('provider_connection_invalid')).toMatchObject({
+      code: 'provider_connection_invalid', retryable: false, action: 'review_connection',
+    });
+  });
+
+  it('represents profile-migration review failures without inventing a connection identity', () => {
+    expect(createProviderErrorV1('provider_profile_migration_source_changed', {
+      sourceProfileId: 'company-gateway',
+    })).toMatchObject({
+      code: 'provider_profile_migration_source_changed',
+      sourceProfileId: 'company-gateway',
+      retryable: false,
+      action: 'review_profile_migration',
+    });
+  });
+
   it('rejects wire envelopes whose retryability or recovery action contradicts their code', () => {
     expect(ProviderErrorV1Schema.safeParse({
       v: 1, code: 'provider_connection_not_found', retryable: true, action: 'retry',

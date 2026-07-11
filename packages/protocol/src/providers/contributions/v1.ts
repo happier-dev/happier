@@ -1,14 +1,44 @@
 import { z } from 'zod';
 
-import { ProviderCompatibilityCapabilitiesV1Schema, ProviderCompatibilityOverrideV1Schema, ProviderWireProtocolSchema } from '../capabilities/v1.js';
+import { ProviderCompatibilityCapabilitiesV1Schema, ProviderCompatibilityOverridesV1Schema, ProviderWireProtocolSchema } from '../capabilities/v1.js';
 import { ProviderCatalogDeclarationV1Schema } from '../catalog/descriptorV1.js';
 import { ProviderApiKeyCredentialRequirementV1Schema } from '../credentials/v1.js';
 import { ProviderDetectionDescriptorV1Schema } from '../detection/v1.js';
-import { ProviderAgentTargetKeySchema, ProviderLocalIdSchema } from '../ids.js';
+import { ProviderLocalIdSchema } from '../ids.js';
 import { ProviderOriginRelativePathSchema } from '../originRelativePathSchema.js';
 import { ProviderEndpointUrlSyntaxSchema } from '../endpointUrlSchema.js';
 import { ProviderHttpsUrlSchema } from '../httpsUrlSchema.js';
 import { ProviderPublicHeadersV1Schema } from '../publicHeadersSchema.js';
+import { ProviderModelIdSchema } from '../ids.js';
+import { ProviderAgentTargetKeySchema } from '../ids.js';
+import { EnvironmentVariableSchema } from '../../profiles/backendProfileSchema.js';
+
+const LegacyProfileEnvironmentNameSchema = z.string().regex(/^[A-Z_][A-Z0-9_]*$/u).max(128);
+
+export const ProviderLegacyProfileMigrationDescriptorV1Schema = z.object({
+  sourceProfileId: z.string().trim().min(1).max(256),
+  credentialBinding: z.object({
+    legacyEnvVarName: LegacyProfileEnvironmentNameSchema,
+    credentialSlotId: ProviderLocalIdSchema,
+  }).strict().optional(),
+  primaryModel: z.object({
+    agentTargetKey: ProviderAgentTargetKeySchema,
+    legacyEnvVarName: LegacyProfileEnvironmentNameSchema,
+    defaultModelId: ProviderModelIdSchema,
+    legacyProcessEnvAlias: LegacyProfileEnvironmentNameSchema.optional(),
+  }).strict().optional(),
+  migratedEnvironmentVariables: z.array(EnvironmentVariableSchema).max(64).default([]),
+  retainedEnvironmentVariables: z.array(EnvironmentVariableSchema).max(64).default([]),
+}).strict().superRefine((value, ctx) => {
+  const names = [...value.migratedEnvironmentVariables, ...value.retainedEnvironmentVariables].map((entry) => entry.name);
+  if (new Set(names).size !== names.length) {
+    ctx.addIssue({ code: 'custom', path: ['retainedEnvironmentVariables'], message: 'Legacy environment dispositions must be unique' });
+  }
+  if (value.primaryModel && !value.migratedEnvironmentVariables.some((entry) => entry.name === value.primaryModel?.legacyEnvVarName)) {
+    ctx.addIssue({ code: 'custom', path: ['primaryModel', 'legacyEnvVarName'], message: 'Primary model environment must have a migrated disposition' });
+  }
+});
+export type ProviderLegacyProfileMigrationDescriptorV1 = z.infer<typeof ProviderLegacyProfileMigrationDescriptorV1Schema>;
 
 export const ProviderEndpointTemplateV1Schema = z.object({
   id: ProviderLocalIdSchema,
@@ -45,7 +75,8 @@ export const ProviderContributionV1Schema = z.object({
   catalog: ProviderCatalogDeclarationV1Schema,
   modelLoad: ProviderModelLoadDescriptorV1Schema.optional(),
   discovery: ProviderDetectionDescriptorV1Schema.optional(),
-  compatibilityOverrides: z.record(ProviderAgentTargetKeySchema, ProviderCompatibilityOverrideV1Schema).optional(),
+  compatibilityOverrides: ProviderCompatibilityOverridesV1Schema.optional(),
+  legacyProfileMigrations: z.array(ProviderLegacyProfileMigrationDescriptorV1Schema).max(8).optional(),
 }).strict().superRefine((value, ctx) => {
   const endpointIds = new Set<string>();
   const protocols = new Set<string>();
@@ -90,6 +121,37 @@ export const ProviderContributionV1Schema = z.object({
     if (!endpointIds.has(value.discovery.availabilityProbe.endpointTemplateId)) {
       ctx.addIssue({ code: 'custom', path: ['discovery', 'availabilityProbe', 'endpointTemplateId'], message: 'Discovery availability endpoint is not declared' });
     }
+    if (value.discovery.catalogFallback && !endpointIds.has(value.discovery.catalogFallback.endpointTemplateId)) {
+      ctx.addIssue({ code: 'custom', path: ['discovery', 'catalogFallback', 'endpointTemplateId'], message: 'Discovery catalog fallback endpoint is not declared' });
+    }
+    if (value.discovery.catalogFallback && (
+      !('probes' in value.catalog)
+      || !value.catalog.probes.some((probe) => probe.endpointTemplateId === value.discovery?.catalogFallback?.endpointTemplateId)
+    )) {
+      ctx.addIssue({ code: 'custom', path: ['discovery', 'catalogFallback', 'endpointTemplateId'], message: 'Discovery catalog fallback requires an authorized catalog probe on the same endpoint' });
+    }
   }
+  value.compatibilityOverrides?.forEach((override, index) => {
+    if (!protocols.has(override.protocol)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['compatibilityOverrides', index, 'protocol'],
+        message: 'Compatibility override protocol is not declared by an endpoint',
+      });
+    }
+  });
+  const migrationSourceIds = new Set<string>();
+  value.legacyProfileMigrations?.forEach((descriptor, index) => {
+    if (migrationSourceIds.has(descriptor.sourceProfileId)) {
+      ctx.addIssue({ code: 'custom', path: ['legacyProfileMigrations', index, 'sourceProfileId'], message: 'Legacy profile migration ids must be unique' });
+    }
+    migrationSourceIds.add(descriptor.sourceProfileId);
+    if (descriptor.credentialBinding) {
+      const slotId = value.credential?.slotId ?? 'apiKey';
+      if (!value.credential || descriptor.credentialBinding.credentialSlotId !== slotId) {
+        ctx.addIssue({ code: 'custom', path: ['legacyProfileMigrations', index, 'credentialBinding', 'credentialSlotId'], message: 'Legacy credential binding must reference the contribution credential slot' });
+      }
+    }
+  });
 });
 export type ProviderContributionV1 = z.infer<typeof ProviderContributionV1Schema>;

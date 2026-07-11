@@ -5,9 +5,12 @@ import {
   createProviderBindingSecurityFingerprintV1,
   createProviderCatalogFingerprintV1,
   createProviderConnectionSecurityFingerprintV1,
+  createProviderCredentialDestinationFingerprintV1,
+  createProviderEndpointFingerprintV1,
   createProviderEndpointSetFingerprintV1,
   createProviderMachineGrantFingerprintV1,
   createProviderObservationAuthorizationFingerprintV1,
+  createProviderProbeRequestFingerprintV1,
   createProviderSavedSecretRecordFingerprintV1,
 } from './securityFingerprintsV1.js';
 import { assessProviderEndpoint, type AssessedProviderEndpoint } from './safety/index.js';
@@ -30,6 +33,20 @@ const connectionInput = {
 } as const;
 
 describe('typed provider security fingerprints', () => {
+  it('binds draft probe authorization to the exact credential destination', () => {
+    const bearer = createProviderCredentialDestinationFingerprintV1({
+      kind: 'httpHeader', name: 'Authorization', format: 'bearer',
+    });
+    expect(bearer).toBe('credential-destination:v1:C4kSX8ZSJnndNgQLz0-g04dP0qV0AJbgTqbh0Ik6yQU');
+    expect(bearer).toBe(createProviderCredentialDestinationFingerprintV1({
+      kind: 'httpHeader', name: 'authorization', format: 'bearer',
+    }));
+    expect(bearer).not.toBe(createProviderCredentialDestinationFingerprintV1({
+      kind: 'httpHeader', name: 'x-api-key', format: 'raw',
+    }));
+    expect(createProviderCredentialDestinationFingerprintV1(null)).not.toBe(bearer);
+  });
+
   it('normalizes connection trust inputs and changes for executable security-surface edits', () => {
     const a = createProviderConnectionSecurityFingerprintV1(connectionInput);
     const reorderedHeaders = createProviderConnectionSecurityFingerprintV1({
@@ -56,6 +73,25 @@ describe('typed provider security fingerprints', () => {
     expect(changedProtocol).not.toBe(a);
     expect(changedAvailabilityProbe).not.toBe(a);
     expect(a).toMatch(/^connection-security:v1:/);
+  });
+
+  it('invalidates connection trust when a local catalog command contract changes', () => {
+    const fallback = {
+      endpointTemplateId: 'responses',
+      lookupNames: ['ollama'],
+      fixedArgs: ['list'],
+      parser: 'ollama-list-table' as const,
+      endpointEnvName: 'OLLAMA_HOST',
+    };
+    const base = createProviderConnectionSecurityFingerprintV1({
+      ...connectionInput,
+      catalogFallback: fallback,
+    });
+    expect(createProviderConnectionSecurityFingerprintV1({
+      ...connectionInput,
+      catalogFallback: { ...fallback, fixedArgs: ['ls'] },
+    })).not.toBe(base);
+    expect(createProviderConnectionSecurityFingerprintV1(connectionInput)).not.toBe(base);
   });
 
   it('binds an agent/model/materialization without accepting display or secret values', () => {
@@ -208,16 +244,58 @@ describe('typed provider security fingerprints', () => {
     } as typeof base)).toThrowError(/derived by the canonical resolver/u);
   });
 
-  it('fingerprints ordered catalog probes with their resolved endpoints', () => {
-    const input = { probes: [{
-      probe: { endpointTemplateId: 'responses', path: '/v1/models', parser: 'openai-models' },
-      endpointUrl: 'https://EXAMPLE.test:443/v1',
-    }] } as const;
-    const fingerprint = createProviderCatalogFingerprintV1(input);
-    expect(createProviderCatalogFingerprintV1({ probes: [{
-      ...input.probes[0], endpointUrl: 'https://example.test/v2',
-    }] })).not.toBe(fingerprint);
-    expect(fingerprint).toMatch(/^catalog:v1:/);
+  it('uses one exact request fingerprint for probe authorization and runtime observations', () => {
+    const input = {
+      method: 'GET', endpointUrl: 'https://EXAMPLE.test:443/v1', path: '/v1/models?after=a',
+      parser: 'openai-models', publicHeaders: { 'X-Title': 'Happier' },
+    } as const;
+    const request = createProviderProbeRequestFingerprintV1(input);
+    expect(createProviderProbeRequestFingerprintV1({
+      ...input, publicHeaders: { 'x-title': 'Happier' },
+    })).toBe(request);
+    expect(createProviderProbeRequestFingerprintV1({ ...input, path: '/v1/other-models' })).not.toBe(request);
+    expect(createProviderProbeRequestFingerprintV1({ ...input, parser: 'ollama-tags' })).not.toBe(request);
+    expect(createProviderProbeRequestFingerprintV1({
+      ...input, publicHeaders: { 'x-title': 'Different' },
+    })).not.toBe(request);
+    expect(request).toMatch(/^probe-request:v1:/);
+
+    const endpoint = createProviderEndpointFingerprintV1({
+      endpointTemplateId: 'responses', protocol: 'openai-responses', probeRequestFingerprint: request,
+    });
+    expect(createProviderEndpointFingerprintV1({
+      endpointTemplateId: 'responses', protocol: 'openai-chat', probeRequestFingerprint: request,
+    })).not.toBe(endpoint);
+    expect(endpoint).toMatch(/^endpoint-observation:v1:/);
+
+    const catalog = createProviderCatalogFingerprintV1({ probeRequestFingerprints: [request] });
+    expect(createProviderCatalogFingerprintV1({
+      probeRequestFingerprints: [
+        createProviderProbeRequestFingerprintV1({ ...input, path: '/v1/fallback' }),
+        request,
+      ],
+    })).not.toBe(catalog);
+    expect(catalog).toMatch(/^catalog:v1:/);
+  });
+
+  it('binds catalog observations to the exact command fallback and resolved endpoint', () => {
+    const probeRequestFingerprints = [createProviderProbeRequestFingerprintV1({
+      method: 'GET', endpointUrl: 'http://127.0.0.1:11434/', path: '/api/tags',
+      parser: 'ollama-tags', publicHeaders: {},
+    })];
+    const fallback = {
+      descriptor: {
+        endpointTemplateId: 'native', lookupNames: ['ollama'], fixedArgs: ['list'],
+        parser: 'ollama-list-table' as const, endpointEnvName: 'OLLAMA_HOST',
+      },
+      endpointUrl: 'http://127.0.0.1:11434/',
+    };
+    const base = createProviderCatalogFingerprintV1({ probeRequestFingerprints, catalogFallback: fallback });
+    expect(createProviderCatalogFingerprintV1({
+      probeRequestFingerprints,
+      catalogFallback: { ...fallback, endpointUrl: 'http://127.0.0.1:22434/' },
+    })).not.toBe(base);
+    expect(createProviderCatalogFingerprintV1({ probeRequestFingerprints })).not.toBe(base);
   });
 
   it('fingerprints grant authorization identity without mutable confirmation timestamps', () => {
@@ -329,10 +407,23 @@ describe('typed provider security fingerprints', () => {
         }],
         credential: undefined, model: { id: 'model-a', name: 'Model A' },
       }).compatibilityFingerprint,
-      catalog: createProviderCatalogFingerprintV1({ probes: [{
-        probe: { endpointTemplateId: 'responses', path: '/v1/models', parser: 'openai-models' },
-        endpointUrl: 'https://example.test/v1',
-      }] }),
+      probeRequest: createProviderProbeRequestFingerprintV1({
+        method: 'GET', endpointUrl: 'https://example.test/v1', path: '/v1/models',
+        parser: 'openai-models', publicHeaders: {},
+      }),
+      endpointObservation: createProviderEndpointFingerprintV1({
+        endpointTemplateId: 'responses', protocol: 'openai-responses',
+        probeRequestFingerprint: createProviderProbeRequestFingerprintV1({
+          method: 'GET', endpointUrl: 'https://example.test/v1', path: '/v1/models',
+          parser: 'openai-models', publicHeaders: {},
+        }),
+      }),
+      catalog: createProviderCatalogFingerprintV1({ probeRequestFingerprints: [
+        createProviderProbeRequestFingerprintV1({
+          method: 'GET', endpointUrl: 'https://example.test/v1', path: '/v1/models',
+          parser: 'openai-models', publicHeaders: {},
+        }),
+      ] }),
       observation: createProviderObservationAuthorizationFingerprintV1({
         selectedSecretBindingId: null, selectedSecretRecordFingerprint: null, credential: null,
       }),
@@ -347,11 +438,13 @@ describe('typed provider security fingerprints', () => {
         secretId: 'secret-a', persistedEncryptedEnvelope: { t: 'enc-v1', c: 'ciphertext-a' },
       }),
     }).toEqual({
-      connection: 'connection-security:v1:yWIzUn9sfw37SDEqPWKsSbSC1iyK_CY-y04kP7z6U5g',
+      connection: 'connection-security:v1:z_cpCxi4SC1u3YOFEgEEOBOYGRe8k6yJWe4TZD2p-4U',
       binding: 'binding-security:v1:sJWzredb9c_zMusg1SuSlnmpcu1aZLg68xZq13px_Ts',
       endpointSet: 'endpoint-set:v1:f4ZdXevIRRzkFVGwThPc6Qx9j4h65iX5k50NQ_x5OAQ',
-      compatibility: 'compatibility:v1:uGu0fHonIjMEgYY_UFjgQ0LetUQIbtZhJIDWu3Ghhcg',
-      catalog: 'catalog:v1:gxoB1fqiGE8hEFDQz0RD30OGDVbK09q5ut5FRC1yH6E',
+      compatibility: 'compatibility:v1:CiZD3bgW42HDQ6GXxOMx0ptNdo7KxQ5_dSpP9eGLeIs',
+      probeRequest: 'probe-request:v1:Z6W-8xY-bqWuOGOugX-lyYPaT-ka0OjrGvibqpzRhK8',
+      endpointObservation: 'endpoint-observation:v1:_yXkhiVFToIoMRDJ6g5nl8r9DIBMns6oFbl-Zyi42PE',
+      catalog: 'catalog:v1:KzohbZVoZlCNPUK8tpmzxUTMCMebiZEZXiUn-838eK4',
       observation: 'observation-authorization:v1:SuTDmbYo4O0wtiWtbteZ7gaRwUTDQfbATDiF4IuPELc',
       accountGrant: 'account-grant:v1:cI0puTgBEpYij46m9a81N7DXpwvuhKCUCmExkXrSGB8',
       machineGrant: 'machine-grant:v1:47tXQdT5LRTGbhQYMkJvPnCPM_fzgWtpdOpqI5x8SMk',

@@ -5,10 +5,17 @@ import { ProviderOriginRelativePathSchema } from '../originRelativePathSchema.js
 import { ProviderModelDescriptorV1Schema } from '../../models/descriptor.js';
 import { PROVIDER_CATALOG_LIMITS_V1 } from './limits.js';
 
+export const ProviderCatalogParserV1Schema = z.enum([
+  'openai-models',
+  'ollama-tags',
+  'lmstudio-native-models',
+]);
+export type ProviderCatalogParserV1 = z.infer<typeof ProviderCatalogParserV1Schema>;
+
 export const ProviderCatalogProbeV1Schema = z.object({
   endpointTemplateId: ProviderLocalIdSchema,
   path: ProviderOriginRelativePathSchema,
-  parser: z.enum(['openai-models', 'ollama-tags', 'lmstudio-native-models']),
+  parser: ProviderCatalogParserV1Schema,
 }).strict();
 export type ProviderCatalogProbeV1 = z.infer<typeof ProviderCatalogProbeV1Schema>;
 

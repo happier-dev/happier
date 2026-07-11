@@ -96,6 +96,72 @@ describe('provider account-settings migration', () => {
     expect(retry.changed).toBe(false);
   });
 
+  it('never retargets a losing candidate grant onto a concurrently-created winner', () => {
+    const winner = migrateProviderAccountSettingsV1({ schemaVersion: 7 }, {
+      migratedAt: 20,
+      candidates: [{ ...candidate('pc_winner'), accountGrant: undefined }],
+      pendingCustomProfileIds: [],
+    });
+    expect(winner.ok).toBe(true);
+    if (!winner.ok) throw new Error('expected winner');
+    const retried = migrateProviderAccountSettingsV1(winner.settings, {
+      migratedAt: 21,
+      candidates: [{
+        ...candidate('pc_loser'),
+        sourceProfileId: 'deepseek-second-legacy-source',
+        accountGrant: {
+          v: 1,
+          connectionId: 'pc_loser',
+          connectionSecurityFingerprint: 'connection-security:v1:loser-endpoint',
+          confirmedAt: 21,
+        },
+      }],
+      pendingCustomProfileIds: [],
+    });
+    expect(retried.ok).toBe(true);
+    if (!retried.ok) throw new Error('expected retry');
+    expect((retried.settings.providerSettingsV1 as any).accountGrants).toEqual([]);
+  });
+
+  it('refuses a conflicting secret binding instead of making candidate order the credential owner', () => {
+    const winner = migrateProviderAccountSettingsV1({ schemaVersion: 7 }, {
+      migratedAt: 20, candidates: [candidate('pc_winner')], pendingCustomProfileIds: [],
+    });
+    expect(winner.ok).toBe(true);
+    if (!winner.ok) throw new Error('expected winner');
+    const conflict = migrateProviderAccountSettingsV1(winner.settings, {
+      migratedAt: 21,
+      candidates: [{
+        ...candidate('pc_loser'),
+        sourceProfileId: 'deepseek-second-legacy-source',
+        secretBindings: { account: { apiKey: 'different-secret' } },
+      }],
+      pendingCustomProfileIds: [],
+    });
+    expect(conflict).toMatchObject({ ok: false, changed: false, reason: 'migration_conflict' });
+  });
+
+  it('reuses an existing equivalent manual model without treating its provenance timestamp as conflicting model data', () => {
+    const winner = migrateProviderAccountSettingsV1({ schemaVersion: 7 }, {
+      migratedAt: 20, candidates: [candidate('pc_winner')], pendingCustomProfileIds: [],
+    });
+    expect(winner.ok).toBe(true);
+    if (!winner.ok) throw new Error('expected winner');
+    const reused = migrateProviderAccountSettingsV1(winner.settings, {
+      migratedAt: 21,
+      candidates: [{
+        ...candidate('pc_loser'),
+        sourceProfileId: 'deepseek-second-legacy-source',
+        manualModels: [{ id: 'deepseek-chat', addedAt: 21 }],
+      }],
+      pendingCustomProfileIds: [],
+    });
+    expect(reused.ok).toBe(true);
+    if (!reused.ok) throw new Error('expected equivalent model reuse');
+    expect((reused.settings.providerSettingsV1 as any).manualModelsByConnectionId.pc_winner)
+      .toEqual([{ id: 'deepseek-chat', addedAt: 10 }]);
+  });
+
   it('converges named custom connections by recorded source provenance, not structural guessing', () => {
     const customCandidate = (connectionId: string) => ({
       kind: 'connection',

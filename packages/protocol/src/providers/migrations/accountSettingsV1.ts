@@ -2,15 +2,19 @@ import type { ProviderConnectionV1 } from '../connections/v1.js';
 import { ProviderConnectionV1Schema } from '../connections/v1.js';
 import type { ProviderAccountGrantV1 } from '../grants/v1.js';
 import type { ProviderManualModelV1, ProviderSettingsV1 } from '../settings/v1.js';
+import type { ProviderSettingsMigrationPendingConflictV1 } from '../settings/v1.js';
 import {
   DEFAULT_PROVIDER_SETTINGS_V1,
   ProviderSettingsLimitError,
+  ProviderSettingsMigrationPendingConflictV1Schema,
   ProviderSettingsV1Schema,
   assertProviderSettingsV1WithinLimits,
   type ProviderSettingsMigrationSourceOutcomeV1,
 } from '../settings/v1.js';
 import { classifyProviderSettingsSubtreeV1 } from '../settings/classifySubtreeV1.js';
 import { readOwnRecordValue } from '../ownRecordValue.js';
+import { LaunchProfileV2Schema, type LaunchProfileV2 } from '../../profiles/v2/schema.js';
+import { ProviderAgentTargetKeySchema, ProviderModelIdSchema } from '../ids.js';
 export { classifyProviderSettingsSubtreeV1 } from '../settings/classifySubtreeV1.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -28,18 +32,27 @@ export type ProviderAccountSettingsMigrationCandidateV1 =
       sourceProfileId: string;
     }>
   | Readonly<{
+      kind: 'skipped_disabled';
+      sourceProfileId: string;
+    }>
+  | Readonly<{
       kind: 'connection';
       sourceProfileId: string;
       connection: ProviderConnectionV1;
       secretBindings?: ProviderMigrationSecretBindingsV1;
       manualModels?: readonly ProviderManualModelV1[];
       accountGrant?: ProviderAccountGrantV1;
+      selectedModel?: Readonly<{ agentTargetKey: string; modelId: string }>;
+      removedEnvironmentVariableNames?: readonly string[];
+      movedSecretBindingEnvironmentVariableNames?: readonly string[];
+      retainedLaunchProfile?: LaunchProfileV2;
     }>;
 
 export type ProviderAccountSettingsMigrationContextV1 = Readonly<{
   migratedAt: number;
   candidates: readonly ProviderAccountSettingsMigrationCandidateV1[];
   pendingCustomProfileIds: readonly string[];
+  pendingConflicts?: readonly ProviderSettingsMigrationPendingConflictV1[];
 }>;
 
 export type ProviderAccountSettingsMigrationResultV1 =
@@ -53,7 +66,7 @@ export type ProviderAccountSettingsMigrationResultV1 =
       ok: false;
       changed: false;
       settings: unknown;
-      reason: 'account_settings_invalid' | 'provider_settings_future' | 'provider_settings_malformed' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'migration_context_invalid';
+      reason: 'account_settings_invalid' | 'provider_settings_future' | 'provider_settings_malformed' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'migration_context_invalid' | 'migration_conflict';
     }>;
 
 function isCanonicalSourceProfileId(value: string): boolean {
@@ -81,6 +94,35 @@ function mergeSecretBindings(
     ...(Object.keys(account).length > 0 ? { account } : {}),
     ...(Object.keys(byMachineId).length > 0 ? { byMachineId } : {}),
   };
+}
+
+function hasSecretBindingConflict(
+  current: ProviderMigrationSecretBindingsV1 | undefined,
+  incoming: ProviderMigrationSecretBindingsV1 | undefined,
+): boolean {
+  const compareScope = (
+    left: Readonly<Record<string, string>> | undefined,
+    right: Readonly<Record<string, string>> | undefined,
+  ): boolean => Object.entries(right ?? {}).some(([slot, secretId]) => {
+    const existing = readOwnRecordValue(left, slot);
+    return existing !== undefined && existing !== secretId;
+  });
+  if (compareScope(current?.account, incoming?.account)) return true;
+  for (const [machineId, bindings] of Object.entries(incoming?.byMachineId ?? {})) {
+    if (compareScope(readOwnRecordValue(current?.byMachineId, machineId), bindings)) return true;
+  }
+  return false;
+}
+
+function hasEquivalentManualModelFacts(left: ProviderManualModelV1, right: ProviderManualModelV1): boolean {
+  return left.id === right.id && left.name === right.name;
+}
+
+function validEnvironmentNameList(value: readonly string[] | undefined): boolean {
+  if (!value) return true;
+  return value.length <= 256
+    && new Set(value).size === value.length
+    && value.every((name) => /^[A-Z_][A-Z0-9_]*$/u.test(name) && name.length <= 128);
 }
 
 export function migrateProviderAccountSettingsV1(
@@ -114,13 +156,21 @@ export function migrateProviderAccountSettingsV1(
       return { ok: false, changed: false, settings: raw, reason: 'migration_context_invalid' };
     }
     sourceProfileIds.add(candidate.sourceProfileId);
-    if (candidate.kind === 'default_environment') {
+    if (candidate.kind === 'default_environment' || candidate.kind === 'skipped_disabled') {
       candidates.push(candidate);
       continue;
     }
     const connection = ProviderConnectionV1Schema.safeParse(candidate.connection);
     if (!connection.success
-      || (candidate.accountGrant !== undefined && candidate.accountGrant.connectionId !== connection.data.id)) {
+      || (candidate.accountGrant !== undefined && candidate.accountGrant.connectionId !== connection.data.id)
+      || !validEnvironmentNameList(candidate.removedEnvironmentVariableNames)
+      || !validEnvironmentNameList(candidate.movedSecretBindingEnvironmentVariableNames)
+      || candidate.movedSecretBindingEnvironmentVariableNames?.some(
+        (name) => !candidate.removedEnvironmentVariableNames?.includes(name)) === true
+      || (candidate.retainedLaunchProfile !== undefined
+        && !LaunchProfileV2Schema.safeParse(candidate.retainedLaunchProfile).success)
+      || (candidate.selectedModel !== undefined && (!ProviderAgentTargetKeySchema.safeParse(candidate.selectedModel.agentTargetKey).success
+        || !ProviderModelIdSchema.safeParse(candidate.selectedModel.modelId).success))) {
       return { ok: false, changed: false, settings: raw, reason: 'migration_context_invalid' };
     }
     const normalizedCandidate = ProviderSettingsV1Schema.safeParse({
@@ -153,6 +203,12 @@ export function migrateProviderAccountSettingsV1(
     || new Set(context.pendingCustomProfileIds).size !== context.pendingCustomProfileIds.length) {
     return { ok: false, changed: false, settings: raw, reason: 'migration_context_invalid' };
   }
+  const pendingConflicts = context.pendingConflicts ?? [];
+  if (pendingConflicts.some((entry) => !ProviderSettingsMigrationPendingConflictV1Schema.safeParse(entry).success)
+    || new Set(pendingConflicts.map((entry) => entry.sourceProfileId)).size !== pendingConflicts.length
+    || pendingConflicts.some((entry) => sourceProfileIds.has(entry.sourceProfileId))) {
+    return { ok: false, changed: false, settings: raw, reason: 'migration_context_invalid' };
+  }
 
   const current = parsedProviderSettings;
   const connections = [...current.connections];
@@ -170,8 +226,8 @@ export function migrateProviderAccountSettingsV1(
     if (completed) {
       continue;
     }
-    if (candidate.kind === 'default_environment') {
-      const outcome = { sourceProfileId: candidate.sourceProfileId, kind: 'default_environment' as const };
+    if (candidate.kind === 'default_environment' || candidate.kind === 'skipped_disabled') {
+      const outcome = { sourceProfileId: candidate.sourceProfileId, kind: candidate.kind } as const;
       completedSources.push(outcome);
       outcomesBySourceProfileId.set(candidate.sourceProfileId, outcome);
       changed = true;
@@ -193,20 +249,43 @@ export function migrateProviderAccountSettingsV1(
       }
       connections.push(selected);
     }
-    const outcome = { sourceProfileId: candidate.sourceProfileId, kind: 'connection' as const, connectionId: selected.id };
+    const outcome = {
+      sourceProfileId: candidate.sourceProfileId,
+      kind: 'connection' as const,
+      connectionId: selected.id,
+      ...(candidate.selectedModel ? {
+        modelSelection: {
+          agentTargetKey: candidate.selectedModel.agentTargetKey,
+          providerConnectionId: selected.id,
+          modelId: candidate.selectedModel.modelId,
+        },
+      } : {}),
+    };
     completedSources.push(outcome);
     outcomesBySourceProfileId.set(candidate.sourceProfileId, outcome);
 
-    const mergedBindings = mergeSecretBindings(readOwnRecordValue(secretBindingsByConnectionId, selected.id), candidate.secretBindings);
+    const currentBindings = readOwnRecordValue(secretBindingsByConnectionId, selected.id);
+    if (hasSecretBindingConflict(currentBindings, candidate.secretBindings)) {
+      return { ok: false, changed: false, settings: raw, reason: 'migration_conflict' };
+    }
+    const mergedBindings = mergeSecretBindings(currentBindings, candidate.secretBindings);
     if (mergedBindings) secretBindingsByConnectionId[selected.id] = mergedBindings;
 
     const existingModels = readOwnRecordValue(manualModelsByConnectionId, selected.id) ?? [];
     const modelsById = new Map(existingModels.map((model) => [model.id, model]));
-    for (const model of candidate.manualModels ?? []) if (!modelsById.has(model.id)) modelsById.set(model.id, model);
+    for (const model of candidate.manualModels ?? []) {
+      const existing = modelsById.get(model.id);
+      if (existing && !hasEquivalentManualModelFacts(existing, model)) {
+        return { ok: false, changed: false, settings: raw, reason: 'migration_conflict' };
+      }
+      if (!existing) modelsById.set(model.id, model);
+    }
     if (modelsById.size > 0) manualModelsByConnectionId[selected.id] = [...modelsById.values()];
 
-    if (candidate.accountGrant && !accountGrants.some((grant) => grant.connectionId === selected.id)) {
-      accountGrants.push({ ...candidate.accountGrant, connectionId: selected.id });
+    if (candidate.accountGrant
+      && selected.id === candidate.connection.id
+      && !accountGrants.some((grant) => grant.connectionId === selected.id)) {
+      accountGrants.push(candidate.accountGrant);
     }
     changed = true;
   }
@@ -215,11 +294,19 @@ export function migrateProviderAccountSettingsV1(
     ...(current.migration?.pendingCustomProfileIds ?? []),
     ...context.pendingCustomProfileIds,
   ])].filter((id) => !outcomesBySourceProfileId.has(id)).sort();
+  const pendingConflictBySource = new Map(
+    (context.pendingConflicts === undefined ? current.migration?.pendingConflicts ?? [] : [])
+      .map((entry) => [entry.sourceProfileId, entry] as const),
+  );
+  for (const conflict of pendingConflicts) pendingConflictBySource.set(conflict.sourceProfileId, conflict);
+  for (const sourceProfileId of outcomesBySourceProfileId.keys()) pendingConflictBySource.delete(sourceProfileId);
   completedSources.sort((a, b) => a.sourceProfileId.localeCompare(b.sourceProfileId));
   const migration = {
     v: 1 as const,
     completedSources,
     pendingCustomProfileIds,
+    pendingConflicts: [...pendingConflictBySource.values()].sort((left, right) =>
+      left.sourceProfileId.localeCompare(right.sourceProfileId)),
     migratedAt: current.migration?.migratedAt ?? context.migratedAt,
   };
   if (JSON.stringify(migration) !== JSON.stringify(current.migration)) changed = true;

@@ -2,13 +2,26 @@ import { EncryptedStringV1Schema, type EncryptedStringV1 } from '../crypto/setti
 import type { ProviderWireProtocol } from './capabilities/v1.js';
 import { ProviderWireProtocolSchema } from './capabilities/v1.js';
 import type { ProviderCatalogProbeV1 } from './catalog/descriptorV1.js';
-import { ProviderCatalogProbeV1Schema } from './catalog/descriptorV1.js';
+import { ProviderCatalogParserV1Schema, ProviderCatalogProbeV1Schema } from './catalog/descriptorV1.js';
+import { PROVIDER_CATALOG_LIMITS_V1 } from './catalog/limits.js';
 import type { ProviderModelLoadDescriptorV1 } from './contributions/v1.js';
 import { ProviderModelLoadDescriptorV1Schema } from './contributions/v1.js';
+import type { ProviderCatalogCommandFallbackV1 } from './detection/v1.js';
+import { ProviderCatalogCommandFallbackV1Schema } from './detection/v1.js';
 import type { ProviderCredentialDestinationV1, ProviderCredentialTransportV1 } from './credentials/v1.js';
 import { ProviderCredentialTransportV1Schema } from './credentials/v1.js';
 import { ProviderEndpointUrlSyntaxSchema } from './endpointUrlSchema.js';
-import { createProviderFingerprintV1 } from './fingerprints.js';
+import {
+  createProviderFingerprintV1,
+  ProviderCatalogFingerprintV1Schema,
+  ProviderEndpointObservationFingerprintV1Schema,
+  ProviderObservationAuthorizationFingerprintV1Schema,
+  ProviderProbeRequestFingerprintV1Schema,
+  type ProviderCatalogFingerprintV1,
+  type ProviderEndpointObservationFingerprintV1,
+  type ProviderObservationAuthorizationFingerprintV1,
+  type ProviderProbeRequestFingerprintV1,
+} from './fingerprints.js';
 import {
   ProviderAccountGrantV1Schema,
   ProviderMachineGrantV1Schema,
@@ -30,6 +43,7 @@ import {
   type AssessedProviderEndpoint,
 } from './safety/index.js';
 import { ProviderAdapterBindingKeyV1Schema } from './sessions/adapterBindingKeyV1.js';
+import { ProviderOriginRelativePathSchema } from './originRelativePathSchema.js';
 
 type ProviderSecurityEndpointV1 = Readonly<{
   endpointTemplateId: string;
@@ -37,6 +51,8 @@ type ProviderSecurityEndpointV1 = Readonly<{
   url: string;
   publicHeaders?: Readonly<Record<string, string>>;
 }>;
+
+export const PROVIDER_CONNECTION_SECURITY_CONTRACT_VERSION_V1 = 1;
 
 function positiveSchemaVersion(value: number, name: string): number {
   if (!Number.isInteger(value) || value < 1) throw new TypeError(`${name} must be a positive integer`);
@@ -47,6 +63,15 @@ function normalizeDestination(destination: ProviderCredentialDestinationV1): Pro
   return destination.kind === 'httpHeader'
     ? { ...destination, name: normalizeProviderCredentialHeaderName(destination.name) }
     : { ...destination, name: normalizeProviderQueryParameterName(destination.name) };
+}
+
+export function createProviderCredentialDestinationFingerprintV1(
+  destination: ProviderCredentialDestinationV1 | null,
+): string {
+  return createProviderFingerprintV1(
+    'credential-destination',
+    destination === null ? null : normalizeDestination(destination),
+  );
 }
 
 function normalizeTransport(transport: ProviderCredentialTransportV1): ProviderCredentialTransportV1 {
@@ -73,6 +98,7 @@ export function createProviderConnectionSecurityFingerprintV1(input: Readonly<{
   endpoints: readonly ProviderSecurityEndpointV1[];
   catalogProbes: readonly ProviderCatalogProbeV1[];
   availabilityProbe?: ProviderCatalogProbeV1;
+  catalogFallback?: ProviderCatalogCommandFallbackV1;
   credentialTransports: readonly ProviderCredentialTransportV1[];
   modelLoad?: ProviderModelLoadDescriptorV1;
 }>): string {
@@ -87,6 +113,9 @@ export function createProviderConnectionSecurityFingerprintV1(input: Readonly<{
     catalogProbes: input.catalogProbes.map((probe) => ProviderCatalogProbeV1Schema.parse(probe)),
     availabilityProbe: input.availabilityProbe
       ? ProviderCatalogProbeV1Schema.parse(input.availabilityProbe)
+      : null,
+    catalogFallback: input.catalogFallback
+      ? ProviderCatalogCommandFallbackV1Schema.parse(input.catalogFallback)
       : null,
     credentialTransports,
     modelLoad: input.modelLoad ? ProviderModelLoadDescriptorV1Schema.parse(input.modelLoad) : null,
@@ -187,7 +216,7 @@ export function createProviderObservationAuthorizationFingerprintV1(input: Reado
     selectedProtocol: ProviderWireProtocol;
     selectedUse: 'probe' | 'runtime' | 'management';
   }> | null;
-}>): string {
+}>): ProviderObservationAuthorizationFingerprintV1 {
   if ((input.selectedSecretBindingId === null) !== (input.selectedSecretRecordFingerprint === null)) {
     throw new TypeError('Selected secret id and record fingerprint must be present together');
   }
@@ -229,25 +258,81 @@ export function createProviderObservationAuthorizationFingerprintV1(input: Reado
       destination: transport.destination,
     };
   }
-  return createProviderFingerprintV1('observation-authorization', {
+  return ProviderObservationAuthorizationFingerprintV1Schema.parse(createProviderFingerprintV1('observation-authorization', {
     selectedSecretBindingId,
     selectedSecretRecordFingerprint,
     credential,
-  });
+  }));
+}
+
+export const PROVIDER_PROBE_REQUEST_CONTRACT_V1 = Object.freeze({
+  safetyContractVersion: 1,
+  parserContractVersion: 1,
+  maxDecodedResponseBytes: PROVIDER_CATALOG_LIMITS_V1.maxCatalogResponseBytes,
+  maxModels: PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection,
+  maxModelIdLength: PROVIDER_CATALOG_LIMITS_V1.maxModelIdLength,
+  maxModelNameLength: PROVIDER_CATALOG_LIMITS_V1.maxModelNameLength,
+  maxModelDescriptionLength: PROVIDER_CATALOG_LIMITS_V1.maxModelDescriptionLength,
+} as const);
+
+export function createProviderProbeRequestFingerprintV1(input: Readonly<{
+  method: 'GET';
+  endpointUrl: string;
+  path: string;
+  parser: 'openai-models' | 'ollama-tags' | 'lmstudio-native-models';
+  publicHeaders: Readonly<Record<string, string>>;
+}>): ProviderProbeRequestFingerprintV1 {
+  if (input.method !== 'GET') throw new TypeError('Provider catalog and availability probes must use GET');
+  const endpointUrl = ProviderEndpointUrlSyntaxSchema.parse(input.endpointUrl);
+  const path = ProviderOriginRelativePathSchema.parse(input.path);
+  const parser = ProviderCatalogParserV1Schema.parse(input.parser);
+  const exactRequestUrl = new URL(path, endpointUrl).toString();
+  return ProviderProbeRequestFingerprintV1Schema.parse(createProviderFingerprintV1('probe-request', {
+    method: 'GET',
+    exactRequestUrl,
+    path,
+    parser,
+    publicHeaders: normalizeProviderPublicHeaders(input.publicHeaders),
+    contract: PROVIDER_PROBE_REQUEST_CONTRACT_V1,
+  }));
+}
+
+export function createProviderEndpointFingerprintV1(input: Readonly<{
+  endpointTemplateId: string;
+  protocol: ProviderWireProtocol;
+  probeRequestFingerprint: ProviderProbeRequestFingerprintV1;
+}>): ProviderEndpointObservationFingerprintV1 {
+  const probeRequestFingerprint = input.probeRequestFingerprint;
+  ProviderProbeRequestFingerprintV1Schema.parse(probeRequestFingerprint);
+  return ProviderEndpointObservationFingerprintV1Schema.parse(createProviderFingerprintV1('endpoint-observation', {
+    endpointTemplateId: ProviderLocalIdSchema.parse(input.endpointTemplateId),
+    protocol: ProviderWireProtocolSchema.parse(input.protocol),
+    probeRequestFingerprint,
+  }));
 }
 
 export function createProviderCatalogFingerprintV1(input: Readonly<{
-  probes: readonly Readonly<{
-    probe: ProviderCatalogProbeV1;
+  probeRequestFingerprints: readonly ProviderProbeRequestFingerprintV1[];
+  catalogFallback?: Readonly<{
+    descriptor: ProviderCatalogCommandFallbackV1;
     endpointUrl: string;
-  }>[];
-}>): string {
-  return createProviderFingerprintV1('catalog', {
-    probes: input.probes.map(({ probe, endpointUrl }) => ({
-      probe: ProviderCatalogProbeV1Schema.parse(probe),
-      endpointUrl: ProviderEndpointUrlSyntaxSchema.parse(endpointUrl),
-    })),
-  });
+  }>;
+}>): ProviderCatalogFingerprintV1 {
+  if (input.probeRequestFingerprints.length < 1
+    || input.probeRequestFingerprints.length > PROVIDER_CATALOG_LIMITS_V1.maxCatalogProbes) {
+    throw new TypeError('Catalog observations require one to three ordered probe requests');
+  }
+  const probeRequestFingerprints = input.probeRequestFingerprints.map((fingerprint) =>
+    ProviderProbeRequestFingerprintV1Schema.parse(fingerprint));
+  return ProviderCatalogFingerprintV1Schema.parse(createProviderFingerprintV1('catalog', {
+    probeRequestFingerprints,
+    ...(input.catalogFallback ? {
+      catalogFallback: {
+        descriptor: ProviderCatalogCommandFallbackV1Schema.parse(input.catalogFallback.descriptor),
+        endpointUrl: ProviderEndpointUrlSyntaxSchema.parse(input.catalogFallback.endpointUrl),
+      },
+    } : {}),
+  }));
 }
 
 export function createProviderAccountGrantFingerprintV1(input: ProviderAccountGrantV1): string {

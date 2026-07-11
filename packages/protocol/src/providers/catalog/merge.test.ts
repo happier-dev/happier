@@ -2,13 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ProviderCatalogLimitError,
+  ProviderCatalogTransitionStateV1Schema,
   applyProviderCatalogRefreshV1,
   mergeProviderCatalogV1,
+  resolveProviderCatalogReferenceV1,
 } from './merge.js';
 
 describe('provider catalog merge', () => {
   it('keeps verified static facts, permits only manual name overrides, and orders sources deterministically', () => {
-    const snapshot = applyProviderCatalogRefreshV1(null, {
+    const state = applyProviderCatalogRefreshV1({ snapshot: null, staleProbeModels: [] }, {
       status: 'success', observedAt: 20,
       models: [
         { id: 'probe-z', name: 'Zulu' },
@@ -28,8 +30,7 @@ describe('provider catalog merge', () => {
         { id: 'static-a', name: 'My Static A', addedAt: 8 },
         { id: 'manual-early', addedAt: 1 },
       ],
-      probeSnapshot: snapshot.snapshot,
-      staleProbeModels: snapshot.disappearedModels,
+      probeState: state,
     });
     expect(merged.rows.map((row) => row.descriptor.id)).toEqual([
       'static-b', 'static-a', 'manual-early', 'manual-late', 'probe-a', 'case', 'Case', 'probe-z',
@@ -43,25 +44,24 @@ describe('provider catalog merge', () => {
   });
 
   it('retains the last successful snapshot as stale after a failed refresh', () => {
-    const success = applyProviderCatalogRefreshV1(null, {
+    const success = applyProviderCatalogRefreshV1({ snapshot: null, staleProbeModels: [] }, {
       status: 'success', observedAt: 20, models: [{ id: 'model-a', name: 'A' }],
     });
-    const failed = applyProviderCatalogRefreshV1(success.snapshot, { status: 'failed' });
-    expect(failed.snapshot).toEqual({ ...success.snapshot, stale: true });
-    expect(failed.disappearedModels).toEqual([]);
+    const failed = applyProviderCatalogRefreshV1(success, { status: 'failed', failedAt: 25 });
+    expect(failed.snapshot).toEqual({ ...success.snapshot, stale: true, staleAt: 25 });
+    expect(failed.staleProbeModels).toEqual([]);
   });
 
   it('removes disappeared probe-only models from normal rows while retaining stale rendering data', () => {
-    const previous = applyProviderCatalogRefreshV1(null, {
+    const previous = applyProviderCatalogRefreshV1({ snapshot: null, staleProbeModels: [] }, {
       status: 'success', observedAt: 20,
       models: [{ id: 'gone', name: 'Gone' }, { id: 'kept', name: 'Kept' }],
     });
-    const refreshed = applyProviderCatalogRefreshV1(previous.snapshot, {
+    const refreshed = applyProviderCatalogRefreshV1(previous, {
       status: 'success', observedAt: 30, models: [{ id: 'kept', name: 'Kept' }],
     });
     const merged = mergeProviderCatalogV1({
-      staticModels: [], manualModels: [], probeSnapshot: refreshed.snapshot,
-      staleProbeModels: refreshed.disappearedModels,
+      staticModels: [], manualModels: [], probeState: refreshed,
     });
     expect(merged.rows.map((row) => row.descriptor.id)).toEqual(['kept']);
     expect(merged.staleRows.find((row) => row.descriptor.id === 'gone')).toMatchObject({
@@ -73,15 +73,16 @@ describe('provider catalog merge', () => {
     expect(() => mergeProviderCatalogV1({
       staticModels: [],
       manualModels: Array.from({ length: 5_001 }, (_, index) => ({ id: `m-${index}`, addedAt: index })),
-      probeSnapshot: null,
-      staleProbeModels: [],
+      probeState: { snapshot: null, staleProbeModels: [] },
     })).toThrow(ProviderCatalogLimitError);
   });
 
   it('retains arbitrary vendor model ids that coincide with object prototype keys', () => {
     const merged = mergeProviderCatalogV1({
-      staticModels: [], manualModels: [], probeSnapshot: null,
-      staleProbeModels: [{ id: '__proto__', name: 'Vendor prototype model' }],
+      staticModels: [], manualModels: [], probeState: {
+        snapshot: { models: [], observedAt: 2, stale: false },
+        staleProbeModels: [{ id: '__proto__', name: 'Vendor prototype model' }],
+      },
     });
     expect(merged.staleRows.map((row) => row.descriptor.id)).toEqual(['__proto__']);
   });
@@ -98,26 +99,180 @@ describe('provider catalog merge', () => {
       return models;
     };
     const cases = [
-      { staticModels: throwingModels(5_001), manualModels: [], probeSnapshot: null, staleProbeModels: [] },
-      { staticModels: [], manualModels: throwingManualModels(501), probeSnapshot: null, staleProbeModels: [] },
-      { staticModels: [], manualModels: [], probeSnapshot: { models: throwingModels(5_001), observedAt: 1, stale: false }, staleProbeModels: [] },
-      { staticModels: [], manualModels: [], probeSnapshot: null, staleProbeModels: throwingModels(5_001) },
+      { staticModels: throwingModels(5_001), manualModels: [], probeState: { snapshot: null, staleProbeModels: [] } },
+      { staticModels: [], manualModels: throwingManualModels(501), probeState: { snapshot: null, staleProbeModels: [] } },
+      { staticModels: [], manualModels: [], probeState: { snapshot: { models: throwingModels(5_001), observedAt: 1, stale: false }, staleProbeModels: [] } },
+      { staticModels: [], manualModels: [], probeState: { snapshot: null, staleProbeModels: throwingModels(5_001) } },
     ];
     for (const input of cases) {
       expect(() => mergeProviderCatalogV1(input)).toThrowError(ProviderCatalogLimitError);
     }
     expect(() => applyProviderCatalogRefreshV1({
-      models: throwingModels(5_001), observedAt: 1, stale: false,
-    }, { status: 'failed' })).toThrowError(ProviderCatalogLimitError);
+      snapshot: { models: throwingModels(5_001), observedAt: 1, stale: false }, staleProbeModels: [],
+    }, { status: 'failed', failedAt: 2 })).toThrowError(ProviderCatalogLimitError);
   });
 
   it('bounds active and immediately-prior stale rows independently', () => {
     const merged = mergeProviderCatalogV1({
       staticModels: Array.from({ length: 5_000 }, (_, index) => ({ id: `active-${index}`, name: `Active ${index}` })),
-      manualModels: [], probeSnapshot: null,
-      staleProbeModels: Array.from({ length: 5_000 }, (_, index) => ({ id: `stale-${index}` })),
+      manualModels: [], probeState: {
+        snapshot: { models: [], observedAt: 2, stale: false },
+        staleProbeModels: Array.from({ length: 5_000 }, (_, index) => ({ id: `stale-${index}` })),
+      },
     });
     expect(merged.rows).toHaveLength(5_000);
     expect(merged.staleRows).toHaveLength(5_000);
+  });
+
+  it('preserves exactly one disappeared set across failure and replaces it on the next success', () => {
+    const first = applyProviderCatalogRefreshV1({ snapshot: null, staleProbeModels: [] }, {
+      status: 'success', observedAt: 10,
+      models: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }],
+    });
+    const omission = applyProviderCatalogRefreshV1(first, {
+      status: 'success', observedAt: 20, models: [{ id: 'b', name: 'B' }],
+    });
+    expect(omission.staleProbeModels.map((model) => model.id)).toEqual(['a']);
+
+    const failure = applyProviderCatalogRefreshV1(omission, { status: 'failed', failedAt: 25 });
+    expect(failure.staleProbeModels.map((model) => model.id)).toEqual(['a']);
+    expect(failure.snapshot).toMatchObject({ observedAt: 20, stale: true, staleAt: 25 });
+
+    const next = applyProviderCatalogRefreshV1(failure, {
+      status: 'success', observedAt: 30, models: [{ id: 'c', name: 'C' }],
+    });
+    expect(next.staleProbeModels.map((model) => model.id)).toEqual(['b']);
+    expect(next.snapshot).toMatchObject({ observedAt: 30, stale: false });
+    expect(next.snapshot).not.toHaveProperty('staleAt');
+  });
+
+  it('rejects a failed refresh timestamp earlier than the retained observation', () => {
+    const previous = applyProviderCatalogRefreshV1({ snapshot: null, staleProbeModels: [] }, {
+      status: 'success', observedAt: 20, models: [{ id: 'a' }],
+    });
+    expect(() => applyProviderCatalogRefreshV1(previous, {
+      status: 'failed', failedAt: 19,
+    })).toThrowError(/cannot precede/u);
+  });
+
+  it('accepts the exact manual bound and rejects an over-bound union', () => {
+    const merged = mergeProviderCatalogV1({
+      staticModels: [],
+      manualModels: Array.from({ length: 500 }, (_, index) => ({ id: `m-${index}`, addedAt: index })),
+      probeState: { snapshot: null, staleProbeModels: [] },
+    });
+    expect(merged.rows).toHaveLength(500);
+    expect(() => mergeProviderCatalogV1({
+      staticModels: Array.from({ length: 5_000 }, (_, index) => ({
+        id: `static-${index}`, name: `Static ${index}`,
+      })),
+      manualModels: [{ id: 'one-more', addedAt: 1 }],
+      probeState: { snapshot: null, staleProbeModels: [] },
+    })).toThrowError(ProviderCatalogLimitError);
+  });
+
+  it('resolves active, stale, and fully pruned exact refs without any visibility input', () => {
+    const merged = mergeProviderCatalogV1({
+      staticModels: [{ id: 'listed', name: 'Listed' }],
+      manualModels: [],
+      probeState: {
+        snapshot: { models: [], observedAt: 2, stale: false },
+        staleProbeModels: [{ id: 'stale', name: 'Stale name' }],
+      },
+    });
+    expect(resolveProviderCatalogReferenceV1({
+      modelId: 'listed', activeRows: merged.rows, staleRows: merged.staleRows,
+      manualModelPolicy: 'catalog-only', agentSupportsFreeformModelIds: false,
+    })).toMatchObject({ status: 'listed', row: { descriptor: { id: 'listed' } } });
+    expect(resolveProviderCatalogReferenceV1({
+      modelId: 'stale', activeRows: merged.rows, staleRows: merged.staleRows,
+      manualModelPolicy: 'allowed', agentSupportsFreeformModelIds: true,
+    })).toEqual({
+      status: 'not_currently_listed',
+      descriptor: { id: 'stale', name: 'Stale name' },
+      provenance: 'stale_catalog',
+    });
+    expect(resolveProviderCatalogReferenceV1({
+      modelId: 'pruned/default', activeRows: merged.rows, staleRows: merged.staleRows,
+      manualModelPolicy: 'allowed', agentSupportsFreeformModelIds: true,
+      displaySnapshot: { name: 'Previously selected' },
+    })).toEqual({
+      status: 'not_currently_listed',
+      descriptor: { id: 'pruned/default', name: 'Previously selected' },
+      provenance: 'display_snapshot',
+    });
+  });
+
+  it('fails stale and pruned refs unless provider and agent both allow freeform ids', () => {
+    const base = {
+      modelId: 'default', activeRows: [], staleRows: [], displaySnapshot: { name: 'Literal default' },
+    } as const;
+    for (const policy of [
+      { manualModelPolicy: 'catalog-only' as const, agentSupportsFreeformModelIds: true },
+      { manualModelPolicy: 'allowed' as const, agentSupportsFreeformModelIds: false },
+    ]) {
+      expect(resolveProviderCatalogReferenceV1({ ...base, ...policy })).toEqual({
+        status: 'not_found', errorCode: 'provider_model_not_found',
+      });
+    }
+  });
+
+  it('rejects an exact model appearing in both active and stale reference inputs', () => {
+    const row = {
+      descriptor: { id: 'same', name: 'Same' },
+      sources: { manual: false, static: false, probe: true },
+      confidence: 'probe' as const,
+      catalogStale: false,
+    };
+    expect(() => resolveProviderCatalogReferenceV1({
+      modelId: 'same',
+      activeRows: [row],
+      staleRows: [{ ...row, catalogStale: true, stale: true }],
+      manualModelPolicy: 'allowed',
+      agentSupportsFreeformModelIds: true,
+    })).toThrowError(/active and stale/u);
+  });
+
+  it('rejects catalog rows placed in the wrong active or stale collection', () => {
+    const row = {
+      descriptor: { id: 'model-a', name: 'A' },
+      sources: { manual: false, static: false, probe: true },
+      confidence: 'probe' as const,
+      catalogStale: true,
+    };
+    const base = {
+      modelId: 'model-a', manualModelPolicy: 'allowed' as const,
+      agentSupportsFreeformModelIds: true,
+    };
+    expect(() => resolveProviderCatalogReferenceV1({
+      ...base, activeRows: [], staleRows: [row],
+    })).toThrowError(/stale row/u);
+    expect(() => resolveProviderCatalogReferenceV1({
+      ...base, activeRows: [{ ...row, stale: true }], staleRows: [],
+    })).toThrowError(/active row/u);
+  });
+
+  it('rejects duplicate active ids at the combined transition schema boundary', () => {
+    expect(ProviderCatalogTransitionStateV1Schema.safeParse({
+      snapshot: {
+        models: [{ id: 'same' }, { id: 'same', name: 'Duplicate' }],
+        observedAt: 1,
+        stale: false,
+      },
+      staleProbeModels: [],
+    }).success).toBe(false);
+  });
+
+  it('rejects malformed freeform-policy values at the public exact-reference boundary', () => {
+    const base = {
+      modelId: 'model-a', activeRows: [], staleRows: [],
+      manualModelPolicy: 'allowed', agentSupportsFreeformModelIds: true,
+    };
+    expect(() => resolveProviderCatalogReferenceV1({
+      ...base, agentSupportsFreeformModelIds: 'yes',
+    } as unknown as Parameters<typeof resolveProviderCatalogReferenceV1>[0])).toThrow();
+    expect(() => resolveProviderCatalogReferenceV1({
+      ...base, manualModelPolicy: 'sometimes',
+    } as unknown as Parameters<typeof resolveProviderCatalogReferenceV1>[0])).toThrow();
   });
 });

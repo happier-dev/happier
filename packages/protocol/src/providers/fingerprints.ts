@@ -1,5 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2';
 import { utf8ToBytes } from '@noble/hashes/utils';
+import { z } from 'zod';
 
 import { encodeBase64 } from '../crypto/base64.js';
 
@@ -7,12 +8,36 @@ export type ProviderFingerprintDomainV1 =
   | 'connection-security'
   | 'binding-security'
   | 'endpoint-set'
+  | 'endpoint-observation'
+  | 'probe-request'
   | 'compatibility'
   | 'catalog'
   | 'observation-authorization'
   | 'account-grant'
   | 'machine-grant'
-  | 'saved-secret-record';
+  | 'saved-secret-record'
+  | 'credential-destination'
+  | 'legacy-profile-migration-source'
+  | 'legacy-profile-migration-conflict';
+
+function canonicalFingerprintSchema(prefix: string) {
+  return z.string().min(1).max(256)
+    .refine((value) => value === value.trim(), 'Fingerprint must already be canonical')
+    .startsWith(prefix);
+}
+
+export const ProviderProbeRequestFingerprintV1Schema = canonicalFingerprintSchema('probe-request:v1:')
+  .brand<'ProviderProbeRequestFingerprintV1'>();
+export type ProviderProbeRequestFingerprintV1 = z.infer<typeof ProviderProbeRequestFingerprintV1Schema>;
+export const ProviderEndpointObservationFingerprintV1Schema = canonicalFingerprintSchema('endpoint-observation:v1:')
+  .brand<'ProviderEndpointObservationFingerprintV1'>();
+export type ProviderEndpointObservationFingerprintV1 = z.infer<typeof ProviderEndpointObservationFingerprintV1Schema>;
+export const ProviderCatalogFingerprintV1Schema = canonicalFingerprintSchema('catalog:v1:')
+  .brand<'ProviderCatalogFingerprintV1'>();
+export type ProviderCatalogFingerprintV1 = z.infer<typeof ProviderCatalogFingerprintV1Schema>;
+export const ProviderObservationAuthorizationFingerprintV1Schema = canonicalFingerprintSchema('observation-authorization:v1:')
+  .brand<'ProviderObservationAuthorizationFingerprintV1'>();
+export type ProviderObservationAuthorizationFingerprintV1 = z.infer<typeof ProviderObservationAuthorizationFingerprintV1Schema>;
 
 type CanonicalJson = null | boolean | number | string | readonly CanonicalJson[] | Readonly<{ [key: string]: CanonicalJson }>;
 

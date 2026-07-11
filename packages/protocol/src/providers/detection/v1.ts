@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
 import { ProviderCatalogProbeV1Schema } from '../catalog/descriptorV1.js';
+import { ProviderEndpointUrlSyntaxSchema } from '../endpointUrlSchema.js';
+import {
+  ProviderConnectionIdSchema,
+  ProviderContributionKeySchema,
+  ProviderLocalIdSchema,
+  ProviderMachineIdSchema,
+} from '../ids.js';
 
 function isLiteralCommandToken(value: string): boolean {
   return !/[\u0000-\u001f\u007f]/u.test(value)
@@ -18,6 +25,16 @@ const ExecutableLookupNameSchema = z.string().trim().min(1).max(256).refine(
   'Executable lookup names must be PATH/application basenames, not paths',
 );
 const LookupNamesSchema = z.array(ExecutableLookupNameSchema).min(1).max(16);
+const EnvironmentVariableNameSchema = z.string().min(1).max(128).regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
+
+export const ProviderCatalogCommandFallbackV1Schema = z.object({
+  endpointTemplateId: ProviderLocalIdSchema,
+  lookupNames: LookupNamesSchema,
+  fixedArgs: z.array(BoundedTokenSchema).max(32),
+  parser: z.literal('ollama-list-table'),
+  endpointEnvName: EnvironmentVariableNameSchema.optional(),
+}).strict();
+export type ProviderCatalogCommandFallbackV1 = z.infer<typeof ProviderCatalogCommandFallbackV1Schema>;
 
 export const ProviderDetectionDescriptorV1Schema = z.object({
   v: z.literal(1),
@@ -36,6 +53,7 @@ export const ProviderDetectionDescriptorV1Schema = z.object({
     fixedArgs: z.array(BoundedTokenSchema).max(32),
     parser: z.enum(['exit-zero-running', 'lms-status-json']),
   }).strict().optional(),
+  catalogFallback: ProviderCatalogCommandFallbackV1Schema.optional(),
   managedStart: z.object({
     lookupNames: LookupNamesSchema,
     fixedArgs: z.array(BoundedTokenSchema).max(32),
@@ -58,3 +76,38 @@ export type ProviderDiscoveryCandidateEvidenceV1 = z.infer<typeof ProviderDiscov
 
 export const ManagedProviderProcessOwnershipSchema = z.enum(['owned', 'adopted']);
 export type ManagedProviderProcessOwnership = z.infer<typeof ManagedProviderProcessOwnershipSchema>;
+
+const ProviderDiscoveryCandidateConnectionV1Schema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('matched'), connectionId: ProviderConnectionIdSchema }).strict(),
+  z.object({ status: z.literal('enable_default') }).strict(),
+  z.object({ status: z.literal('requires_named_connection') }).strict(),
+]);
+
+/**
+ * Redacted pre-connection evidence derived from the daemon's local-listener inventory.
+ * A candidate is not endpoint availability and deliberately carries no process facts,
+ * model count, credential state, or implicit connection identity.
+ */
+export const ProviderDiscoveryCandidateV1Schema = z.object({
+  v: z.literal(1),
+  machineId: ProviderMachineIdSchema,
+  contributionKey: ProviderContributionKeySchema,
+  providerName: z.string().trim().min(1).max(128),
+  endpointTemplateId: ProviderLocalIdSchema,
+  normalizedEndpointUrl: ProviderEndpointUrlSyntaxSchema,
+  evidence: ProviderDiscoveryCandidateEvidenceV1Schema,
+  ownership: ManagedProviderProcessOwnershipSchema,
+  connection: ProviderDiscoveryCandidateConnectionV1Schema,
+}).strict();
+export type ProviderDiscoveryCandidateV1 = z.infer<typeof ProviderDiscoveryCandidateV1Schema>;
+
+/** Local binary/application presence when no listening candidate exists. */
+export const ProviderLocalInstallationSummaryV1Schema = z.object({
+  v: z.literal(1),
+  machineId: ProviderMachineIdSchema,
+  contributionKey: ProviderContributionKeySchema,
+  providerName: z.string().trim().min(1).max(128),
+  status: z.enum(['installed_not_running', 'app_running_server_off']),
+  managedStartAvailable: z.boolean(),
+}).strict();
+export type ProviderLocalInstallationSummaryV1 = z.infer<typeof ProviderLocalInstallationSummaryV1Schema>;

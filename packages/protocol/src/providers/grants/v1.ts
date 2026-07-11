@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from '../ids.js';
+import { ProviderProbeRequestFingerprintV1Schema } from '../fingerprints.js';
 
 const FingerprintSchema = z.string().trim().min(1).max(256);
 
@@ -28,7 +29,7 @@ export const ProviderProbeAuthorizationV1Schema = z.object({
   machineId: ProviderMachineIdSchema,
   endpointSetFingerprint: FingerprintSchema,
   credentialDestinationFingerprint: FingerprintSchema,
-  probeRequestFingerprint: FingerprintSchema,
+  probeRequestFingerprint: ProviderProbeRequestFingerprintV1Schema,
   selectedSecretBindingId: z.string().trim().min(1).max(256).nullable(),
   selectedSecretRecordFingerprint: FingerprintSchema.nullable(),
   use: z.literal('probe'),

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { ProviderConnectionIdSchema, ProviderMachineIdSchema } from './ids.js';
 
 export const ProviderErrorCodeV1Schema = z.enum([
-  'provider_connection_not_found', 'provider_contribution_unavailable', 'provider_connection_disabled',
+  'provider_feature_disabled', 'provider_connection_not_found', 'provider_contribution_unavailable', 'provider_connection_disabled',
   'provider_account_grant_stale', 'provider_not_enabled_on_machine', 'provider_machine_grant_stale',
   'provider_incompatible_with_agent', 'provider_compatibility_unverified', 'provider_secret_missing',
   'provider_credential_transport_unavailable', 'provider_endpoint_unreachable', 'provider_endpoint_unavailable',
@@ -11,18 +11,23 @@ export const ProviderErrorCodeV1Schema = z.enum([
   'provider_probe_response_invalid', 'provider_model_not_found', 'provider_model_unloaded',
   'provider_authorization_changed', 'provider_binding_changed', 'provider_switch_unsupported',
   'provider_probe_authorization_invalid', 'provider_settings_limit_exceeded',
+  'provider_settings_invalid', 'provider_connection_invalid',
+  'provider_profile_migration_source_changed', 'provider_profile_migration_source_not_found',
+  'provider_profile_migration_conflict',
 ]);
 export type ProviderErrorCodeV1 = z.infer<typeof ProviderErrorCodeV1Schema>;
 
 export const ProviderRecoveryActionV1Schema = z.enum([
-  'choose_connection', 'restore_plugin', 'enable_connection', 'review_account_grant', 'enable_on_machine',
+  'review_features', 'choose_connection', 'restore_plugin', 'enable_connection', 'review_account_grant', 'enable_on_machine',
   'review_machine_grant', 'review_compatibility', 'add_secret', 'review_credential_transport',
   'review_connection', 'retry', 'replace_secret', 'choose_model', 'load_model', 'review_and_restart',
   'restart_probe', 'reduce_provider_settings',
+  'review_profile_migration',
 ]);
 export type ProviderRecoveryActionV1 = z.infer<typeof ProviderRecoveryActionV1Schema>;
 
 const ERROR_DEFAULTS = {
+  provider_feature_disabled: [false, 'review_features'],
   provider_connection_not_found: [false, 'choose_connection'],
   provider_contribution_unavailable: [false, 'restore_plugin'],
   provider_connection_disabled: [false, 'enable_connection'],
@@ -46,6 +51,11 @@ const ERROR_DEFAULTS = {
   provider_switch_unsupported: [false, 'review_and_restart'],
   provider_probe_authorization_invalid: [false, 'restart_probe'],
   provider_settings_limit_exceeded: [false, 'reduce_provider_settings'],
+  provider_settings_invalid: [false, 'review_connection'],
+  provider_connection_invalid: [false, 'review_connection'],
+  provider_profile_migration_source_changed: [false, 'review_profile_migration'],
+  provider_profile_migration_source_not_found: [false, 'review_profile_migration'],
+  provider_profile_migration_conflict: [false, 'review_profile_migration'],
 } as const satisfies Record<ProviderErrorCodeV1, readonly [boolean, ProviderRecoveryActionV1]>;
 
 export const ProviderErrorV1Schema = z.object({
@@ -53,6 +63,7 @@ export const ProviderErrorV1Schema = z.object({
   code: ProviderErrorCodeV1Schema,
   connectionId: ProviderConnectionIdSchema.optional(),
   machineId: ProviderMachineIdSchema.optional(),
+  sourceProfileId: z.string().min(1).max(256).optional(),
   retryable: z.boolean(),
   retryAfterMs: z.number().int().nonnegative().max(86_400_000).optional(),
   action: ProviderRecoveryActionV1Schema,
@@ -75,7 +86,13 @@ export type ProviderErrorV1 = z.infer<typeof ProviderErrorV1Schema>;
 
 export function createProviderErrorV1(
   code: ProviderErrorCodeV1,
-  context: Readonly<{ connectionId?: string; machineId?: string; retryAfterMs?: number; modelLoadAvailable?: boolean }> = {},
+  context: Readonly<{
+    connectionId?: string;
+    machineId?: string;
+    sourceProfileId?: string;
+    retryAfterMs?: number;
+    modelLoadAvailable?: boolean;
+  }> = {},
 ): ProviderErrorV1 {
   const [retryable, action] = ERROR_DEFAULTS[code];
   const { modelLoadAvailable = false, ...errorContext } = context;

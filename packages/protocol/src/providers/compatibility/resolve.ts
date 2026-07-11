@@ -5,11 +5,14 @@ import {
   type ProviderCredentialTransportV1,
 } from '../credentials/v1.js';
 import { providerCredentialFormatKind } from '../credentials/v1.js';
-import { ProviderCompatibilityOverrideV1Schema, type ProviderCompatibilityOverrideV1 } from '../capabilities/v1.js';
+import {
+  PROVIDER_CAPABILITY_KEYS,
+  ProviderCompatibilityOverridesV1Schema,
+  type ProviderCompatibilityOverrideV1,
+} from '../capabilities/v1.js';
 import { ProviderModelDescriptorV1Schema, type ProviderModelDescriptorV1 } from '../../models/descriptor.js';
 import { createProviderFingerprintV1 } from '../fingerprints.js';
 import { ProviderAgentTargetKeySchema } from '../ids.js';
-import { readOwnRecordValue } from '../ownRecordValue.js';
 import {
   AgentProviderRequirementsV1Schema,
   type AgentProviderRequirementsV1,
@@ -42,7 +45,10 @@ function credentialReasons(
 ): string[] {
   if (!credential) return agent.credentialSupport.supportsNoAuth ? [] : ['no_auth_unsupported'];
   const matches = credential.transports.filter((transport) => matchesTransport(transport, agent, protocol));
-  if (matches.length !== 1) return ['credential_transport_unavailable'];
+  if (matches.length > 1) {
+    throw new TypeError('Multiple runtime credential transports match the selected agent protocol');
+  }
+  if (matches.length === 0) return ['credential_transport_unavailable'];
   if (credential.required === false && !agent.credentialSupport.supportsNoAuth) return ['optional_credential_no_auth_unsupported'];
   return [];
 }
@@ -53,17 +59,27 @@ export type ResolveProviderBindingCompatibilityInputV1 = Readonly<{
   credential: ProviderApiKeyCredentialRequirementV1 | undefined;
   agent: AgentProviderRequirementsV1;
   model?: ProviderModelDescriptorV1;
-  compatibilityOverrides?: Readonly<Record<string, ProviderCompatibilityOverrideV1>>;
+  compatibilityOverrides?: readonly ProviderCompatibilityOverrideV1[];
 }>;
 
-export function resolveProviderBindingCompatibilityV1(
+function findCompatibilityOverride(
+  overrides: readonly ProviderCompatibilityOverrideV1[],
+  agentTargetKey: string,
+  protocol: ProviderEndpointTemplateV1['protocol'],
+): ProviderCompatibilityOverrideV1 | undefined {
+  return overrides.find((override) =>
+    override.agentTargetKey === agentTargetKey && override.protocol === protocol);
+}
+
+function resolveProviderBindingCompatibilityV1(
   params: ResolveProviderBindingCompatibilityInputV1,
 ): ProviderBindingCompatibilityV1 {
   const agentTargetKey = ProviderAgentTargetKeySchema.parse(params.agentTargetKey);
-  const compatibilityOverride = readOwnRecordValue(params.compatibilityOverrides, agentTargetKey);
-  const needsExactModel = Boolean(params.agent.required.toolRoundTrips || params.agent.required.reasoningControls);
-  if (needsExactModel && !params.model) {
-    return { status: 'incompatible', reasons: ['model_required_for_capability_resolution'] };
+  const compatibilityOverrides = params.compatibilityOverrides ?? [];
+  const hasProtocolIntersection = params.agent.acceptsProtocols.some((protocol) =>
+    params.endpoints.some((endpoint) => endpoint.protocol === protocol));
+  if (!hasProtocolIntersection) {
+    return { status: 'incompatible', reasons: ['no_compatible_protocol'] };
   }
   const candidates: Array<ProviderBindingCompatibilityV1 & { rank: number }> = [];
   const incompatibilityReasons: string[] = [];
@@ -71,16 +87,28 @@ export function resolveProviderBindingCompatibilityV1(
   params.agent.acceptsProtocols.forEach((protocol, rank) => {
     const endpoint = params.endpoints.find((candidate) => candidate.protocol === protocol);
     if (!endpoint) return;
+    const compatibilityOverride = findCompatibilityOverride(
+      compatibilityOverrides,
+      agentTargetKey,
+      protocol,
+    );
     const reasons = credentialReasons(params.credential, params.agent, protocol);
     let modelScoped = false;
     for (const capability of Object.keys(params.agent.required) as Array<keyof typeof params.agent.required>) {
       if (!params.agent.required[capability]) continue;
       const endpointSupport = endpoint.capabilities[capability];
-      if (endpointSupport === 'unsupported') reasons.push(`capability_${capability}_unsupported`);
+      if (endpointSupport === 'unsupported') {
+        reasons.push(`capability_${capability}_unsupported`);
+        continue;
+      }
       if (endpointSupport === 'unknown') reasons.push(`capability_${capability}_unknown`);
       if (capability === 'toolRoundTrips' || capability === 'reasoningControls') {
+        if (!params.model) {
+          reasons.push('model_required_for_capability_resolution');
+          continue;
+        }
         const modelSupport = params.model?.capabilities?.[capability];
-        if (endpointSupport !== 'unsupported' && modelSupport !== 'supported') {
+        if (modelSupport !== 'supported') {
           if (modelSupport === 'unsupported') reasons.push(`model_capability_${capability}_unsupported`);
           else reasons.push(`model_capability_${capability}_unknown`);
           modelScoped = true;
@@ -89,7 +117,10 @@ export function resolveProviderBindingCompatibilityV1(
     }
 
     const uniqueReasons = [...new Set(reasons)];
-    const hard = uniqueReasons.filter((reason) => reason.includes('unsupported') || reason.includes('unavailable'));
+    const hard = uniqueReasons.filter((reason) =>
+      reason.includes('unsupported')
+      || reason.includes('unavailable')
+      || reason === 'model_required_for_capability_resolution');
     if (compatibilityOverride?.status === 'incompatible') {
       hard.push('compatibility_override_incompatible');
     }
@@ -147,24 +178,27 @@ function positiveAdapterVersion(value: number): number {
   return value;
 }
 
-function normalizeAgentCompatibilityFacts(agent: AgentProviderRequirementsV1) {
-  const parsed = AgentProviderRequirementsV1Schema.parse(agent);
-  const apiKeyTransports = parsed.credentialSupport.apiKeyTransports.map((transport) => ({
-    protocol: transport.protocol,
-    destination: {
-      ...transport.destination,
-      names: transport.destination.names === 'anyValidated'
-        ? 'anyValidated' as const
-        : [...transport.destination.names]
-          .map((name) => transport.destination.kind === 'httpHeader' ? name.toLowerCase() : name)
-          .sort(),
-      formats: [...transport.destination.formats].sort(),
-    },
-  })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+function normalizeCompatibilityOverrides(
+  input: readonly ProviderCompatibilityOverrideV1[] | undefined,
+): readonly ProviderCompatibilityOverrideV1[] {
+  return ProviderCompatibilityOverridesV1Schema.parse(input ?? []);
+}
+
+function candidateCredentialProjection(
+  credential: ProviderApiKeyCredentialRequirementV1 | undefined,
+  agent: AgentProviderRequirementsV1,
+  protocol: ProviderEndpointTemplateV1['protocol'],
+) {
+  if (!credential) return { kind: 'none' as const, supportsNoAuth: agent.credentialSupport.supportsNoAuth };
+  const runtimeMatches = credential.transports
+    .filter((transport) => matchesTransport(transport, agent, protocol))
+    .map((transport) => ({ destination: transport.destination }))
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
   return {
-    acceptsProtocols: parsed.acceptsProtocols,
-    required: parsed.required,
-    credentialSupport: { supportsNoAuth: parsed.credentialSupport.supportsNoAuth, apiKeyTransports },
+    kind: 'apiKey' as const,
+    required: credential.required,
+    supportsNoAuth: credential.required === false ? agent.credentialSupport.supportsNoAuth : null,
+    runtimeMatches,
   };
 }
 
@@ -188,39 +222,53 @@ export function resolveProviderBindingCompatibilityWithFingerprintV1(
     : ProviderApiKeyCredentialRequirementV1Schema.parse(params.credential);
   const agent = AgentProviderRequirementsV1Schema.parse(params.agent);
   const model = params.model === undefined ? undefined : ProviderModelDescriptorV1Schema.parse(params.model);
-  const rawCompatibilityOverride = readOwnRecordValue(params.compatibilityOverrides, agentTargetKey);
-  const compatibilityOverride = rawCompatibilityOverride === undefined
-    ? undefined
-    : ProviderCompatibilityOverrideV1Schema.parse(rawCompatibilityOverride);
-  const compatibilityOverrides = compatibilityOverride === undefined
-    ? undefined
-    : { [agentTargetKey]: compatibilityOverride };
+  const compatibilityOverrides = normalizeCompatibilityOverrides(params.compatibilityOverrides);
   const result = resolveProviderBindingCompatibilityV1({
     agentTargetKey,
     endpoints,
     credential,
     agent,
     ...(model ? { model } : {}),
-    ...(compatibilityOverrides ? { compatibilityOverrides } : {}),
+    compatibilityOverrides,
   });
-  const selectedRuntimeTransport = result.status === 'incompatible' || credential === undefined
-    ? null
-    : credential.transports.find((transport) => matchesTransport(transport, agent, result.selectedProtocol)) ?? null;
+  const requiredCapabilities = PROVIDER_CAPABILITY_KEYS.filter((capability) => agent.required[capability]);
+  const modelSensitiveRequiredCapabilities = requiredCapabilities.filter(
+    (capability): capability is 'toolRoundTrips' | 'reasoningControls' =>
+      capability === 'toolRoundTrips' || capability === 'reasoningControls',
+  );
+  const modelSensitiveCapabilities = modelSensitiveRequiredCapabilities.filter((capability) =>
+    agent.acceptsProtocols.some((protocol) => {
+      const endpoint = endpoints.find((candidate) => candidate.protocol === protocol);
+      return endpoint !== undefined && endpoint.capabilities[capability] !== 'unsupported';
+    }));
+  const candidateFacts = agent.acceptsProtocols.flatMap((protocol) => {
+    const endpoint = endpoints.find((candidate) => candidate.protocol === protocol);
+    if (!endpoint) return [];
+    const compatibilityOverride = findCompatibilityOverride(compatibilityOverrides, agentTargetKey, protocol);
+    return [{
+      protocol,
+      capabilities: Object.fromEntries(requiredCapabilities.map((capability) => [
+        capability,
+        endpoint.capabilities[capability],
+      ])),
+      credential: candidateCredentialProjection(credential, agent, protocol),
+      compatibilityOverride: compatibilityOverride === undefined ? null : {
+        status: compatibilityOverride.status,
+        evidence: compatibilityOverride.evidence ?? null,
+      },
+    }];
+  });
   const compatibilityFingerprint = createProviderFingerprintV1('compatibility', {
-    agentTargetKey,
     adapterVersion,
-    agent: normalizeAgentCompatibilityFacts(agent),
-    endpoints: endpoints.map((endpoint) => ({
-      protocol: endpoint.protocol,
-      capabilities: endpoint.capabilities,
-    })).sort((a, b) => a.protocol.localeCompare(b.protocol)),
-    credentialRequired: credential?.required ?? null,
-    selectedRuntimeTransport: selectedRuntimeTransport === null ? null : {
-      protocol: result.status === 'incompatible' ? null : result.selectedProtocol,
-      destination: selectedRuntimeTransport.destination,
+    requiredCapabilities,
+    candidates: candidateFacts,
+    model: modelSensitiveCapabilities.length === 0 ? null : {
+      id: model?.id ?? null,
+      capabilities: Object.fromEntries(modelSensitiveCapabilities.map((capability) => [
+        capability,
+        model?.capabilities?.[capability] ?? null,
+      ])),
     },
-    model: model ? { id: model.id, capabilities: model.capabilities ?? null } : null,
-    compatibilityOverride: compatibilityOverride ?? null,
     result,
   });
   return { result, compatibilityFingerprint };
