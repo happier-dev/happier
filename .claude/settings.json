@@ -5,44 +5,7 @@
     "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000"
   },
   "hooks": {
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/compaction-reminder.sh",
-            "type": "command"
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
-      {
-        "hooks": [
-          {
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/remind-tdd.sh",
-            "type": "command"
-          }
-        ],
-        "matcher": "Write|Edit"
-      },
-      {
-        "hooks": [
-          {
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-worktree.sh",
-            "type": "command"
-          }
-        ],
-        "matcher": "Write|Edit|Glob|Grep|Bash"
-      },
-      {
-        "hooks": [
-          {
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/commit-guard.sh",
-            "type": "command"
-          }
-        ],
-        "matcher": "Bash(git commit:*)"
-      },
       {
         "hooks": [
           {
@@ -51,54 +14,6 @@
           }
         ],
         "matcher": "*"
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-cleanup.sh",
-            "type": "command"
-          }
-        ]
-      }
-    ],
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-init.sh",
-            "type": "command"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/stop-continuation.sh",
-            "type": "command"
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/inject-session-context.sh",
-            "type": "command"
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/inject-task-rules.sh",
-            "type": "command"
-          }
-        ]
       }
     ]
   },
@@ -109,14 +24,17 @@
       "Write(./**)",
       "Glob(./**)",
       "Grep(./**)",
-      "Bash(edison:*)",
       "Bash(git:*)",
+      "Bash(bash:*)",
       "Bash(ls:*)",
       "Bash(cat:*)",
       "Bash(grep:*)",
+      "Bash(rg:*)",
       "Bash(find:*)",
       "Bash(sed:*)",
       "Bash(awk:*)",
+      "Bash(node:*)",
+      "Bash(python3:*)",
       "Bash(mkdir:*)",
       "Bash(cp:*)",
       "Bash(mv:*)",

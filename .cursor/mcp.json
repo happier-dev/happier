@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "argent": {
+      "command": "argent",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}
