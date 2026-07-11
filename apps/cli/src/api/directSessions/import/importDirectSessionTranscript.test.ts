@@ -15,15 +15,9 @@ vi.mock('@/backends/catalog', () => ({
   getDirectSessionProviderOps: (...args: unknown[]) => getDirectSessionProviderOpsMock(...args),
 }));
 
-vi.mock('@/session/transport/http/sessionsHttp', async () => {
-  const actual = await vi.importActual<typeof import('@/session/transport/http/sessionsHttp')>(
-    '@/session/transport/http/sessionsHttp',
-  );
-  return {
-    ...actual,
-    commitSessionStoredMessage: (...args: unknown[]) => commitSessionStoredMessageMock(...args),
-  };
-});
+vi.mock('@/session/transport/http/sessionsHttp', () => ({
+  commitSessionStoredMessage: (...args: unknown[]) => commitSessionStoredMessageMock(...args),
+}));
 
 const pngBytes = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lU6w9wAAAABJRU5ErkJggg==',
@@ -83,6 +77,7 @@ describe('importDirectSessionTranscript', () => {
         id: 'direct-item-1',
         localId: 'direct-item-1',
         createdAtMs: 123,
+        messageRole: 'event',
         raw: {
           role: 'agent',
           content: { type: 'output', data: { type: 'message', message: 'generated image' } },
@@ -119,6 +114,7 @@ describe('importDirectSessionTranscript', () => {
 
       expect(commitSessionStoredMessageMock).toHaveBeenCalledTimes(1);
       const committed = commitSessionStoredMessageMock.mock.calls[0]?.[0];
+      expect(committed.messageRole).toBe('event');
       expect(committed.content.t).toBe('plain');
       const committedRaw = committed.content.v as Record<string, unknown>;
       const committedMeta = committedRaw.meta as Record<string, unknown>;

@@ -293,6 +293,7 @@ export async function importDirectSessionTranscript(params: Readonly<{
       token: params.credentials.token,
       sessionId: params.sessionId,
       content,
+      messageRole: item.messageRole ?? undefined,
       localId: makeImportLocalId({
         providerId: params.linked.providerId,
         remoteSessionId: params.linked.remoteSessionId,
