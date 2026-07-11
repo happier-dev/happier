@@ -1,3 +1,3 @@
 export * from './TokenUsageRing';
-export * from './tokenUsageFormatting';
+export * from './tokenUsageProgress';
 export * from './tokenUsageTone';

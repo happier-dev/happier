@@ -6,7 +6,7 @@ import { Svg, Circle } from 'react-native-svg';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 
-import { resolveTokenUsageProgressRatio } from './tokenUsageFormatting';
+import { resolveTokenUsageProgressRatio } from './tokenUsageProgress';
 import { resolveTokenUsageToneColor, type TokenUsageTone } from './tokenUsageTone';
 
 export type TokenUsageRingProps = Readonly<{
