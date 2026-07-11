@@ -1,0 +1,186 @@
+import type { ReactNode } from 'react';
+import { RevealText } from '../components/RevealText';
+import { InstallCommand } from '../components/InstallCommand';
+import { DownloadBadges } from '../components/DownloadBadges';
+
+type Step = {
+    number: number;
+    title: string;
+    description: string;
+    cta: ReactNode;
+};
+
+/**
+ * Each step owns the call-to-action it describes, so the flow reads as a
+ * self-contained checklist: download here, install here, pair here, run here.
+ */
+const STEPS: ReadonlyArray<Step> = [
+    {
+        number: 1,
+        title: 'Download the app',
+        description: 'Grab Happier from the App Store, Google Play, or as a desktop app.',
+        cta: <DownloadBadges />,
+    },
+    {
+        number: 2,
+        title: 'Install the CLI',
+        description: 'One command. Works on macOS, Linux, and Windows.',
+        cta: <InstallCommand />,
+    },
+    {
+        number: 3,
+        title: 'Pair your device',
+        description: 'Scan the QR code in your terminal to connect your phone or browser.',
+        cta: <QrChip />,
+    },
+    {
+        number: 4,
+        title: 'Start coding',
+        description: 'Run happier instead of claude or codex. Your sessions sync everywhere instantly.',
+        cta: <RunChip />,
+    },
+];
+
+export const GET_STARTED_SECTION_ID = 'get-started';
+
+export function GetStarted() {
+    return (
+        <section id={GET_STARTED_SECTION_ID} className="relative">
+            <div className="mx-auto max-w-[1400px] px-6 py-32 md:px-10 md:py-44">
+                <div className="mx-auto mb-16 max-w-[760px] text-center md:mb-20">
+                    <div
+                        className="mb-5 text-[11.5px] font-semibold uppercase tracking-[0.18em]"
+                        style={{ color: 'var(--muted)' }}
+                    >
+                        Get started
+                    </div>
+                    <RevealText
+                        as="h2"
+                        text={'Up and running\nin under a minute.'}
+                        className="font-display text-[36px] font-normal leading-[1.06] tracking-[-0.025em] md:text-[48px] lg:text-[56px]"
+                        stagger={60}
+                    />
+                </div>
+
+                {/* Vertical stepper: a timeline the eye follows top-to-bottom.
+                    Each step's CTA sits to its right on desktop (using the width)
+                    and stacks beneath the text on mobile. The connector line runs
+                    down through the numbers so the sequence is unmistakable. */}
+                <div className="mx-auto max-w-[920px]">
+                    {STEPS.map((step, idx) => {
+                        const isLast = idx === STEPS.length - 1;
+                        return (
+                            <div key={step.number} className="grid grid-cols-[40px_1fr] gap-x-5 sm:gap-x-8">
+                                {/* Left rail: number + vertical connector line */}
+                                <div className="flex flex-col items-center">
+                                    <div
+                                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[15px] font-bold"
+                                        style={{ background: 'var(--fg)', color: 'var(--bg)' }}
+                                    >
+                                        {step.number}
+                                    </div>
+                                    {!isLast && (
+                                        <div
+                                            aria-hidden
+                                            className="mt-2 w-px flex-1"
+                                            style={{
+                                                background:
+                                                    'linear-gradient(to bottom, var(--card-border) 0%, var(--card-border) 72%, transparent 100%)',
+                                            }}
+                                        />
+                                    )}
+                                </div>
+
+                                {/* Content: text on the left, this step's CTA on the right */}
+                                <div
+                                    className={`grid gap-y-5 md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-x-10 ${isLast ? 'pb-0' : 'pb-14'}`}
+                                >
+                                    <div className="pt-[7px]">
+                                        <h3
+                                            className="text-[18px] font-semibold leading-[1.3] md:text-[20px]"
+                                            style={{ color: 'var(--fg)' }}
+                                        >
+                                            {step.title}
+                                        </h3>
+                                        <p
+                                            className="mt-2 max-w-[440px] text-[14px] leading-[1.55] md:text-[15px]"
+                                            style={{ color: 'var(--muted)' }}
+                                        >
+                                            {step.description}
+                                        </p>
+                                    </div>
+                                    <div className="md:justify-self-end">{step.cta}</div>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+        </section>
+    );
+}
+
+/** A small QR placeholder for the "pair your device" step. */
+function QrChip() {
+    return (
+        <div className="inline-flex items-center gap-3">
+            <div
+                className="grid h-[72px] w-[72px] shrink-0 place-items-center rounded-xl border p-2.5"
+                style={{ borderColor: 'var(--card-border)', background: 'var(--card)' }}
+                aria-hidden
+            >
+                <svg viewBox="0 0 24 24" className="h-full w-full" style={{ color: 'var(--fg)' }}>
+                    {/* Finder squares */}
+                    <path
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        d="M3 3h6v6H3zM15 3h6v6h-6zM3 15h6v6H3z"
+                    />
+                    <rect x="5" y="5" width="2" height="2" fill="currentColor" />
+                    <rect x="17" y="5" width="2" height="2" fill="currentColor" />
+                    <rect x="5" y="17" width="2" height="2" fill="currentColor" />
+                    {/* Data modules */}
+                    <g fill="currentColor">
+                        <rect x="15" y="13" width="2" height="2" />
+                        <rect x="19" y="13" width="2" height="2" />
+                        <rect x="13" y="15" width="2" height="2" />
+                        <rect x="17" y="17" width="2" height="2" />
+                        <rect x="13" y="19" width="2" height="2" />
+                        <rect x="19" y="19" width="2" height="2" />
+                        <rect x="15" y="21" width="2" height="2" opacity="0" />
+                    </g>
+                </svg>
+            </div>
+            <span className="text-[13px] leading-[1.4]" style={{ color: 'var(--muted)' }}>
+                Scan from
+                <br />
+                your terminal
+            </span>
+        </div>
+    );
+}
+
+/** The run command for the "start coding" step. */
+function RunChip() {
+    return (
+        <div
+            role="img"
+            aria-label="Run happier instead of claude"
+            className="inline-flex items-center gap-2 rounded-2xl border px-4 py-3 font-mono text-[13px]"
+            style={{ borderColor: 'var(--card-border)', color: 'var(--fg)' }}
+        >
+            <span aria-hidden style={{ color: 'var(--muted)' }}>
+                $
+            </span>
+            <span aria-hidden>happier</span>
+            <span
+                aria-hidden
+                className="ml-1.5 line-through decoration-1"
+                style={{ color: 'var(--muted)' }}
+            >
+                claude
+            </span>
+        </div>
+    );
+}

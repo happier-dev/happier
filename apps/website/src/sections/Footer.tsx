@@ -1,34 +1,31 @@
 import { HappierMark } from '../components/HappierMark';
 
-const COLUMNS = [
+export const FOOTER_COLUMNS = [
     {
         title: 'Product',
         links: [
             { label: 'Features', href: '#features' },
-            { label: 'Sessions', href: '#sessions' },
-            { label: 'Changelog', href: '#changelog' },
-            { label: 'Roadmap', href: '#roadmap' },
+            { label: 'Get started', href: '#get-started' },
+            { label: 'Web app', href: 'https://app.happier.dev/', external: true },
+            { label: 'Docs', href: 'https://docs.happier.dev/', external: true },
         ],
     },
     {
         title: 'Open source',
         links: [
-            { label: 'GitHub', href: 'https://github.com/slopus/happier' },
-            { label: 'Self-host', href: '#self-host' },
-            { label: 'Privacy', href: '#privacy' },
-            { label: 'License', href: '#license' },
+            { label: 'GitHub', href: 'https://github.com/happier-dev/happier', external: true },
+            { label: 'Self-host', href: 'https://docs.happier.dev/deployment/self-host-runtime', external: true },
+            { label: 'License', href: 'https://github.com/happier-dev/happier/blob/main/LICENSE', external: true },
         ],
     },
     {
         title: 'Resources',
         links: [
-            { label: 'Docs', href: '#docs' },
-            { label: 'Examples', href: '#examples' },
-            { label: 'Community', href: '#community' },
-            { label: 'Contact', href: '#contact' },
+            { label: 'Changelog', href: 'https://docs.happier.dev/changelog', external: true },
+            { label: 'Discord', href: 'https://discord.gg/happier', external: true },
         ],
     },
-];
+] as const;
 
 export function Footer() {
     return (
@@ -46,7 +43,7 @@ export function Footer() {
                         </p>
                     </div>
 
-                    {COLUMNS.map((col) => (
+                    {FOOTER_COLUMNS.map((col) => (
                         <div key={col.title}>
                             <div
                                 className="mb-4 text-[12px] font-semibold uppercase tracking-[0.16em]"
@@ -59,6 +56,9 @@ export function Footer() {
                                     <li key={link.label}>
                                         <a
                                             href={link.href}
+                                            {...('external' in link && link.external
+                                                ? { target: '_blank', rel: 'noreferrer' }
+                                                : {})}
                                             className="text-[14px] transition-opacity hover:opacity-100"
                                             style={{ color: 'var(--fg)', opacity: 0.7 }}
                                         >

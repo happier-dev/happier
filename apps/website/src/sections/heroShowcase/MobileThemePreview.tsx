@@ -37,7 +37,7 @@ export function MobileThemePreview() {
         <div className="flex w-full flex-col items-center gap-5">
             <button
                 type="button"
-                className="group relative block min-h-[360px] w-full cursor-pointer appearance-none border-0 bg-transparent p-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-white/70 focus-visible:ring-offset-4 focus-visible:ring-offset-black md:min-h-0"
+                className="group relative block w-full cursor-pointer appearance-none border-0 bg-transparent p-0 text-left outline-none focus-visible:ring-2 focus-visible:ring-white/70 focus-visible:ring-offset-4 focus-visible:ring-offset-black"
                 aria-label="Preview the next Happier mobile theme"
                 onClick={advancePreview}
             >

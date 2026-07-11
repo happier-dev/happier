@@ -129,8 +129,22 @@ export function TerminalBackground() {
             }
         };
 
+        // A faint ambient texture doesn't need retina density. Capping the
+        // backing store — to 1x on touch devices, <=2x elsewhere — shrinks the
+        // full-viewport canvas layer the compositor re-uploads on every
+        // animation frame, which is the dominant cost on mobile GPUs. At these
+        // opacities (<=8%) the density change is imperceptible.
+        const computeDpr = () => {
+            const raw = window.devicePixelRatio || 1;
+            const coarse =
+                typeof window.matchMedia === 'function' &&
+                window.matchMedia('(pointer: coarse)').matches;
+            if (coarse || window.innerWidth < 768) return 1;
+            return Math.min(raw, 2);
+        };
+
         const resize = () => {
-            dpr = Math.min(window.devicePixelRatio || 1, 2);
+            dpr = computeDpr();
             cssWidth = window.innerWidth;
             cssHeight = window.innerHeight;
             canvas.width = cssWidth * dpr;
@@ -148,37 +162,118 @@ export function TerminalBackground() {
         let tickTimer = 0;
         let cancelled = false;
 
+        // Cells currently flashing. We repaint ONLY these each frame
+        // (dirty-rectangle) instead of redrawing the whole field, so a flash
+        // frame costs a handful of fillText calls rather than ~600. The visual
+        // is identical; the per-frame cost no longer blows the mobile frame
+        // budget (fillText is one of the most expensive 2D-canvas ops).
+        const active = new Set<number>();
+        const CLEAR_PAD = 5;
+        const FLASH_FRAME_MS = 33; // ~30fps is ample for an ambient fade
+
+        const drawCell = (cell: Cell, now: number) => {
+            ctx.clearRect(cell.x - CLEAR_PAD, cell.y - 1, CELL_W + CLEAR_PAD * 2, CELL_H + 2);
+            let op = cell.baseOpacity;
+            if (cell.flashUntil > now) {
+                const t = (cell.flashUntil - now) / 700;
+                op = Math.min(MAX_OPACITY * 2.5, op + 0.04 * t);
+            }
+            ctx.fillStyle = `rgba(${baseRgb}, ${op.toFixed(3)})`;
+            ctx.fillText(cell.value, cell.x, cell.y);
+        };
+
+        // Repaint the whole field at base opacity and forget in-flight flashes.
+        const resetToBase = () => {
+            drawAll();
+            active.clear();
+        };
+
+        // Pause flashing entirely while the user is actively scrolling, so the
+        // heavy work never lands mid-scroll (the documented cause of the
+        // "freeze then continue" stutter). The static field stays visible; the
+        // flash resumes the moment scrolling settles.
+        let isScrolling = false;
+        let scrollTimer = 0;
+        const onScroll = () => {
+            isScrolling = true;
+            window.clearTimeout(scrollTimer);
+            scrollTimer = window.setTimeout(() => {
+                isScrolling = false;
+                if (!cancelled && !document.hidden && !reducedMotion) resetToBase();
+            }, 160);
+        };
+
+        let lastFrame = 0;
+        const animateFlash = (ts: number) => {
+            if (cancelled) {
+                raf = 0;
+                return;
+            }
+            if (!isScrolling && ts - lastFrame >= FLASH_FRAME_MS) {
+                lastFrame = ts;
+                const now = performance.now();
+                for (const idx of active) {
+                    const cell = cells[idx];
+                    if (!cell) {
+                        active.delete(idx);
+                        continue;
+                    }
+                    drawCell(cell, now);
+                    if (cell.flashUntil <= now) active.delete(idx);
+                }
+            }
+            raf = active.size > 0 ? requestAnimationFrame(animateFlash) : 0;
+        };
+
         const tick = () => {
             if (cancelled) return;
-            const changeCount = 3 + Math.floor(Math.random() * 4);
-            for (let i = 0; i < changeCount; i += 1) {
-                const idx = Math.floor(Math.random() * cells.length);
-                if (!cells[idx]) continue;
-                cells[idx].value = randomToken();
-                cells[idx].flashUntil = performance.now() + 600;
-            }
-            drawAll();
-            const flashEnd = performance.now() + 650;
-            const animateFlash = () => {
-                if (cancelled) return;
-                drawAll();
-                if (performance.now() < flashEnd) {
-                    raf = requestAnimationFrame(animateFlash);
+            if (!isScrolling) {
+                const now = performance.now();
+                const changeCount = 3 + Math.floor(Math.random() * 4);
+                for (let i = 0; i < changeCount; i += 1) {
+                    const idx = Math.floor(Math.random() * cells.length);
+                    if (!cells[idx]) continue;
+                    cells[idx].value = randomToken();
+                    cells[idx].flashUntil = now + 600;
+                    active.add(idx);
+                    drawCell(cells[idx], now);
                 }
-            };
-            raf = requestAnimationFrame(animateFlash);
+                if (!raf && active.size > 0) raf = requestAnimationFrame(animateFlash);
+            }
             const delay = 600 + Math.random() * 900;
             tickTimer = window.setTimeout(tick, delay);
         };
 
-        if (!reducedMotion) {
+        // Pause the animation loop while the tab is hidden so it isn't burning
+        // the main thread (and, on resume, redraws cleanly).
+        const stopTicking = () => {
+            window.clearTimeout(tickTimer);
+            if (raf) cancelAnimationFrame(raf);
+            raf = 0;
+        };
+        const onVisibility = () => {
+            if (document.hidden) {
+                stopTicking();
+            } else if (!reducedMotion && !cancelled) {
+                resetToBase();
+                window.clearTimeout(tickTimer);
+                tickTimer = window.setTimeout(tick, 300);
+            }
+        };
+
+        if (!reducedMotion && !document.hidden) {
             tickTimer = window.setTimeout(tick, 500);
         }
+        document.addEventListener('visibilitychange', onVisibility);
+        window.addEventListener('scroll', onScroll, { passive: true });
 
         return () => {
             cancelled = true;
             window.removeEventListener('resize', resize);
+            window.removeEventListener('scroll', onScroll);
+            document.removeEventListener('visibilitychange', onVisibility);
             window.clearTimeout(tickTimer);
+            window.clearTimeout(scrollTimer);
             if (raf) cancelAnimationFrame(raf);
         };
     }, [theme]);
@@ -188,7 +283,11 @@ export function TerminalBackground() {
             ref={canvasRef}
             aria-hidden
             className="pointer-events-none fixed inset-0"
-            style={{ zIndex: 0 }}
+            // translateZ(0) + will-change promote the fixed canvas to its own
+            // compositor layer so iOS Safari composites it independently of
+            // scroll instead of repainting it in lockstep (a known fixed-layer
+            // scroll-jank cause).
+            style={{ zIndex: 0, transform: 'translateZ(0)', willChange: 'transform' }}
         />
     );
 }

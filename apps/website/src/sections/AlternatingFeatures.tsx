@@ -1,13 +1,17 @@
-import { FEATURES } from '../data/features';
+import { PRIMARY_FEATURES } from '../data/features';
 import { RevealText } from '../components/RevealText';
 import { DeviceVisual } from './DeviceVisual';
 import clsx from 'clsx';
 
 export function AlternatingFeatures() {
+    // overflow-x-clip on the section: the device mockups intentionally bleed
+    // past their aspect-square box (overflow-visible) for depth; clipping
+    // horizontally here keeps that bleed from causing page-level horizontal
+    // scroll on narrow single-column widths, while it stays visible within the
+    // section on wider layouts.
     return (
-        <section id="features" className="relative">
+        <section id="features" className="relative overflow-x-clip">
             <div className="mx-auto max-w-[1400px] px-6 md:px-10">
-                {/* Section eyebrow + heading */}
                 <div className="mx-auto mb-20 max-w-[760px] text-center md:mb-28">
                     <div
                         className="mb-5 text-[11.5px] font-semibold uppercase tracking-[0.18em]"
@@ -32,7 +36,7 @@ export function AlternatingFeatures() {
                 </div>
 
                 <div className="space-y-32 md:space-y-44 lg:space-y-52">
-                    {FEATURES.map((feature, idx) => {
+                    {PRIMARY_FEATURES.map((feature, idx) => {
                         const flip = idx % 2 === 1;
                         return (
                             <article
@@ -68,6 +72,8 @@ export function AlternatingFeatures() {
                                         kind={feature.visual}
                                         accent={feature.accent}
                                         side={flip ? 'left' : 'right'}
+                                        image={feature.image}
+                                        alt={feature.title}
                                     />
                                 </div>
                             </article>

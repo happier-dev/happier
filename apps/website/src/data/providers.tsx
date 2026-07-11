@@ -21,7 +21,7 @@ export type Provider = {
 };
 
 // Provider logos — ported from
-// apps/ui/sources/agents/registry/providerLogoSvgXml.ts so we keep the same
+// apps/ui/sources/agents/registry/agentLogoSvgXml.ts so we keep the same
 // geometry as the app. Rendered as monochrome currentColor SVGs.
 
 const Claude = (

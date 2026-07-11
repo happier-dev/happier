@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { FeatureImage } from '../data/features';
 
 type AccentName = 'sun' | 'coral' | 'rose' | 'magenta' | 'blue' | 'indigo';
 
@@ -6,6 +7,10 @@ type DeviceVisualProps = {
     kind: 'mobile' | 'desktop' | 'mobileAndDesktop';
     accent: AccentName;
     side: 'left' | 'right';
+    image?: FeatureImage;
+    /** Accessible label for feature art — announced when real art loads,
+     *  consistent with the meaningful alt on the device-mockup fallback. */
+    alt?: string;
 };
 
 /**
@@ -71,9 +76,12 @@ const ANCHOR_TRANSFORMS: Record<DeviceImgLayout['anchor'], string> = {
  * The container is `aspect-square` with `overflow-visible` so the device
  * can bleed slightly past its box for a more confident, premium look.
  */
-export function DeviceVisual({ kind, accent, side }: DeviceVisualProps) {
+export function DeviceVisual({ kind, accent, side, image, alt }: DeviceVisualProps) {
     const ref = useRef<HTMLDivElement | null>(null);
     const [visible, setVisible] = useState(false);
+    // When feature art is referenced but absent (or fails to load), fall back
+    // to the generic device mockup so the page never shows a broken image.
+    const [imageFailed, setImageFailed] = useState(false);
 
     useEffect(() => {
         const node = ref.current;
@@ -93,6 +101,12 @@ export function DeviceVisual({ kind, accent, side }: DeviceVisualProps) {
         return () => observer.disconnect();
     }, []);
 
+    // Give the image another chance to load if its source changes, so a prior
+    // failure never permanently pins the mockup fallback.
+    useEffect(() => {
+        setImageFailed(false);
+    }, [image?.src]);
+
     const stops = ACCENT_PALETTE[accent];
     const center = side === 'left' ? '35%' : '65%';
 
@@ -102,13 +116,6 @@ export function DeviceVisual({ kind, accent, side }: DeviceVisualProps) {
                 aria-hidden
                 className="absolute inset-0"
                 style={{
-                    // Soft, edgeless atmospheric glow:
-                    //   - 115% x 95% radial — extends well past the visible square
-                    //     so the gradient never "starts" inside the frame
-                    //   - primary at 0% fades smoothly through secondary at 35%
-                    //     (no held core, so there's no bright spot)
-                    //   - transparent at 82% — long progressive fade
-                    //   - 32px blur completely erases any seam, reads as ambient
                     background: `radial-gradient(125% 105% at ${center} 50%, ${stops.primary} 0%, ${stops.secondary} 32%, transparent 78%)`,
                     opacity: visible ? 1 : 0,
                     transform: visible ? 'scale(1)' : 'scale(0.94)',
@@ -117,60 +124,66 @@ export function DeviceVisual({ kind, accent, side }: DeviceVisualProps) {
                 }}
             />
 
-            {kind === 'mobile' && (
-                <DeviceImg
-                    src="/images/mobile.png"
-                    alt="Happier on a phone"
-                    visible={visible}
-                    layout={{
-                        position: { left: '50%', top: '50%' },
-                        size: { height: '112%' },
-                        anchor: 'center',
-                        rotate: -2,
-                    }}
-                />
-            )}
-
-            {kind === 'desktop' && (
-                <DeviceImg
-                    src="/images/desktop.png"
-                    alt="Happier on a desktop"
-                    visible={visible}
-                    layout={{
-                        position: { left: '50%', top: '50%' },
-                        size: { width: '118%' },
-                        anchor: 'center',
-                        rotate: -1.2,
-                    }}
-                />
-            )}
-
-            {kind === 'mobileAndDesktop' && (
+            {image && !imageFailed ? (
+                <FeatureImg image={image} visible={visible} alt={alt} onError={() => setImageFailed(true)} />
+            ) : (
                 <>
-                    <DeviceImg
-                        src="/images/desktop.png"
-                        alt="Happier on a desktop"
-                        visible={visible}
-                        layout={{
-                            position: { left: '38%', top: '50%' },
-                            size: { width: '100%' },
-                            anchor: 'leftCenter',
-                            rotate: -1.5,
-                            delay: 120,
-                        }}
-                    />
-                    <DeviceImg
-                        src="/images/mobile.png"
-                        alt="Happier on a phone"
-                        visible={visible}
-                        layout={{
-                            position: { right: '-2%', top: '50%' },
-                            size: { height: '100%' },
-                            anchor: 'rightCenter',
-                            rotate: 4,
-                            delay: 260,
-                        }}
-                    />
+                    {kind === 'mobile' && (
+                        <DeviceImg
+                            src="/images/mobile.png"
+                            alt="Happier on a phone"
+                            visible={visible}
+                            layout={{
+                                position: { left: '50%', top: '50%' },
+                                size: { height: '112%' },
+                                anchor: 'center',
+                                rotate: -2,
+                            }}
+                        />
+                    )}
+
+                    {kind === 'desktop' && (
+                        <DeviceImg
+                            src="/images/desktop.png"
+                            alt="Happier on a desktop"
+                            visible={visible}
+                            layout={{
+                                position: { left: '50%', top: '50%' },
+                                size: { width: '118%' },
+                                anchor: 'center',
+                                rotate: -1.2,
+                            }}
+                        />
+                    )}
+
+                    {kind === 'mobileAndDesktop' && (
+                        <>
+                            <DeviceImg
+                                src="/images/desktop.png"
+                                alt="Happier on a desktop"
+                                visible={visible}
+                                layout={{
+                                    position: { left: '38%', top: '50%' },
+                                    size: { width: '100%' },
+                                    anchor: 'leftCenter',
+                                    rotate: -1.5,
+                                    delay: 120,
+                                }}
+                            />
+                            <DeviceImg
+                                src="/images/mobile.png"
+                                alt="Happier on a phone"
+                                visible={visible}
+                                layout={{
+                                    position: { right: '-2%', top: '50%' },
+                                    size: { height: '100%' },
+                                    anchor: 'rightCenter',
+                                    rotate: 4,
+                                    delay: 260,
+                                }}
+                            />
+                        </>
+                    )}
                 </>
             )}
         </div>
@@ -204,8 +217,67 @@ function DeviceImg({
                 transition: `opacity 900ms cubic-bezier(0.16,1,0.3,1) ${delay}ms, transform 900ms cubic-bezier(0.16,1,0.3,1) ${delay}ms`,
                 filter:
                     'drop-shadow(0 60px 80px rgba(0, 0, 0, 0.55)) drop-shadow(0 8px 20px rgba(0, 0, 0, 0.35))',
-                willChange: 'transform, opacity',
+                // Release the GPU layer once the one-shot reveal has run, so we
+                // don't pin a promoted layer per image for the whole session.
+                willChange: visible ? 'auto' : 'transform, opacity',
             }}
         />
+    );
+}
+
+/** Swap a `.png`/`.jpg` source for its optimized `.webp` sibling. The image
+ *  pipeline guarantees a `.webp` exists wherever the referenced raster does, so
+ *  this derivation is what lets the <picture> serve webp with a png fallback. */
+export function toWebp(src: string): string {
+    return src.replace(/\.(png|jpe?g)$/i, '.webp');
+}
+
+function FeatureImg({
+    image,
+    visible,
+    alt,
+    onError,
+}: {
+    image: FeatureImage;
+    visible: boolean;
+    alt?: string;
+    onError: () => void;
+}) {
+    const pngSrcSet = image.src2x ? `${image.src} 1x, ${image.src2x} 2x` : undefined;
+    const webpSrcSet = image.src2x
+        ? `${toWebp(image.src)} 1x, ${toWebp(image.src2x)} 2x`
+        : toWebp(image.src);
+
+    // `display: contents` lets the inner <img> position against the
+    // DeviceVisual container (the <picture> box itself drops out of layout).
+    // The optimize-images script guarantees a .webp exists whenever the .png
+    // does, so a failed <source> only happens when there's no art at all —
+    // in which case the <img> error bubbles up to the mockup fallback.
+    return (
+        <picture style={{ display: 'contents' }}>
+            <source type="image/webp" srcSet={webpSrcSet} />
+            <img
+                src={image.src}
+                srcSet={pngSrcSet}
+                alt={alt ?? ''}
+                onError={onError}
+                className="rounded-2xl"
+                style={{
+                    position: 'absolute',
+                    left: '50%',
+                    top: '50%',
+                    width: '100%',
+                    maxWidth: '720px',
+                    transform: `translate(-50%, -50%) translateY(${visible ? '0px' : '30px'})`,
+                    opacity: visible ? 1 : 0,
+                    transition: 'opacity 900ms cubic-bezier(0.16,1,0.3,1), transform 900ms cubic-bezier(0.16,1,0.3,1)',
+                    filter:
+                        'drop-shadow(0 40px 60px rgba(0, 0, 0, 0.4)) drop-shadow(0 8px 20px rgba(0, 0, 0, 0.25))',
+                    // Release the GPU layer once the one-shot reveal has run, so we
+                // don't pin a promoted layer per image for the whole session.
+                willChange: visible ? 'auto' : 'transform, opacity',
+                }}
+            />
+        </picture>
     );
 }

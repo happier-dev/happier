@@ -130,7 +130,7 @@ const BADGE_STYLE = {
     color: 'var(--fg)',
 } as const;
 
-export function DownloadBadges() {
+export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
     const { theme } = useTheme();
     const isDark = theme === 'dark';
 
@@ -231,7 +231,7 @@ export function DownloadBadges() {
     const storeBadges: ReadonlyArray<BadgeSpec> = [
         {
             href: 'https://apps.apple.com/app/happier-claude-codex-opencode/id6758554297',
-            eyebrow: 'Download on the',
+            eyebrow: 'Download on',
             label: 'App Store',
             icon: AppleIcon,
         },
@@ -244,7 +244,7 @@ export function DownloadBadges() {
     ];
 
     return (
-        <div className="mt-4 flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
             {storeBadges.map((badge) => (
                 <a
                     key={badge.label + badge.eyebrow}
@@ -292,7 +292,7 @@ export function DownloadBadges() {
                                 className="text-[9.5px] font-medium uppercase tracking-[0.12em]"
                                 style={{ color: 'var(--muted)' }}
                             >
-                                Download for
+                                Download
                             </span>
                             <span className="text-[14px] font-semibold tracking-tight">
                                 {DESKTOP_LABEL[os]}
@@ -391,6 +391,33 @@ export function DownloadBadges() {
                     document.body,
                 )}
             </div>
+
+            {/* Primary "open the web app" CTA shares the same wrap row so on
+                mobile it pairs next to the desktop badge (shorter labels make
+                the four buttons fit two-per-row). */}
+            {webApp && (
+                <a
+                    href="https://app.happier.dev/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group inline-flex items-center gap-2 self-stretch rounded-2xl px-5 text-[14px] font-semibold transition-transform hover:-translate-y-[1px]"
+                    style={{
+                        background: 'var(--fg)',
+                        color: 'var(--bg)',
+                        boxShadow: isDark
+                            ? '0 20px 60px -20px rgba(255, 255, 255, 0.22)'
+                            : '0 20px 60px -20px rgba(10, 10, 11, 0.35)',
+                        transition: 'box-shadow 700ms ease',
+                    }}
+                    aria-label="Open the Happier web app"
+                >
+                    <span>Web app</span>
+                    <svg viewBox="0 0 16 16" className="h-4 w-4 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 8h10" />
+                        <path d="M9 4l4 4-4 4" />
+                    </svg>
+                </a>
+            )}
         </div>
     );
 }
