@@ -1,4 +1,4 @@
-import type { ScmRemoteRequest } from '@happier-dev/protocol';
+import type { ScmRemoteRequest } from '@happier-dev/plugin-sdk/scm';
 
 type PullArgsResult =
     | { ok: true; args: string[] }

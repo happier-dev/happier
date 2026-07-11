@@ -1,8 +1,8 @@
-import { InstallableDependencyDescriptorSchema } from '@happier-dev/protocol';
+import { ManagedDependencyDescriptorSchema } from '@happier-dev/plugin-sdk/experimental/managedDependencies';
 
 export const SAPLING_INSTALLABLE_DEP_ID = 'dep.sapling';
 
-export const SAPLING_INSTALLABLE_DESCRIPTOR = InstallableDependencyDescriptorSchema.parse({
+export const SAPLING_INSTALLABLE_DESCRIPTOR = ManagedDependencyDescriptorSchema.parse({
     id: SAPLING_INSTALLABLE_DEP_ID,
     key: SAPLING_INSTALLABLE_DEP_ID,
     kind: 'dep',

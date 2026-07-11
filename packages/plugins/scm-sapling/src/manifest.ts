@@ -1,8 +1,8 @@
 import { definePluginManifest, type PluginManifestV2, type ScmBackendContribution } from '@happier-dev/plugin-sdk';
 
 import { SAPLING_INSTALLABLE_DEP_ID, SAPLING_INSTALLABLE_DESCRIPTOR } from './installables/saplingInstallable.js';
-import { SAPLING_SCM_BACKEND_CAPABILITIES } from './backend/capabilities.js';
-import { SAPLING_SCM_BACKEND_ID } from './backend/registerSaplingScmBackend.js';
+import { SAPLING_SCM_BACKEND_ID } from './backend.js';
+import { SAPLING_SCM_BACKEND_CAPABILITIES } from './capabilities.js';
 
 export const SAPLING_SCM_BACKEND_CONTRIBUTION = {
     id: SAPLING_SCM_BACKEND_ID,
@@ -39,13 +39,12 @@ export const PLUGIN_MANIFEST = definePluginManifest({
         resolvedVersion: '0.0.0',
     },
     engines: { happier: '^0.0.0' },
-    runtime: { apiVersion: 1, capabilities: ['scmBackends'] },
-    targets: {},
-    capabilities: {
-        permissions: [],
-    },
+    activationEvents: ['onScmProvider:sapling'],
+    uses: ['scmBackends', 'managedDependencies'],
+    entrypoints: { main: './dist/index.js' },
+    permissions: { required: [], optional: [] },
     contributes: {
-        installables: [SAPLING_INSTALLABLE_DESCRIPTOR],
+        managedDependencies: [SAPLING_INSTALLABLE_DESCRIPTOR],
         scmBackends: [SAPLING_SCM_BACKEND_CONTRIBUTION],
     },
 } satisfies PluginManifestV2);

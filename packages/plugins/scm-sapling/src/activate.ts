@@ -1,7 +1,9 @@
-import type { PluginApiV1 } from '@happier-dev/plugin-sdk';
+import type {
+  PluginApi,
+} from '@happier-dev/plugin-sdk';
 
-import { registerSaplingScmBackend } from './backend/registerSaplingScmBackend.js';
+import { registerSaplingScmBackend } from './backend.js';
 
-export function activate(api: PluginApiV1): void {
+export function activate(api: PluginApi): void {
     registerSaplingScmBackend(api);
 }

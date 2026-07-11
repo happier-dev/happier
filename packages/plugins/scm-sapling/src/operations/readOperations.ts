@@ -1,16 +1,16 @@
 import type {
-    ScmDiffCommitRequest,
-    ScmDiffCommitResponse,
-    ScmDiffFileRequest,
-    ScmDiffFileResponse,
-    ScmLogEntry,
-    ScmLogListRequest,
-    ScmLogListResponse,
-} from '@happier-dev/protocol';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+  ScmDiffCommitRequest,
+  ScmDiffCommitResponse,
+  ScmDiffFileRequest,
+  ScmDiffFileResponse,
+  ScmLogEntry,
+  ScmLogListRequest,
+  ScmLogListResponse,
+} from '@happier-dev/plugin-sdk/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 import type { ScmBackendRuntimeContext as ScmBackendContext } from '@happier-dev/plugin-sdk';
 
-import { normalizeCommitRef, normalizePathspec, runSaplingCommand as runScmCommand } from '../backend/runtime.js';
+import { normalizeCommitRef, normalizePathspec, runSaplingCommand as runScmCommand } from '../runtime.js';
 import { mapSaplingErrorCode } from '../parsing/errorCodes.js';
 
 function parseLogTimestamp(hgDateValue: string): number {

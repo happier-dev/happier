@@ -1,18 +1,18 @@
 import type {
-    ScmCommitBackoutRequest,
-    ScmCommitBackoutResponse,
-    ScmCommitCreateRequest,
-    ScmCommitCreateResponse,
-} from '@happier-dev/protocol';
+  ScmCommitBackoutRequest,
+  ScmCommitBackoutResponse,
+  ScmCommitCreateRequest,
+  ScmCommitCreateResponse,
+} from '@happier-dev/plugin-sdk/scm';
 import {
-    SCM_COMMIT_MESSAGE_MAX_LENGTH,
-    SCM_OPERATION_ERROR_CODES,
-    resolveScmScopedChangedPaths,
-} from '@happier-dev/protocol';
+  SCM_COMMIT_MESSAGE_MAX_LENGTH,
+  SCM_OPERATION_ERROR_CODES,
+  resolveScmScopedChangedPaths,
+} from '@happier-dev/plugin-sdk/scm';
 import type { ScmBackendRuntimeContext as ScmBackendContext } from '@happier-dev/plugin-sdk';
 
-import { getSaplingHead } from '../backend/repository.js';
-import { normalizeCommitRef, normalizePathspec, runSaplingCommand as runScmCommand } from '../backend/runtime.js';
+import { getSaplingHead } from '../repository.js';
+import { normalizeCommitRef, normalizePathspec, runSaplingCommand as runScmCommand } from '../runtime.js';
 import { mapSaplingErrorCode } from '../parsing/errorCodes.js';
 import { parseSaplingStatusLine } from '../parsing/statusParser.js';
 

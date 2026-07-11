@@ -1,11 +1,15 @@
 import { rmSync } from 'fs';
 import path from 'node:path';
 
-import type { ScmChangeApplyResponse, ScmChangeDiscardRequest, ScmChangeDiscardResponse } from '@happier-dev/protocol';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+import type {
+  ScmChangeApplyResponse,
+  ScmChangeDiscardRequest,
+  ScmChangeDiscardResponse,
+} from '@happier-dev/plugin-sdk/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 import type { ScmBackendRuntimeContext as ScmBackendContext } from '@happier-dev/plugin-sdk';
 
-import { normalizePathspec, runSaplingCommand as runScmCommand } from '../backend/runtime.js';
+import { normalizePathspec, runSaplingCommand as runScmCommand } from '../runtime.js';
 import { mapSaplingErrorCode } from '../parsing/errorCodes.js';
 
 export function saplingChangeInclude(): ScmChangeApplyResponse {
