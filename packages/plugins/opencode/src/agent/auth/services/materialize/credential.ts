@@ -1,4 +1,5 @@
 import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import type { ConnectedServiceBrokerSelectionIdentityMember } from '@happier-dev/plugin-sdk/experimental/cloud/broker';
 
 export function readProviderAccountId(record: ConnectedServiceCredentialRecordV1): string | null {
   if (record.kind === 'oauth') {
@@ -18,13 +19,17 @@ export function readProviderAccountId(record: ConnectedServiceCredentialRecordV1
 export function identityFragment(
   record: ConnectedServiceCredentialRecordV1,
   groupId?: string | null,
-): string {
-  const base = `${record.serviceId}:${record.profileId}:${readProviderAccountId(record) ?? ''}`;
+): ConnectedServiceBrokerSelectionIdentityMember {
   // R4-4/F3: a GROUP selection scopes the identity by pool so two distinct pools sharing one active
   // profile never collapse to one identity (registry authz + managed-server fingerprint stay
   // per-pool). Generation is deliberately EXCLUDED: consumers treat the identity as an opaque
   // equality key, and a generation-only bump must not re-mint (no managed-server churn).
-  return groupId ? `${base}:group:${groupId}` : base;
+  return {
+    serviceId: record.serviceId,
+    profileId: record.profileId,
+    providerAccountId: readProviderAccountId(record),
+    groupId: groupId ?? null,
+  };
 }
 
 export function requireTokenCredential(

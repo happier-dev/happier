@@ -61,6 +61,34 @@ export const PLUGIN_MANIFEST = definePluginManifest({
         kindVersion: 1,
         id: OPENCODE_BACKEND_ID,
         runtime: { kind: 'custom' },
+        providerSupport: {
+          acceptsProtocols: ['openai-responses', 'openai-chat'],
+          required: { streaming: true, toolRoundTrips: true },
+          credentialSupport: {
+            supportsNoAuth: true,
+            apiKeyTransports: [
+              {
+                protocol: 'openai-responses',
+                destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['raw', 'bearer'] },
+              },
+              {
+                protocol: 'openai-chat',
+                destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['raw', 'bearer'] },
+              },
+            ],
+          },
+          authIsolation: {
+            suppressConnectedServiceIds: ['openai-codex', 'openai', 'claude-subscription', 'anthropic'],
+            ownedEnvKeys: [
+              'HAPPIER_OPENCODE_PROVIDER_API_KEY',
+              'OPENCODE_AUTH_CONTENT',
+              'OPENCODE_CONFIG_CONTENT',
+            ],
+          },
+          materialization: 'configFile',
+          applyPolicy: 'live',
+          supportsFreeformModelIds: true,
+        },
         surfaceHandlers: [
           surfaceHandler({
             id: 'opencode.externalSession.resolveSource',

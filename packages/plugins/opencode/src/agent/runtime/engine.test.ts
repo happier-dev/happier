@@ -206,6 +206,45 @@ describe('createOpenCodeBackendEngine', () => {
     expect(acp).not.toHaveBeenCalled();
   });
 
+  it('applies the host-materialized provider config root to every OpenCode session runtime mode', async () => {
+    const ctx = createPluginContextFixture();
+    const server = vi.fn(async () => ({ kind: 'server-runtime' }));
+    const acp = vi.fn(async () => ({ kind: 'acp-runtime' }));
+    const engine = createOpenCodeBackendEngine(ctx, { sessionRuntimes: { server, acp } });
+    const providerBindingMaterialization = {
+      v: 1 as const,
+      kind: 'configFile' as const,
+      rootPath: '/tmp/provider-binding',
+      relativePaths: ['opencode/opencode.json'],
+    };
+
+    await engine.runtimeCore?.createSessionRuntime({
+      cwd: '/tmp/opencode',
+      env: { KEEP: 'yes' },
+      providerBindingMaterialization,
+    });
+
+    expect(server).toHaveBeenCalledWith({
+      ctx,
+      sessionParams: expect.objectContaining({
+        providerBindingMaterialization,
+        env: { KEEP: 'yes', XDG_CONFIG_HOME: '/tmp/provider-binding' },
+      }),
+    });
+  });
+
+  it('refuses a provider materialization kind that OpenCode cannot consume', async () => {
+    const ctx = createPluginContextFixture();
+    const server = vi.fn(async () => ({ kind: 'server-runtime' }));
+    const engine = createOpenCodeBackendEngine(ctx, { sessionRuntimes: { server } });
+
+    await expect(engine.runtimeCore?.createSessionRuntime({
+      cwd: '/tmp/opencode',
+      providerBindingMaterialization: { v: 1, kind: 'engineConfig', engineConfig: {} },
+    })).rejects.toThrow('OpenCode requires config-file provider materialization');
+    expect(server).not.toHaveBeenCalled();
+  });
+
   it('lets explicit execution environment opt into ACP mode', async () => {
     const ctx = createPluginContextFixture();
     const acpRuntime = { kind: 'acp-runtime' };

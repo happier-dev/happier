@@ -11,6 +11,7 @@ import type {
   TranscriptSourceDefinitionV1,
 } from '@happier-dev/plugin-sdk';
 import { createPluginContextV1Fixture } from '@happier-dev/plugin-sdk/experimental/testing/adapterHarness';
+import { registerSensitiveDiagnosticValues } from '@happier-dev/protocol';
 
 import { formatOpenCodeServerPromptErrorMessage } from './formatOpenCodeServerPromptErrorMessage.js';
 import { buildOpenCodePermissionEnv } from '../../permissions/policy.js';
@@ -195,6 +196,18 @@ describe('createOpenCodeServerSessionRuntime', () => {
     expect(basicFormatted).toContain('authorization: basic [REDACTED]');
     expect(basicFormatted).not.toContain(basicToken);
     expect(basicFormatted).not.toContain('managed-server-secret');
+  });
+
+  it('redacts an exact runtime provider credential from server failure diagnostics', () => {
+    const credential = 'opencode provider credential with spaces !';
+    const lease = registerSensitiveDiagnosticValues([credential]);
+    try {
+      expect(formatOpenCodeServerPromptErrorMessage(
+        new Error(`provider rejected ${credential}`),
+      )).toBe('Error: provider rejected [REDACTED]');
+    } finally {
+      lease.close();
+    }
   });
 
   it('advertises inline permissions for server-side OpenCode policy enforcement', async () => {

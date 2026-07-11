@@ -1,3 +1,7 @@
+import {
+  classifyProviderLimitEvidence,
+  type ProviderLimitCategory as RuntimeLimitCategory,
+} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk/experimental/diagnostics';
 
 import {
@@ -9,17 +13,6 @@ import {
   parseOpenCodeBrokerSelections,
 } from '../broker/env.js';
 import { classifyOpenCodeUsageLimitError } from '../usageLimit.js';
-
-type RuntimeLimitCategory =
-  | 'usage_limit'
-  | 'rate_limit'
-  | 'capacity'
-  | 'temporary_throttle'
-  | 'auth_invalid'
-  | 'plan_invalid'
-  | 'validation_failed'
-  | 'disabled'
-  | 'unknown';
 
 type RuntimeAuthFailureKind =
   | 'usage_limit'
@@ -73,24 +66,6 @@ function readNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function collectEvidenceText(value: unknown, output: string[]): void {
-  if (typeof value === 'string') {
-    output.push(value);
-    return;
-  }
-  if (value instanceof Error) {
-    collectEvidenceText(value.message, output);
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) collectEvidenceText(item, output);
-    return;
-  }
-  const record = readRecord(value);
-  if (!record) return;
-  for (const nested of Object.values(record)) collectEvidenceText(nested, output);
-}
-
 function redactEvidence(value: unknown): unknown {
   if (typeof value === 'string') return redactBugReportSensitiveText(value);
   if (value instanceof Error) {
@@ -119,30 +94,6 @@ function normalizeErrorEvidence(error: unknown): unknown {
     };
   }
   return error;
-}
-
-function classifyProviderLimitEvidence(value: unknown): RuntimeLimitCategory {
-  const textParts: string[] = [];
-  collectEvidenceText(value, textParts);
-  const text = textParts.join(' ').toLowerCase();
-  const record = readRecord(value);
-  const data = readRecord(record?.data);
-  const status = readNumber(record?.status ?? record?.statusCode ?? data?.status ?? data?.statusCode);
-  const code = readString(record?.code ?? record?.type ?? record?.reason ?? record?.name ?? data?.code ?? data?.name)
-    ?.toLowerCase() ?? '';
-  const evidenceText = `${code} ${text}`;
-
-  if (/\b(account|user)\s+(disabled|banned|suspended|deactivated)\b/u.test(text)) return 'disabled';
-  if (/\b(usage_limit_reached|usage_limit_exceeded|usagelimitreached|usagelimitexceeded|freeusagelimiterror)\b/u.test(code)) return 'usage_limit';
-  if (/\b(go_usage_limit|gousagelimiterror|account_rate_limit|rate_limit|rate_limit_error|ratelimit|ratelimiterror|rate limit|too many requests)\b/u.test(evidenceText)) return 'rate_limit';
-  if (/\b(resource_exhausted|usage limit|limit reached|out of credits|credits exhausted)\b|\bquota(?:[_\s-]*(?:exceeded|exhausted|reached)|[_\s-]*limit[_\s-]*(?:exceeded|exhausted|reached))\b/u.test(evidenceText)) return 'usage_limit';
-  if (status === 401 || /\b(401|unauthorized|unauthenticated|authentication|invalid api key|invalid token|login required|not logged in|token refresh failed)\b/u.test(text)) return 'auth_invalid';
-  if (status === 403 && /\b(scope|permission|auth|token|credential|forbidden)\b/u.test(text)) return 'auth_invalid';
-  if (status === 402 || /\b(upgrade|plan|billing|payment required|subscription|permission denied|not entitled|entitlement)\b/u.test(text)) return 'plan_invalid';
-  if (/\b(capacity|overloaded|server[_\s-]*(?:is[_\s-]*)?overloaded|model[_\s-]*(?:is[_\s-]*)?overloaded|capacity[_\s-]*(?:exceeded|unavailable)|unavailable)\b/u.test(evidenceText)) return 'capacity';
-  if (status === 400 || /\b(validation|invalid request|bad request|malformed)\b/u.test(text)) return 'validation_failed';
-  if (status === 429) return 'rate_limit';
-  return 'unknown';
 }
 
 function mapCategoryToKind(category: RuntimeLimitCategory): RuntimeAuthFailureKind | null {

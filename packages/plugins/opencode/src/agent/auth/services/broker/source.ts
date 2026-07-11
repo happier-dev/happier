@@ -5,7 +5,7 @@ import {
 
 import { OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV } from '../../../runtime/server/managedServerState.js';
 
-import { OPEN_CODE_BROKER_REFRESH_TOKEN_ENV } from './capabilityToken.js';
+import { OPEN_CODE_BROKER_REFRESH_TOKEN_PATH_ENV } from './capabilityToken.js';
 import {
   OPEN_CODE_BROKER_DAEMON_STATE_PATH_ENV,
   OPEN_CODE_BROKER_LOAD_NONCE_ENV,
@@ -47,9 +47,8 @@ function jsString(value: string): string {
  *   - engages on Happier's broker auth marker (NOT on real provider tokens),
  *   - obtains a fresh ACCESS token from the Happier daemon bridge over local HTTP (the daemon is the
  *     sole refresher; NO refresh token is ever present here),
- *   - authenticates the bridge with a SCOPED, broker-refresh-only capability token read from its env
- *     (F2 least privilege) — it NEVER reads or transmits the daemon master control token; it reads
- *     ONLY the non-secret `httpPort` from the daemon-state file at call time,
+ *   - authenticates the bridge with an independent per-materialization capability reread from its
+ *     private file on every request; it NEVER reads or transmits the daemon master control token,
  *   - requests a CONDITIONAL refresh (F6: `forceRefresh:false` on a cold cache-miss; `forceRefresh:true`
  *     only on a 401 retry) so the daemon rotates the single-use refresh token only when necessary,
  *   - shapes the provider request (Codex backend rewrite + headers, or Anthropic Bearer+beta),
@@ -57,7 +56,7 @@ function jsString(value: string): string {
  *   - on activation pings the daemon load-handshake endpoint (F4) so the connected-session preflight can
  *     fail closed if the plugin never loaded — best-effort, bounded, never blocking auth.
  *
- * The bridge-call portion (daemon-state read, scoped-token read, selection resolve, POST shape) is
+ * The bridge-call portion (daemon-state read, capability-file read, selection resolve, POST shape) is
  * emitted by the shared provider-neutral builder from this plugin's provider-owned descriptor. It defines
  * the bridge env constants plus
  * readJsonEnv/readDaemonHttpPort/readScopedToken/resolveSelection/fetchAccessTokenFromBridge. OpenCode
@@ -73,7 +72,7 @@ export function buildOpenCodeBrokerPluginSource(provider: OpenCodeBrokerProvider
     resultAccountIdKeys: provider === 'openai' ? ['accountId', 'chatgptAccountId'] : ['accountId'],
     selectionsEnv: OPEN_CODE_BROKER_SELECTIONS_ENV,
     daemonStatePathEnv: OPEN_CODE_BROKER_DAEMON_STATE_PATH_ENV,
-    refreshTokenEnv: OPEN_CODE_BROKER_REFRESH_TOKEN_ENV,
+    refreshTokenPathEnv: OPEN_CODE_BROKER_REFRESH_TOKEN_PATH_ENV,
     pluginVersionEnv: OPEN_CODE_BROKER_PLUGIN_VERSION_ENV,
     pluginVersion: OPEN_CODE_BROKER_PLUGIN_VERSION,
     sessionTag: 'opencode-broker',

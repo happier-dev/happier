@@ -4,6 +4,7 @@ import type {
 } from '@happier-dev/plugin-sdk';
 
 import { readOpenCodeMcpConfigServers } from './agent/mcp/discovery.js';
+import { OPENCODE_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
 import { createOpenCodeBackendEngine } from './agent/runtime/engine.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
@@ -66,6 +67,7 @@ function readOpenCodeConfigDiscoveryProvider(): typeof PLUGIN_MANIFEST.contribut
 export function activate(api: PluginApi): void {
   api.registerAgentRuntime({
     agentId: 'opencode',
+    providerBinding: OPENCODE_PROVIDER_BINDING_ADAPTER_V1,
     create: async (ctx) => {
       ctx.logger.debug('[plugins/opencode] Creating backend engine');
       return createOpenCodeBackendEngine(ctx);

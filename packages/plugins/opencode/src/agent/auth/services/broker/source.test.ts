@@ -13,12 +13,11 @@ import { OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV } from '../../../runt
 import {
   OPEN_CODE_BROKER_DAEMON_STATE_PATH_ENV,
   OPEN_CODE_BROKER_LOAD_NONCE_ENV,
-  OPEN_CODE_BROKER_REFRESH_TOKEN_ENV,
+  OPEN_CODE_BROKER_REFRESH_TOKEN_PATH_ENV,
   OPEN_CODE_BROKER_SELECTIONS_ENV,
   buildOpenCodeBrokerMarker,
   serializeOpenCodeBrokerSelections,
 } from './env.js';
-import { deriveOpenCodeBrokerRefreshToken } from './capabilityToken.js';
 import { OPEN_CODE_BROKER_LOADED_PATH } from './loadHandshake.js';
 import { buildOpenCodeBrokerPluginSource } from './source.js';
 
@@ -26,7 +25,7 @@ const REFRESH_TOKEN_SENTINEL = 'refresh-token-MUST-NOT-LEAK';
 // The daemon master control token MUST NEVER reach the broker (F2 least privilege). The broker holds
 // only the derived scoped token; the master is the secret the source must never read or transmit.
 const MASTER_CONTROL_TOKEN_SENTINEL = 'daemon-master-control-token-MUST-NOT-LEAK';
-const SCOPED_REFRESH_TOKEN = deriveOpenCodeBrokerRefreshToken(MASTER_CONTROL_TOKEN_SENTINEL);
+const SCOPED_REFRESH_TOKEN = 'random-independent-broker-capability';
 
 type LoadedPlugin = {
   loader: (getAuth: () => Promise<unknown>) => Promise<Record<string, unknown>>;
@@ -52,13 +51,25 @@ async function writeDaemonStateFile(masterToken: string): Promise<string> {
   return file;
 }
 
+async function writeCapabilityFile(token: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'happier-opencode-broker-capability-'));
+  const file = join(dir, 'capability.json');
+  await writeFile(file, JSON.stringify({
+    v: 1,
+    materializationId: 'mat-opencode',
+    selectionIdentityDigest: 'selection-digest',
+    capability: token,
+  }), { mode: 0o600 });
+  return file;
+}
+
 describe('openCode broker plugin source (generated artifact, exercised live)', () => {
   const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
     delete process.env[OPEN_CODE_BROKER_SELECTIONS_ENV];
     delete process.env[OPEN_CODE_BROKER_DAEMON_STATE_PATH_ENV];
-    delete process.env[OPEN_CODE_BROKER_REFRESH_TOKEN_ENV];
+    delete process.env[OPEN_CODE_BROKER_REFRESH_TOKEN_PATH_ENV];
     delete process.env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV];
     delete process.env[OPEN_CODE_BROKER_LOAD_NONCE_ENV];
   });
@@ -67,9 +78,15 @@ describe('openCode broker plugin source (generated artifact, exercised live)', (
     globalThis.fetch = originalFetch;
     delete process.env[OPEN_CODE_BROKER_SELECTIONS_ENV];
     delete process.env[OPEN_CODE_BROKER_DAEMON_STATE_PATH_ENV];
-    delete process.env[OPEN_CODE_BROKER_REFRESH_TOKEN_ENV];
+    delete process.env[OPEN_CODE_BROKER_REFRESH_TOKEN_PATH_ENV];
     delete process.env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV];
     delete process.env[OPEN_CODE_BROKER_LOAD_NONCE_ENV];
+  });
+
+  it('embeds only the file-path capability contract, never the raw-token env contract', () => {
+    const source = buildOpenCodeBrokerPluginSource('openai');
+    expect(source).toContain('HAPPIER_CONNECTED_SERVICE_BROKER_REFRESH_TOKEN_PATH');
+    expect(source).not.toContain('HAPPIER_CONNECTED_SERVICE_BROKER_REFRESH_TOKEN"');
   });
 
   it('engages only on the Happier broker marker, not on a real direct credential', async () => {
@@ -87,7 +104,7 @@ describe('openCode broker plugin source (generated artifact, exercised live)', (
 
   it('Codex: fetches the access token from the daemon bridge and shapes the request (scoped token, no refresh token, no master)', async () => {
     process.env[OPEN_CODE_BROKER_DAEMON_STATE_PATH_ENV] = await writeDaemonStateFile(MASTER_CONTROL_TOKEN_SENTINEL);
-    process.env[OPEN_CODE_BROKER_REFRESH_TOKEN_ENV] = SCOPED_REFRESH_TOKEN;
+    process.env[OPEN_CODE_BROKER_REFRESH_TOKEN_PATH_ENV] = await writeCapabilityFile(SCOPED_REFRESH_TOKEN);
     process.env[OPEN_CODE_BROKER_SELECTIONS_ENV] = serializeOpenCodeBrokerSelections({
       openai: { serviceId: 'openai-codex', profileId: 'codex-pro', accountId: null, planType: 'pro' },
     });
@@ -155,7 +172,7 @@ describe('openCode broker plugin source (generated artifact, exercised live)', (
 
   it('Codex: on a 401 it forces one bridge refresh and retries', async () => {
     process.env[OPEN_CODE_BROKER_DAEMON_STATE_PATH_ENV] = await writeDaemonStateFile(MASTER_CONTROL_TOKEN_SENTINEL);
-    process.env[OPEN_CODE_BROKER_REFRESH_TOKEN_ENV] = SCOPED_REFRESH_TOKEN;
+    process.env[OPEN_CODE_BROKER_REFRESH_TOKEN_PATH_ENV] = await writeCapabilityFile(SCOPED_REFRESH_TOKEN);
     process.env[OPEN_CODE_BROKER_SELECTIONS_ENV] = serializeOpenCodeBrokerSelections({
       openai: { serviceId: 'openai-codex', profileId: 'p', accountId: 'a', planType: null },
     });
@@ -189,7 +206,7 @@ describe('openCode broker plugin source (generated artifact, exercised live)', (
 
   it('Anthropic: uses Bearer + anthropic-beta, deletes x-api-key, and injects the Claude Code system identity', async () => {
     process.env[OPEN_CODE_BROKER_DAEMON_STATE_PATH_ENV] = await writeDaemonStateFile(MASTER_CONTROL_TOKEN_SENTINEL);
-    process.env[OPEN_CODE_BROKER_REFRESH_TOKEN_ENV] = SCOPED_REFRESH_TOKEN;
+    process.env[OPEN_CODE_BROKER_REFRESH_TOKEN_PATH_ENV] = await writeCapabilityFile(SCOPED_REFRESH_TOKEN);
     process.env[OPEN_CODE_BROKER_SELECTIONS_ENV] = serializeOpenCodeBrokerSelections({
       anthropic: { serviceId: 'claude-subscription', profileId: 'claude-pro', accountId: null, planType: null },
     });
@@ -229,7 +246,7 @@ describe('openCode broker plugin source (generated artifact, exercised live)', (
   it('F4: on activation fires a best-effort load handshake to the daemon with the scoped token + selection identity', async () => {
     const identity = 'opencode|connected|broker:1|openai-codex:codex-pro:';
     process.env[OPEN_CODE_BROKER_DAEMON_STATE_PATH_ENV] = await writeDaemonStateFile(MASTER_CONTROL_TOKEN_SENTINEL);
-    process.env[OPEN_CODE_BROKER_REFRESH_TOKEN_ENV] = SCOPED_REFRESH_TOKEN;
+    process.env[OPEN_CODE_BROKER_REFRESH_TOKEN_PATH_ENV] = await writeCapabilityFile(SCOPED_REFRESH_TOKEN);
     process.env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV] = identity;
     process.env[OPEN_CODE_BROKER_LOAD_NONCE_ENV] = 'opencode-spawn-1';
 
@@ -265,7 +282,7 @@ describe('openCode broker plugin source (generated artifact, exercised live)', (
 
   it('F4: does not fire a load handshake when there is no selection identity (native / direct-key)', async () => {
     process.env[OPEN_CODE_BROKER_DAEMON_STATE_PATH_ENV] = await writeDaemonStateFile(MASTER_CONTROL_TOKEN_SENTINEL);
-    process.env[OPEN_CODE_BROKER_REFRESH_TOKEN_ENV] = SCOPED_REFRESH_TOKEN;
+    process.env[OPEN_CODE_BROKER_REFRESH_TOKEN_PATH_ENV] = await writeCapabilityFile(SCOPED_REFRESH_TOKEN);
     // No OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV set.
     let handshakeCalls = 0;
     globalThis.fetch = vi.fn(async (input: unknown) => {

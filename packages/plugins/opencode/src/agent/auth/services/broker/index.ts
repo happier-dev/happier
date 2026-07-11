@@ -3,7 +3,7 @@ export {
   OPEN_CODE_BROKER_DAEMON_STATE_PATH_ENV,
   OPEN_CODE_BROKER_PLUGIN_VERSION_ENV,
   OPEN_CODE_BROKER_LOAD_NONCE_ENV,
-  OPEN_CODE_BROKER_REFRESH_TOKEN_ENV,
+  OPEN_CODE_BROKER_REFRESH_TOKEN_PATH_ENV,
   OPEN_CODE_BROKER_MARKER_PREFIX,
   OPEN_CODE_BROKER_PROVIDERS,
   buildOpenCodeBrokerMarker,
@@ -16,11 +16,6 @@ export {
   type OpenCodeBrokerProviderSelection,
   type OpenCodeBrokerSelections,
 } from './env.js';
-export {
-  OPEN_CODE_BROKER_REFRESH_SCOPE_LABEL,
-  deriveOpenCodeBrokerRefreshToken,
-  isValidOpenCodeBrokerRefreshToken,
-} from './capabilityToken.js';
 export {
   OPEN_CODE_BROKER_PLUGIN_VERSION,
   OPEN_CODE_BROKER_CODEX_BASE_URL,

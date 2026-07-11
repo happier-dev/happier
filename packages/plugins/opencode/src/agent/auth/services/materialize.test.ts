@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 import {
@@ -9,10 +12,9 @@ import {
   OPEN_CODE_BROKER_DAEMON_STATE_PATH_ENV,
   OPEN_CODE_BROKER_PLUGIN_VERSION,
   OPEN_CODE_BROKER_PLUGIN_VERSION_ENV,
-  OPEN_CODE_BROKER_REFRESH_TOKEN_ENV,
+  OPEN_CODE_BROKER_REFRESH_TOKEN_PATH_ENV,
   OPEN_CODE_BROKER_SELECTIONS_ENV,
   buildOpenCodeBrokerMarker,
-  deriveOpenCodeBrokerRefreshToken,
   parseOpenCodeBrokerSelections,
   resolveOpenCodeConnectedConfigHomeDir,
 } from './broker/index.js';
@@ -112,9 +114,9 @@ describe('OpenCode auth materialization (brokered)', () => {
     expect(JSON.stringify(content)).not.toContain('sk-ant-oat01-setup');
   });
 
-  it('emits config isolation, broker selections, daemon-state path, and a token-free selection identity', () => {
+  it('emits config isolation, broker selections, daemon-state path, and a token-free selection identity', async () => {
     const openaiCodex = buildOpenAiCodexOauth();
-    const { env } = materializeOpenCodeAuthEnvironment({
+    const { env } = await materializeOpenCodeAuthEnvironment({
       openaiCodex,
       rootDir: ROOT_DIR,
       daemonStateFilePath: DAEMON_STATE,
@@ -134,47 +136,58 @@ describe('OpenCode auth materialization (brokered)', () => {
 
     // Selection identity keys the managed-server fingerprint and carries NO token bytes.
     const identity = env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV];
-    expect(identity).toContain('opencode|connected');
-    expect(identity).toContain(`broker:${OPEN_CODE_BROKER_PLUGIN_VERSION}`);
-    expect(identity).toContain('openai-codex:default:acct_123');
+    expect(identity).toMatch(/^happier-broker-selection:v1:sha256:[a-f0-9]{64}$/);
     expect(identity).not.toContain(ACCESS_TOKEN_SENTINEL);
     expect(identity).not.toContain(REFRESH_TOKEN_SENTINEL);
   });
 
-  it('injects ONLY the scoped broker-refresh token when a daemon control token is provided (F2 least privilege)', () => {
-    const { env } = materializeOpenCodeAuthEnvironment({
-      openaiCodex: buildOpenAiCodexOauth(),
-      rootDir: ROOT_DIR,
-      daemonStateFilePath: DAEMON_STATE,
-      daemonControlToken: MASTER_CONTROL_TOKEN_SENTINEL,
-    });
+  it('mints a private per-materialization capability and injects only its path', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'happier-opencode-materialized-'));
+    try {
+      const materialized = await materializeOpenCodeAuthEnvironment({
+        openaiCodex: buildOpenAiCodexOauth(),
+        rootDir,
+        materializationId: 'mat-opencode',
+        daemonStateFilePath: DAEMON_STATE,
+      });
+      const { env } = materialized;
 
-    // The broker env carries the DERIVED scoped token, never the master control token.
-    expect(env[OPEN_CODE_BROKER_REFRESH_TOKEN_ENV]).toBe(
-      deriveOpenCodeBrokerRefreshToken(MASTER_CONTROL_TOKEN_SENTINEL),
-    );
-    // The MASTER token must not appear in ANY emitted env value (it is used only to derive).
-    for (const value of Object.values(env)) {
-      expect(value).not.toContain(MASTER_CONTROL_TOKEN_SENTINEL);
+      const capabilityPath = join(rootDir, 'broker', 'capability.json');
+      expect(env[OPEN_CODE_BROKER_REFRESH_TOKEN_PATH_ENV]).toBe(capabilityPath);
+      expect((materialized as { brokerCapability?: unknown }).brokerCapability).toMatchObject({
+        path: capabilityPath,
+        materializationId: 'mat-opencode',
+        selectionIdentityDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        capabilityDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      expect(JSON.parse(await readFile(capabilityPath, 'utf8'))).toMatchObject({
+        v: 1,
+        materializationId: 'mat-opencode',
+      });
+      for (const value of Object.values(env)) {
+        expect(value).not.toContain(MASTER_CONTROL_TOKEN_SENTINEL);
+      }
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
     }
   });
 
-  it('omits the scoped broker-refresh token when no daemon control token is available (fail-closed; no master)', () => {
-    const { env } = materializeOpenCodeAuthEnvironment({
+  it('omits broker capability auth when no capability path is available', async () => {
+    const { env } = await materializeOpenCodeAuthEnvironment({
       openaiCodex: buildOpenAiCodexOauth(),
       rootDir: ROOT_DIR,
       daemonStateFilePath: DAEMON_STATE,
     });
     // No control token ⇒ no scoped token emitted (the broker fails closed at request time).
-    expect(env[OPEN_CODE_BROKER_REFRESH_TOKEN_ENV]).toBeUndefined();
+    expect(env[OPEN_CODE_BROKER_REFRESH_TOKEN_PATH_ENV]).toBeUndefined();
   });
 
-  it('keeps a same-account token rotation on a STABLE selection identity (no managed-server churn)', () => {
-    const first = materializeOpenCodeAuthEnvironment({
+  it('keeps a same-account token rotation on a STABLE selection identity (no managed-server churn)', async () => {
+    const first = (await materializeOpenCodeAuthEnvironment({
       openaiCodex: buildOpenAiCodexOauth(1000),
       rootDir: ROOT_DIR,
       daemonStateFilePath: DAEMON_STATE,
-    }).env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV];
+    })).env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV];
     // Same account + profile, rotated tokens (different access/refresh, later expiry).
     const rotated = buildConnectedServiceCredentialRecord({
       now: 9999,
@@ -192,20 +205,20 @@ describe('OpenCode auth materialization (brokered)', () => {
         providerEmail: null,
       },
     });
-    const second = materializeOpenCodeAuthEnvironment({
+    const second = (await materializeOpenCodeAuthEnvironment({
       openaiCodex: rotated,
       rootDir: ROOT_DIR,
       daemonStateFilePath: DAEMON_STATE,
-    }).env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV];
+    })).env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV];
     expect(second).toBe(first);
   });
 
-  it('gives two different accounts different selection identities', () => {
-    const a = materializeOpenCodeAuthEnvironment({
+  it('gives two different accounts different selection identities', async () => {
+    const a = (await materializeOpenCodeAuthEnvironment({
       openaiCodex: buildOpenAiCodexOauth(1000),
       rootDir: ROOT_DIR,
       daemonStateFilePath: DAEMON_STATE,
-    }).env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV];
+    })).env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV];
     const other = buildConnectedServiceCredentialRecord({
       now: 1000,
       serviceId: 'openai-codex',
@@ -222,21 +235,49 @@ describe('OpenCode auth materialization (brokered)', () => {
         providerEmail: null,
       },
     });
-    const b = materializeOpenCodeAuthEnvironment({
+    const b = (await materializeOpenCodeAuthEnvironment({
       openaiCodex: other,
       rootDir: ROOT_DIR,
       daemonStateFilePath: DAEMON_STATE,
-    }).env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV];
+    })).env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV];
     expect(b).not.toBe(a);
   });
 
-  it('never leaks a token across any emitted env value (no-leak)', () => {
-    const { env } = materializeOpenCodeAuthEnvironment({
+  it('does not collide when opaque profile and account ids contain delimiters', async () => {
+    const record = (profileId: string, providerAccountId: string) => buildConnectedServiceCredentialRecord({
+      now: 1000,
+      serviceId: 'openai-codex',
+      profileId,
+      kind: 'oauth',
+      expiresAt: 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId,
+        providerEmail: null,
+      },
+    });
+    const first = (await materializeOpenCodeAuthEnvironment({
+      openaiCodex: record('work:us', 'acct'),
+      rootDir: ROOT_DIR,
+    })).env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV];
+    const second = (await materializeOpenCodeAuthEnvironment({
+      openaiCodex: record('work', 'us:acct'),
+      rootDir: ROOT_DIR,
+    })).env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV];
+
+    expect(first).not.toBe(second);
+  });
+
+  it('never leaks a token across any emitted env value (no-leak)', async () => {
+    const { env } = await materializeOpenCodeAuthEnvironment({
       openaiCodex: buildOpenAiCodexOauth(),
       claudeSubscription: buildClaudeSubscriptionOauth(),
       rootDir: ROOT_DIR,
       daemonStateFilePath: DAEMON_STATE,
-      daemonControlToken: MASTER_CONTROL_TOKEN_SENTINEL,
     });
     for (const value of Object.values(env)) {
       expect(value).not.toContain(ACCESS_TOKEN_SENTINEL);
@@ -246,7 +287,7 @@ describe('OpenCode auth materialization (brokered)', () => {
     }
   });
 
-  it('emits direct API keys without broker wiring or config isolation for a platform OpenAI key', () => {
+  it('emits direct API keys without broker wiring or config isolation for a platform OpenAI key', async () => {
     const openai = buildConnectedServiceCredentialRecord({
       now: 2000,
       serviceId: 'openai',
@@ -254,7 +295,7 @@ describe('OpenCode auth materialization (brokered)', () => {
       kind: 'token',
       token: { token: 'openai-token', providerAccountId: null, providerEmail: null },
     });
-    const { env } = materializeOpenCodeAuthEnvironment({
+    const { env } = await materializeOpenCodeAuthEnvironment({
       openai,
       rootDir: ROOT_DIR,
       daemonStateFilePath: DAEMON_STATE,
@@ -265,11 +306,11 @@ describe('OpenCode auth materialization (brokered)', () => {
     // Direct keys still get config isolation (identity present) but NO broker selections.
     expect(env.XDG_CONFIG_HOME).toBe(resolveOpenCodeConnectedConfigHomeDir(ROOT_DIR));
     expect(env[OPEN_CODE_BROKER_SELECTIONS_ENV]).toBeUndefined();
-    expect(env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV]).toContain('openai:api-key:');
+    expect(env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV]).toMatch(/^happier-broker-selection:v1:sha256:[a-f0-9]{64}$/);
   });
 
-  it('NATIVE-equivalent: no connected credential ⇒ no config isolation / broker / identity env', () => {
-    const { env } = materializeOpenCodeAuthEnvironment({ rootDir: ROOT_DIR, daemonStateFilePath: DAEMON_STATE });
+  it('NATIVE-equivalent: no connected credential ⇒ no config isolation / broker / identity env', async () => {
+    const { env } = await materializeOpenCodeAuthEnvironment({ rootDir: ROOT_DIR, daemonStateFilePath: DAEMON_STATE });
     expect(env.OPENCODE_AUTH_CONTENT).toBe('{}');
     expect(env.XDG_CONFIG_HOME).toBeUndefined();
     expect(env.OPENCODE_CONFIG_CONTENT).toBeUndefined();
@@ -280,31 +321,31 @@ describe('OpenCode auth materialization (brokered)', () => {
   // R3-6/R4-4 (F3): the selection identity is GROUP-scoped WITHOUT generation. Two distinct pools
   // sharing one active profile must mint DISTINCT identities (registry/authz + managed-server
   // fingerprint stay per-pool), while a generation-only bump keeps ONE stable identity (no churn).
-  it('scopes the selection identity by groupId (no generation) when the service selection is a group', () => {
+  it('scopes the selection identity by groupId (no generation) when the service selection is a group', async () => {
     const openaiCodex = buildOpenAiCodexOauth();
-    const buildEnvForGroup = (groupId: string) => materializeOpenCodeAuthEnvironment({
+    const buildEnvForGroup = async (groupId: string) => (await materializeOpenCodeAuthEnvironment({
       openaiCodex,
       rootDir: ROOT_DIR,
       daemonStateFilePath: DAEMON_STATE,
       connectedServiceGroupIdsByServiceId: { 'openai-codex': groupId },
-    }).env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV];
+    })).env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV];
 
-    const identityPoolA = buildEnvForGroup('pool-A');
-    const identityPoolB = buildEnvForGroup('pool-B');
-    expect(identityPoolA).toContain('openai-codex:default:acct_123:group:pool-A');
-    expect(identityPoolB).toContain('openai-codex:default:acct_123:group:pool-B');
+    const identityPoolA = await buildEnvForGroup('pool-A');
+    const identityPoolB = await buildEnvForGroup('pool-B');
+    expect(identityPoolA).toMatch(/^happier-broker-selection:v1:sha256:[a-f0-9]{64}$/);
+    expect(identityPoolB).toMatch(/^happier-broker-selection:v1:sha256:[a-f0-9]{64}$/);
     expect(identityPoolA).not.toBe(identityPoolB);
     // F3: NO generation in the identity — a generation-only bump must not re-mint.
-    expect(identityPoolA).not.toMatch(/group:pool-A:\d/);
 
-    // Profile-only selection stays byte-for-byte unchanged (no ':group:' fragment).
-    const profileOnly = materializeOpenCodeAuthEnvironment({
+    // Profile-only selection remains stable but distinct from either group tuple.
+    const profileOnly = (await materializeOpenCodeAuthEnvironment({
       openaiCodex,
       rootDir: ROOT_DIR,
       daemonStateFilePath: DAEMON_STATE,
-    }).env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV];
-    expect(profileOnly).toContain('openai-codex:default:acct_123');
-    expect(profileOnly).not.toContain(':group:');
+    })).env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV];
+    expect(profileOnly).toMatch(/^happier-broker-selection:v1:sha256:[a-f0-9]{64}$/);
+    expect(profileOnly).not.toBe(identityPoolA);
+    expect(profileOnly).not.toBe(identityPoolB);
   });
 
   it('fails closed when a service is provided with an unsupported credential kind', () => {

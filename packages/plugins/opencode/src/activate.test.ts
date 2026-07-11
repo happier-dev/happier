@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPluginContextV1Fixture } from '@happier-dev/plugin-sdk/experimental/testing/adapterHarness';
 
 import { activate } from './activate.js';
+import { OPENCODE_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
 
 describe('activate', () => {
   afterEach(() => {
@@ -41,6 +42,7 @@ describe('activate', () => {
 
     expect(registerAgentRuntime).toHaveBeenCalledWith(expect.objectContaining({
       agentId: 'opencode',
+      providerBinding: OPENCODE_PROVIDER_BINDING_ADAPTER_V1,
       create: expect.any(Function),
     }));
     const backendRegistration = registerAgentRuntime.mock.calls[0]?.[0] as Readonly<{

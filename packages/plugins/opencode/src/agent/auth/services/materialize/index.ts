@@ -1,13 +1,17 @@
 import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import {
+  writeConnectedServiceBrokerCapabilityFile,
+  buildConnectedServiceBrokerSelectionIdentity,
+  type ConnectedServiceBrokerCapabilityDescriptor,
+} from '@happier-dev/plugin-sdk/experimental/cloud/broker';
 
 import { OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV } from '../../../runtime/server/managedServerState.js';
 import {
   OPEN_CODE_BROKER_DAEMON_STATE_PATH_ENV,
   OPEN_CODE_BROKER_PLUGIN_VERSION,
   OPEN_CODE_BROKER_PLUGIN_VERSION_ENV,
-  OPEN_CODE_BROKER_REFRESH_TOKEN_ENV,
+  OPEN_CODE_BROKER_REFRESH_TOKEN_PATH_ENV,
   OPEN_CODE_BROKER_SELECTIONS_ENV,
-  deriveOpenCodeBrokerRefreshToken,
   resolveOpenCodeConnectedConfigHomeDir,
   serializeOpenCodeBrokerSelections,
 } from '../broker/index.js';
@@ -37,12 +41,8 @@ export type OpenCodeAuthEnvironmentInput = OpenCodeAuthMaterializationInput & Re
   rootDir?: string | null;
   /** Absolute path to the Happier daemon-state file (host-provided). The broker reads its httpPort. */
   daemonStateFilePath?: string | null;
-  /**
-   * Daemon MASTER control token (host-provided). Used ONLY to DERIVE the scoped broker-refresh
-   * capability token injected into the broker env (F2 least privilege). It is NEVER placed in the env;
-   * when absent the scoped token is omitted and the broker fails closed at request time.
-   */
-  daemonControlToken?: string | null;
+  /** Stable host-owned materialization id bound into the broker capability document. */
+  materializationId?: string | null;
   /** Managed-server state path (existing reuse contract). */
   managedServerStatePath?: string | null;
 }>;
@@ -77,9 +77,10 @@ export function buildOpenCodeAuthContent(input: OpenCodeAuthMaterializationInput
  *
  * This function performs NO filesystem I/O: it only references deterministic, version-keyed paths.
  */
-export function materializeOpenCodeAuthEnvironment(input: OpenCodeAuthEnvironmentInput): Readonly<{
+export async function materializeOpenCodeAuthEnvironment(input: OpenCodeAuthEnvironmentInput): Promise<Readonly<{
   env: Readonly<Record<string, string>>;
-}> {
+  brokerCapability?: ConnectedServiceBrokerCapabilityDescriptor;
+}>> {
   const accumulator = accumulate(input);
   const env: Record<string, string> = {
     OPENCODE_AUTH_CONTENT: JSON.stringify(accumulator.auth),
@@ -88,7 +89,7 @@ export function materializeOpenCodeAuthEnvironment(input: OpenCodeAuthEnvironmen
     } : {}),
   };
 
-  if (accumulator.identityFragments.length === 0) {
+  if (accumulator.identityMembers.length === 0) {
     // No connected credential present ⇒ nothing to materialize (caller treats null as native).
     return { env };
   }
@@ -111,22 +112,26 @@ export function materializeOpenCodeAuthEnvironment(input: OpenCodeAuthEnvironmen
       env[OPEN_CODE_BROKER_DAEMON_STATE_PATH_ENV] = input.daemonStateFilePath;
     }
     env[OPEN_CODE_BROKER_PLUGIN_VERSION_ENV] = OPEN_CODE_BROKER_PLUGIN_VERSION;
-    // F2 (least privilege): inject ONLY the scoped broker-refresh capability token derived from the
-    // daemon master control token. The master is NEVER placed in the env. When the host cannot supply a
-    // control token the scoped token is omitted and the broker fails closed at request time.
-    const scopedRefreshToken = deriveOpenCodeBrokerRefreshToken(input.daemonControlToken);
-    if (scopedRefreshToken) {
-      env[OPEN_CODE_BROKER_REFRESH_TOKEN_ENV] = scopedRefreshToken;
-    }
   }
 
   // Stable selection identity (keys the managed-server fingerprint; the fingerprint input reads this).
-  env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV] = [
-    'opencode',
-    'connected',
-    `broker:${OPEN_CODE_BROKER_PLUGIN_VERSION}`,
-    ...accumulator.identityFragments.slice().sort(),
-  ].join('|');
+  const selectionIdentity = buildConnectedServiceBrokerSelectionIdentity({
+    brokerId: 'opencode',
+    brokerVersion: OPEN_CODE_BROKER_PLUGIN_VERSION,
+    members: accumulator.identityMembers,
+  });
+  env[OPENCODE_CONNECTED_SERVICE_SELECTION_IDENTITY_ENV] = selectionIdentity;
+  const materializationId = typeof input.materializationId === 'string' ? input.materializationId.trim() : '';
+  let brokerCapability: ConnectedServiceBrokerCapabilityDescriptor | undefined;
+  if (accumulator.brokeredProviders.length > 0 && rootDir && materializationId) {
+    const capability = await writeConnectedServiceBrokerCapabilityFile({
+      rootDir,
+      materializationId,
+      selectionIdentity,
+    });
+    env[OPEN_CODE_BROKER_REFRESH_TOKEN_PATH_ENV] = capability.path;
+    brokerCapability = capability;
+  }
 
-  return { env };
+  return { env, ...(brokerCapability ? { brokerCapability } : {}) };
 }

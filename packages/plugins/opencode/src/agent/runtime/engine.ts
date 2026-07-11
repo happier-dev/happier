@@ -18,6 +18,7 @@ import { createOpenCodeServerSessionRuntime } from './server/session.js';
 import { openCodeExternalSessionSurface } from '../surfaces/sessions/external/provider.js';
 import { createOpenCodeHandoffSurface } from '../surfaces/sessions/handoff/descriptor.js';
 import { openCodeForkSurface } from '../surfaces/sessions/fork/descriptor.js';
+import { applyOpenCodeProviderBindingToSessionParams } from '../providerBinding/runtime.js';
 
 export type OpenCodeSessionRuntimeFactory = (
   params: Readonly<{
@@ -59,11 +60,12 @@ export function createOpenCodeBackendEngine(
     forkSurface: openCodeForkSurface,
     runtimeCore: {
       createSessionRuntime: async (sessionParams) => {
+        const resolvedSessionParams = applyOpenCodeProviderBindingToSessionParams(sessionParams);
         const mode = resolveOpenCodeBackendMode(
-          readOpenCodeBackendModeInputFromRuntimeParams(sessionParams),
+          readOpenCodeBackendModeInputFromRuntimeParams(resolvedSessionParams),
         );
         const createSessionRuntime = mode === 'acp' ? createAcpSessionRuntime : createServerSessionRuntime;
-        return createSessionRuntime({ ctx, sessionParams });
+        return createSessionRuntime({ ctx, sessionParams: resolvedSessionParams });
       },
       createExecutionRunBackend: (executionRunParams) => {
         const mode = resolveOpenCodeBackendMode(

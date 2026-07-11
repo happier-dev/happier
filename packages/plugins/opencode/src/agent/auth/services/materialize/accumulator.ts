@@ -1,4 +1,5 @@
 import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import type { ConnectedServiceBrokerSelectionIdentityMember } from '@happier-dev/plugin-sdk/experimental/cloud/broker';
 
 import {
   buildOpenCodeBrokerMarker,
@@ -20,7 +21,7 @@ export type OpenCodeAuthMaterializationAccumulator = {
   readonly auth: AuthRecord;
   readonly brokerSelections: { -readonly [K in OpenCodeBrokerProvider]?: OpenCodeBrokerProviderSelection };
   readonly brokeredProviders: OpenCodeBrokerProvider[];
-  readonly identityFragments: string[];
+  readonly identityMembers: ConnectedServiceBrokerSelectionIdentityMember[];
 };
 
 export function createOpenCodeAuthMaterializationAccumulator(): OpenCodeAuthMaterializationAccumulator {
@@ -28,7 +29,7 @@ export function createOpenCodeAuthMaterializationAccumulator(): OpenCodeAuthMate
     auth: {},
     brokerSelections: {},
     brokeredProviders: [],
-    identityFragments: [],
+    identityMembers: [],
   };
 }
 
@@ -51,7 +52,7 @@ export function brokerProvider(
     planType: null,
   };
   accumulator.brokeredProviders.push(provider);
-  accumulator.identityFragments.push(identityFragment(record, groupId));
+  accumulator.identityMembers.push(identityFragment(record, groupId));
 }
 
 /** Use a direct API key (real `{type:'api', key}`) for a Console/platform key provider. */
@@ -64,5 +65,5 @@ export function directApiKeyProvider(
 ): void {
   const tokenRecord = requireTokenCredential(record, serviceId);
   accumulator.auth[authKey] = { type: 'api', key: tokenRecord.token.token };
-  accumulator.identityFragments.push(identityFragment(record, groupId));
+  accumulator.identityMembers.push(identityFragment(record, groupId));
 }

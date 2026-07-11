@@ -7,14 +7,14 @@
  * — a contract test asserts the emitted plugin source references each name.
  *
  * NO secret (refresh token, daemon control token) is ever placed in these env values. The broker
- * obtains access tokens out-of-band from the Happier daemon bridge and reads the daemon control
- * token from the daemon-state file (0600) at call time, not from the env.
+ * obtains access tokens out-of-band from the Happier daemon bridge and authenticates with the
+ * private per-materialization capability file.
  */
 
 /** JSON map of brokered providers → their refresh selection + account identity (NO tokens). */
 export const OPEN_CODE_BROKER_SELECTIONS_ENV = 'HAPPIER_OPENCODE_BROKER_SELECTIONS';
 
-/** Absolute path to the Happier daemon-state file (carries `httpPort`/`controlToken`). Not secret. */
+/** Absolute path to the private Happier daemon-state file used for daemon discovery. */
 export const OPEN_CODE_BROKER_DAEMON_STATE_PATH_ENV = 'HAPPIER_OPENCODE_BROKER_DAEMON_STATE_PATH';
 
 /** Broker plugin version (for cache-keying + drift diagnostics). */
@@ -23,13 +23,9 @@ export const OPEN_CODE_BROKER_PLUGIN_VERSION_ENV = 'HAPPIER_OPENCODE_BROKER_PLUG
 /** Per-managed-server-process nonce that correlates the broker load handshake to the current spawn. */
 export const OPEN_CODE_BROKER_LOAD_NONCE_ENV = 'HAPPIER_OPENCODE_BROKER_LOAD_NONCE';
 
-/**
- * Scoped broker-refresh capability token env var (hardening finding F2). The materializer derives this
- * NARROW token (HMAC of the daemon master control token, scoped to broker-refresh only) and injects it
- * here; the broker reads it from the env and presents it to the daemon bridge. The MASTER control token
- * is NEVER placed here — the broker holds only this least-privilege token. See `capabilityToken.ts`.
- */
-export { OPEN_CODE_BROKER_REFRESH_TOKEN_ENV } from './capabilityToken.js';
+export {
+  OPEN_CODE_BROKER_REFRESH_TOKEN_PATH_ENV,
+} from './capabilityToken.js';
 
 /** Stable, non-secret prefix for the broker auth marker stored in `OPENCODE_AUTH_CONTENT`. */
 export const OPEN_CODE_BROKER_MARKER_PREFIX = 'happier-broker';
