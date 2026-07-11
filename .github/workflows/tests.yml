@@ -476,15 +476,25 @@ jobs:
 
       - name: Run shared package unit tests
         run: |
+          yarn workspace @happier-dev/voice-modelpacks test
           yarn workspace @happier-dev/peer-mediation test
           yarn workspace @happier-dev/transfers test
+          yarn workspace @happier-dev/terminal-native test
+          yarn workspace @happier-dev/sherpa-native test
           yarn workspace @happier-dev/agents test
           yarn workspace @happier-dev/cli-common test
           yarn workspace @happier-dev/support test
           yarn workspace @happier-dev/connection-supervisor test
           yarn workspace @happier-dev/bootstrap test
           yarn workspace @happier-dev/plugin-sdk test
+          yarn workspace @happier-dev/plugin-ui test
           yarn --cwd packages/relay-server test
+
+      - name: Run public plugin SDK freeze gates
+        run: |
+          bash .project/plans/runtime-unification-v2/_validation/verify-sdk-freeze-gate.sh .
+          bash .project/plans/runtime-unification-v2/_validation/verify-sdk-product-readiness.sh .
+          yarn workspace @happier-dev/tests test:plugin-sdk-consumers:all
 
   server:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_server }}

@@ -91,6 +91,7 @@ jobs:
 
   docker:
     name: Docker images (dev)
+    needs: [cli, server_runtime, ui_web]
     uses: ./.github/workflows/publish-docker.yml
     secrets: inherit
     with:

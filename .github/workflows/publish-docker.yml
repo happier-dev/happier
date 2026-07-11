@@ -157,10 +157,13 @@ jobs:
           GHCR_NAMESPACE: ghcr.io/happier-dev
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME != '' && secrets.GHCR_USERNAME || github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_PAT != '' && secrets.GHCR_PAT || github.token }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           node scripts/pipeline/run.mjs docker-publish \
             --channel "${{ inputs.channel }}" \
+            --source-ref "${{ steps.channel_meta.outputs.source_ref }}" \
             --registries "${{ inputs.registries }}" \
             --push-latest "${{ inputs.push_latest }}" \
             --build-relay "${{ inputs.build_relay }}" \

@@ -128,7 +128,7 @@ jobs:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
           # Keep builds mobile-focused (desktop/web builds happen elsewhere).
-          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native"
           # Dev lane uses preview-like embedded policy and does not need web-asset vendoring.
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
         uses: ./.github/actions/install-yarn-dependencies
@@ -275,7 +275,7 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
         uses: ./.github/actions/install-yarn-dependencies
         with:
@@ -348,7 +348,7 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
         uses: ./.github/actions/install-yarn-dependencies
         with:
