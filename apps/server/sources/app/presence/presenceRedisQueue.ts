@@ -127,7 +127,10 @@ async function flushBatch(batcher: PresenceBatcher, dbWriteConcurrency: number):
             async (sessionPresence) => {
                 try {
                     await db.session.updateMany({
-                        where: { id: sessionPresence.sessionId },
+                        where: {
+                            id: sessionPresence.sessionId,
+                            accountId: sessionPresence.accountId,
+                        },
                         data: { lastActiveAt: new Date(sessionPresence.timestamp), active: true },
                     });
                 } catch (error) {
@@ -274,8 +277,8 @@ export function startPresenceRedisWorker(params?: {
                             continue;
                         }
 
-                        if (kind === "session") {
-                            batcher.recordSessionAlive(entityId, ts);
+                        if (kind === "session" && accountId) {
+                            batcher.recordSessionAlive(accountId, entityId, ts);
                         } else if (kind === "machine" && accountId) {
                             batcher.recordMachineAlive(accountId, entityId, ts);
                         }
@@ -325,8 +328,8 @@ export function startPresenceRedisWorker(params?: {
                         continue;
                     }
 
-                    if (kind === "session") {
-                        batcher.recordSessionAlive(entityId, ts);
+                    if (kind === "session" && accountId) {
+                        batcher.recordSessionAlive(accountId, entityId, ts);
                     } else if (kind === "machine" && accountId) {
                         batcher.recordMachineAlive(accountId, entityId, ts);
                     }

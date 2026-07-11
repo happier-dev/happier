@@ -5,16 +5,16 @@ describe("PresenceBatcher", () => {
     it("coalesces to max timestamp per entity", () => {
         const batcher = new PresenceBatcher();
 
-        batcher.recordSessionAlive("s1", 10);
-        batcher.recordSessionAlive("s1", 5);
-        batcher.recordSessionAlive("s1", 11);
+        batcher.recordSessionAlive("u1", "s1", 10);
+        batcher.recordSessionAlive("u1", "s1", 5);
+        batcher.recordSessionAlive("u1", "s1", 11);
 
         batcher.recordMachineAlive("u1", "m1", 10);
         batcher.recordMachineAlive("u1", "m1", 9);
         batcher.recordMachineAlive("u1", "m1", 12);
 
         const first = batcher.drain();
-        expect(first.sessions).toEqual([{ sessionId: "s1", timestamp: 11 }]);
+        expect(first.sessions).toEqual([{ accountId: "u1", sessionId: "s1", timestamp: 11 }]);
         expect(first.machines).toEqual([{ accountId: "u1", machineId: "m1", timestamp: 12 }]);
 
         const second = batcher.drain();
@@ -25,13 +25,25 @@ describe("PresenceBatcher", () => {
     it("commit() does not drop newer timestamps recorded after snapshot", () => {
         const batcher = new PresenceBatcher();
 
-        batcher.recordSessionAlive("s1", 10);
+        batcher.recordSessionAlive("u1", "s1", 10);
         const snap = batcher.snapshot();
-        batcher.recordSessionAlive("s1", 11);
+        batcher.recordSessionAlive("u1", "s1", 11);
 
         batcher.commit(snap);
 
         const after = batcher.drain();
-        expect(after.sessions).toEqual([{ sessionId: "s1", timestamp: 11 }]);
+        expect(after.sessions).toEqual([{ accountId: "u1", sessionId: "s1", timestamp: 11 }]);
+    });
+
+    it("tracks session presence per account so collaborators cannot coalesce owner heartbeats", () => {
+        const batcher = new PresenceBatcher();
+
+        batcher.recordSessionAlive("collab", "s1", 20);
+        batcher.recordSessionAlive("owner", "s1", 10);
+
+        expect(batcher.drain().sessions).toEqual([
+            { accountId: "collab", sessionId: "s1", timestamp: 20 },
+            { accountId: "owner", sessionId: "s1", timestamp: 10 },
+        ]);
     });
 });

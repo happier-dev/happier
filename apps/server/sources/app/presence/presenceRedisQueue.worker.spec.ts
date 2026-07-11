@@ -81,7 +81,9 @@ describe("presenceRedisQueue worker", () => {
         expect((xreadgroup as any).mock.calls[0]?.[2]).toBe("inst-1");
 
         // Flush happened before ACK
-        expect(dbMocks.db.session.updateMany).toHaveBeenCalled();
+        expect(dbMocks.db.session.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: { id: "s1", accountId: "u1" },
+        }));
         expect(xpending).toHaveBeenCalled();
         expect(xack).toHaveBeenCalled();
     });

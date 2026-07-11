@@ -25,6 +25,19 @@ export function resolvePresenceTimeoutConfig(env: NodeJS.ProcessEnv = process.en
     };
 }
 
+export function isSessionPresenceFresh(input: Readonly<{
+    active: boolean | null | undefined;
+    lastActiveAt: Date | null | undefined;
+    nowMs: number;
+    timeoutMs?: number;
+}>): boolean {
+    const timeoutMs = input.timeoutMs ?? resolvePresenceTimeoutConfig().sessionTimeoutMs;
+    return input.active === true
+        && input.lastActiveAt instanceof Date
+        && Number.isFinite(input.lastActiveAt.getTime())
+        && input.lastActiveAt.getTime() + timeoutMs > input.nowMs;
+}
+
 type TimedOutPresenceCandidate = {
     id: string;
     accountId: string;

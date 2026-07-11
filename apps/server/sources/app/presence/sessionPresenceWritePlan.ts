@@ -4,13 +4,15 @@ import type { PrimaryTurnStatusV1 } from "@happier-dev/protocol";
 const TERMINAL_TURN_STATUSES: readonly PrimaryTurnStatusV1[] = ["completed", "cancelled", "failed"];
 
 export function createSessionPresenceUpdateManyArgs(params: Readonly<{
+    accountId: string;
     sessionId: string;
     timestamp: number;
     thinking: boolean | null;
 }>): Prisma.SessionUpdateManyArgs[] {
     const observedAt = new Date(params.timestamp);
+    const ownerSessionWhere = { id: params.sessionId, accountId: params.accountId };
     const baseWrite: Prisma.SessionUpdateManyArgs = {
-        where: { id: params.sessionId },
+        where: ownerSessionWhere,
         data: {
             lastActiveAt: observedAt,
             active: true,
@@ -23,7 +25,7 @@ export function createSessionPresenceUpdateManyArgs(params: Readonly<{
 
     if (params.thinking === false) {
         return [{
-            where: { id: params.sessionId },
+            where: ownerSessionWhere,
             data: {
                 lastActiveAt: observedAt,
                 active: true,
@@ -37,7 +39,7 @@ export function createSessionPresenceUpdateManyArgs(params: Readonly<{
         baseWrite,
         {
             where: {
-                id: params.sessionId,
+                ...ownerSessionWhere,
                 latestTurnStatus: { in: [...TERMINAL_TURN_STATUSES] },
                 thinking: true,
             },
@@ -45,7 +47,7 @@ export function createSessionPresenceUpdateManyArgs(params: Readonly<{
         },
         {
             where: {
-                id: params.sessionId,
+                ...ownerSessionWhere,
                 OR: [
                     { latestTurnStatus: null },
                     { latestTurnStatus: { notIn: [...TERMINAL_TURN_STATUSES] } },

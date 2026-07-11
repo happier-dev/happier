@@ -409,16 +409,23 @@ class ActivityCache {
         if (now < this.dbFlushBackoffUntil) return;
         let shouldAbortFlush = false;
 
-        const sessionUpdatesById = new Map<string, { timestamp: number; thinking: boolean | null; entries: SessionCacheEntry[] }>();
+        const sessionUpdatesByOwner = new Map<string, { accountId: string; sessionId: string; timestamp: number; thinking: boolean | null; entries: SessionCacheEntry[] }>();
         const machineUpdates: { machineId: string; timestamp: number; entry: MachineCacheEntry }[] = [];
         
         // Collect session updates
         for (const entry of this.sessionCache.values()) {
             if (entry.pendingUpdate !== null) {
                 const timestamp = entry.pendingUpdate;
-                const existing = sessionUpdatesById.get(entry.sessionId);
+                const key = `${entry.sessionId}:${entry.userId}`;
+                const existing = sessionUpdatesByOwner.get(key);
                 if (!existing) {
-                    sessionUpdatesById.set(entry.sessionId, { timestamp, thinking: entry.pendingThinking, entries: [entry] });
+                    sessionUpdatesByOwner.set(key, {
+                        accountId: entry.userId,
+                        sessionId: entry.sessionId,
+                        timestamp,
+                        thinking: entry.pendingThinking,
+                        entries: [entry],
+                    });
                 } else {
                     if (timestamp >= existing.timestamp) {
                         existing.timestamp = timestamp;
@@ -441,19 +448,20 @@ class ActivityCache {
         }
         
         // Flush session presence updates (best-effort).
-        if (sessionUpdatesById.size > 0) {
+        if (sessionUpdatesByOwner.size > 0) {
             let okCount = 0;
             try {
-                const operations = Array.from(sessionUpdatesById.entries()).flatMap(([sessionId, update]) =>
+                const operations = Array.from(sessionUpdatesByOwner.values()).flatMap((update) =>
                     createSessionPresenceUpdateManyArgs({
-                        sessionId,
+                        accountId: update.accountId,
+                        sessionId: update.sessionId,
                         timestamp: update.timestamp,
                         thinking: update.thinking,
                     }).map((args) => db.session.updateMany(args)),
                 );
                 await db.$transaction(operations);
 
-                for (const update of sessionUpdatesById.values()) {
+                for (const update of sessionUpdatesByOwner.values()) {
                     const { timestamp, entries } = update;
                     for (const entry of entries) {
                         entry.lastUpdateSent = timestamp;
@@ -467,11 +475,11 @@ class ActivityCache {
                         entry.active = true;
                     }
                 }
-                okCount = sessionUpdatesById.size;
+                okCount = sessionUpdatesByOwner.size;
             } catch (error) {
                 const shouldBackoff = this.shouldBackoffDbFlush(error);
                 // Keep every pending update in the failed transaction so the next flush retries the full batch.
-                for (const update of sessionUpdatesById.values()) {
+                for (const update of sessionUpdatesByOwner.values()) {
                     for (const entry of update.entries) {
                         entry.pendingUpdate = Math.max(entry.pendingUpdate ?? 0, update.timestamp);
                     }
@@ -490,7 +498,7 @@ class ActivityCache {
                 }
             }
 
-            log({ module: 'session-cache' }, `Flushed ${okCount}/${sessionUpdatesById.size} session updates`);
+            log({ module: 'session-cache' }, `Flushed ${okCount}/${sessionUpdatesByOwner.size} session updates`);
         }
 
         if (shouldAbortFlush) {

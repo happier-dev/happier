@@ -1,14 +1,15 @@
-type SessionPresence = { sessionId: string; timestamp: number };
+type SessionPresence = { accountId: string; sessionId: string; timestamp: number };
 type MachinePresence = { accountId: string; machineId: string; timestamp: number };
 
 export class PresenceBatcher {
     private sessionById = new Map<string, SessionPresence>();
     private machineByKey = new Map<string, MachinePresence>();
 
-    recordSessionAlive(sessionId: string, timestamp: number): void {
-        const existing = this.sessionById.get(sessionId);
+    recordSessionAlive(accountId: string, sessionId: string, timestamp: number): void {
+        const key = `${sessionId}:${accountId}`;
+        const existing = this.sessionById.get(key);
         if (!existing || timestamp > existing.timestamp) {
-            this.sessionById.set(sessionId, { sessionId, timestamp });
+            this.sessionById.set(key, { accountId, sessionId, timestamp });
         }
     }
 
@@ -29,9 +30,9 @@ export class PresenceBatcher {
     commit(snapshot: { sessions: SessionPresence[]; machines: MachinePresence[] }): void {
         // Remove only entries that have not been superseded since the snapshot.
         for (const s of snapshot.sessions) {
-            const current = this.sessionById.get(s.sessionId);
+            const current = this.sessionById.get(`${s.sessionId}:${s.accountId}`);
             if (current && current.timestamp <= s.timestamp) {
-                this.sessionById.delete(s.sessionId);
+                this.sessionById.delete(`${s.sessionId}:${s.accountId}`);
             }
         }
         for (const m of snapshot.machines) {
