@@ -5,7 +5,7 @@ import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
 import {
-    isExecutionRunNotRunningSendError,
+    isExecutionRunNotRunningMutationError,
     sessionExecutionRunGet,
     sessionExecutionRunSend,
     sessionExecutionRunStop,
@@ -75,6 +75,7 @@ export type SessionExecutionRunDetailsViewHandle = Readonly<{
 export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<SessionExecutionRunDetailsViewHandle, Readonly<{
     sessionId: string;
     runId: string;
+    serverId?: string | null;
     presentation?: 'screen' | 'panel';
     showInfoCard?: boolean;
     showSendComposer?: boolean;
@@ -107,12 +108,18 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
             setState({ status: 'error', error: t('runs.runDetails.failedToLoad') });
             return;
         }
+        const rpcOptions = props.serverId ? { serverId: props.serverId } : undefined;
+        const getRun = (request: Readonly<{ runId: string; includeStructured: true }>) => (
+            rpcOptions
+                ? sessionExecutionRunGet(props.sessionId, request, rpcOptions)
+                : sessionExecutionRunGet(props.sessionId, request)
+        );
         setState({ status: 'loading' });
         setDaemonProcessLine(null);
-        const first = await sessionExecutionRunGet(props.sessionId, { runId: props.runId, includeStructured: true });
+        const first = await getRun({ runId: props.runId, includeStructured: true });
         const result =
             first.ok === false && isSessionEncryptionNotFoundError(first)
-                ? await sessionExecutionRunGet(props.sessionId, { runId: props.runId, includeStructured: true })
+                ? await getRun({ runId: props.runId, includeStructured: true })
                 : first;
         if (result.ok === false) {
             if (result.errorCode === 'execution_run_not_found' && !sessionMessagesLoaded) {
@@ -163,7 +170,7 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
         if (daemonFallback?.daemonProcessLine) {
             setDaemonProcessLine(daemonFallback.daemonProcessLine);
         }
-    }, [props.runId, props.sessionId, sessionMessagesLoaded, transcriptFallback]);
+    }, [props.runId, props.serverId, props.sessionId, sessionMessagesLoaded, transcriptFallback]);
 
     React.useEffect(() => {
         void load();
@@ -256,9 +263,18 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
                                 setStopError(null);
                                 setIsStopping(true);
                                 try {
-                                    const result = await sessionExecutionRunStop(props.sessionId, { runId: props.runId });
+                                    const result = props.serverId
+                                        ? await sessionExecutionRunStop(
+                                            props.sessionId,
+                                            { runId: props.runId },
+                                            { serverId: props.serverId },
+                                        )
+                                        : await sessionExecutionRunStop(props.sessionId, { runId: props.runId });
                                     if (result.ok === false) {
                                         setStopError(String(result.error ?? t('runs.stop.failedToStopRun')));
+                                        if (isExecutionRunNotRunningMutationError(result)) {
+                                            await load();
+                                        }
                                     } else {
                                         await load();
                                     }
@@ -319,10 +335,16 @@ export const SessionExecutionRunDetailsView = React.memo(React.forwardRef<Sessio
                                     setSendError(null);
                                     setIsSending(true);
                                     try {
-                                        const result = await sessionExecutionRunSend(props.sessionId, { runId: props.runId, message });
+                                        const result = props.serverId
+                                            ? await sessionExecutionRunSend(
+                                                props.sessionId,
+                                                { runId: props.runId, message },
+                                                { serverId: props.serverId },
+                                            )
+                                            : await sessionExecutionRunSend(props.sessionId, { runId: props.runId, message });
                                         if (result.ok === false) {
                                             setSendError(String(result.error ?? t('runs.send.failedToSend')));
-                                            const isNoLongerSendable = isExecutionRunNotRunningSendError(result)
+                                            const isNoLongerSendable = isExecutionRunNotRunningMutationError(result)
                                                 || /not in flight/i.test(String(result.error ?? ''));
                                             if (isNoLongerSendable) {
                                                 await load();

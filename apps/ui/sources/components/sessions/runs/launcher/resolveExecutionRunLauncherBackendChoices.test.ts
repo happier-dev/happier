@@ -63,16 +63,16 @@ describe('resolveExecutionRunLauncherBackendChoices', () => {
             mergedBackendProjectionById: {
                 'coderabbit.review.backend': {
                     backendId: 'coderabbit.review.backend',
-                    providerId: 'coderabbit.review.provider',
+                    agentId: 'coderabbit.review.provider',
                     title: 'CodeRabbit Review',
                     subtitle: 'coderabbit.review.backend',
-                    providerAgentId: null,
+                    catalogAgentId: null,
                     iconAgentId: null,
                 },
             },
             mergedProviderProjectionById: {
                 'coderabbit.review.provider': {
-                    providerId: 'coderabbit.review.provider',
+                    agentId: 'coderabbit.review.provider',
                     title: 'CodeRabbit Provider',
                     subtitle: 'coderabbit.review.provider',
                     channel: 'plugin',
@@ -164,16 +164,16 @@ describe('resolveExecutionRunLauncherBackendChoices', () => {
             mergedBackendProjectionById: {
                 'acme.plugin.backend1': {
                     backendId: 'acme.plugin.backend1',
-                    providerId: 'acme.plugin.provider1',
+                    agentId: 'acme.plugin.provider1',
                     title: 'Acme Plugin Backend',
                     subtitle: 'acme.plugin.backend1',
-                    providerAgentId: null,
+                    catalogAgentId: null,
                     iconAgentId: null,
                 },
             },
             mergedProviderProjectionById: {
                 'acme.plugin.provider1': {
-                    providerId: 'acme.plugin.provider1',
+                    agentId: 'acme.plugin.provider1',
                     title: 'Acme Plugin Provider',
                     subtitle: 'acme.plugin.provider1',
                     channel: 'plugin',

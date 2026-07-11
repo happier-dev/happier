@@ -1,15 +1,17 @@
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     buildBackendTargetKey,
+    buildBackendTargetKeyV2,
     convertBackendTargetRefV2ToV1,
     getActionSpec,
     resolveEffectiveActionInputFields,
 } from '@happier-dev/protocol';
 
-import { buildResumeSessionExtrasFromUiState, isAgentId, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { buildResumeSessionExtrasFromUiState, isAgentId } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
@@ -38,6 +40,7 @@ import { resolveActionInputValidationError } from '@/sync/domains/actions/resolv
 import { resolveExecutionRunLauncherContainerStyle } from './resolveExecutionRunLauncherContainerStyle';
 import { resolveExecutionRunLauncherBackendChoices } from './resolveExecutionRunLauncherBackendChoices';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
+import { normalizeActionInputPatch } from '@/sync/domains/actions/normalizeActionInputPatch';
 import { resolveExecutionRunActionDefaultPermissionMode } from '@/sync/domains/actions/resolveExecutionRunActionDefaultPermissionMode';
 import { resolveExecutionRunActionAllowedPermissionModes } from '@/sync/domains/actions/resolveExecutionRunActionAllowedPermissionModes';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
@@ -130,12 +133,12 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
     );
     const agentId = React.useMemo(
         () => {
-            const flavor = typeof (session as any)?.metadata?.flavor === 'string'
-                ? String((session as any).metadata.flavor)
-                : typeof (session as any)?.metadata?.agent === 'string'
-                    ? String((session as any).metadata.agent)
-                    : null;
-            return resolveAgentIdFromFlavor(flavor);
+            const fromMetadata = resolveAgentIdFromSessionMetadata((session as any)?.metadata);
+            if (fromMetadata) return fromMetadata;
+            const agent = typeof (session as any)?.metadata?.agent === 'string'
+                ? String((session as any).metadata.agent)
+                : null;
+            return isAgentId(agent) ? agent : null;
         },
         [session],
     );
@@ -408,7 +411,12 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
                 }
 
                 const permissionOverride = getPermissionModeOverrideForSpawn(session);
-                const modelOverride = getModelOverrideForSpawn(session);
+                const modelOverride = sessionActionDefaultBackend
+                    ? getModelOverrideForSpawn(
+                        session,
+                        buildBackendTargetKeyV2(sessionActionDefaultBackend.backendTarget),
+                    )
+                    : null;
                 const base = buildResumeSessionBaseOptionsFromSession({
                     sessionId: props.sessionId,
                     session,
@@ -585,10 +593,7 @@ const SessionExecutionRunLauncherContent = React.memo((props: SessionExecutionRu
                     }}
                     onPatch={(patch) => {
                         setStartError(null);
-                        const normalizedPatch =
-                            intent !== 'review' && Array.isArray((patch as any).backendTargetKeys) && (patch as any).backendTargetKeys.length > 1
-                                ? { ...patch, backendTargetKeys: [(patch as any).backendTargetKeys.at(-1)] }
-                                : patch;
+                        const normalizedPatch = normalizeActionInputPatch({ actionId, patch });
                         setActionInput((previous) => ({ ...previous, ...normalizedPatch }));
                     }}
                 />

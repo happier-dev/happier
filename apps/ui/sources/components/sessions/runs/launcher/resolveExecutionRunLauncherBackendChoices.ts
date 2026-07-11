@@ -133,10 +133,10 @@ export function resolveExecutionRunLauncherBackendChoices(params: Readonly<{
         mergedProviderProjectionById: params.mergedProviderProjectionById ?? null,
     })).map((entry) => {
         const backendId = entry.backendId;
-        const providerAgentId = entry.providerAgentId;
+        const catalogAgentId = entry.catalogAgentId;
         const isAvailable = entry.kind === 'configuredBackend'
             ? availableBackendIds.has(backendId)
-                || (providerAgentId ? availableBackendIds.has(providerAgentId) : false)
+                || (catalogAgentId ? availableBackendIds.has(catalogAgentId) : false)
                 || hasLegacyCompatExecutionRunAvailabilityCarrier(availableBackendIds, backendId)
             : availableBackendIds.has(backendId);
 

@@ -8,7 +8,7 @@ import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const sendMessageSpy = vi.fn(async () => undefined);
+const submitMessageSpy = vi.fn(async () => undefined);
 
 installSessionSubagentCommonModuleMocks({
     reactNative: async () => {
@@ -35,7 +35,7 @@ vi.mock('@/components/sessions/agents/list/SessionSubagentRow', () => ({
 
 vi.mock('@/sync/sync', () => ({
     sync: {
-        sendMessage: sendMessageSpy,
+        submitMessage: submitMessageSpy,
     },
 }));
 
@@ -46,7 +46,7 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 describe('SessionSubagentGroup', () => {
     it('sends a structured team-delete message for Claude team groups', async () => {
         const { SessionSubagentGroup } = await import('./SessionSubagentGroup');
-        sendMessageSpy.mockClear();
+        submitMessageSpy.mockClear();
 
         const subagents: readonly SessionSubagent[] = [{
             id: 'agent_team_member:qa-team:alpha',
@@ -88,7 +88,7 @@ describe('SessionSubagentGroup', () => {
             await pressTestInstanceAsync(deleteButton);
         });
 
-        expect(sendMessageSpy).toHaveBeenCalledWith(
+        expect(submitMessageSpy).toHaveBeenCalledWith(
             's1',
             'Delete team qa-team',
             'Delete team qa-team',
@@ -101,9 +101,7 @@ describe('SessionSubagentGroup', () => {
                     }),
                 },
             }),
-            expect.objectContaining({
-                bypassPendingQueueReason: 'subagent_command',
-            }),
+            { callerSurface: 'subagent_command' },
         );
     });
 

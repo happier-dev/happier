@@ -8,7 +8,7 @@ import { installSessionExecutionRunDetailsCommonModuleMocks } from './sessionExe
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const getRunSpy = vi.fn<(sessionId: string, request: { runId: string }) => Promise<any>>(async (_sessionId, _request) => ({
+const getRunSpy = vi.fn<(sessionId: string, request: { runId: string }, options?: { serverId?: string | null }) => Promise<any>>(async (_sessionId, _request) => ({
     run: {
         runId: 'run_1',
         callId: 'toolu_1',
@@ -102,9 +102,19 @@ installSessionExecutionRunDetailsCommonModuleMocks({
 });
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
-    sessionExecutionRunGet: (sessionId: string, request: { runId: string }) => getRunSpy(sessionId, request),
+    sessionExecutionRunGet: (sessionId: string, request: { runId: string }, options?: { serverId?: string | null }) =>
+        getRunSpy(sessionId, request, options),
     sessionExecutionRunSend: vi.fn(async () => ({ ok: true })),
     sessionExecutionRunStop: vi.fn(async () => ({ ok: true })),
+    isExecutionRunNotRunningMutationError: (result: unknown) => {
+        if (!result || typeof result !== 'object' || (result as any).ok !== false) return false;
+        const errorCode = typeof (result as any).errorCode === 'string' ? String((result as any).errorCode).trim().toLowerCase() : '';
+        if (errorCode === 'execution_run_not_allowed' || errorCode === 'execution_run_not_running') {
+            const error = typeof (result as any).error === 'string' ? String((result as any).error).trim().toLowerCase() : '';
+            return error.includes('not running') || error.includes('already finished');
+        }
+        return false;
+    },
     isExecutionRunNotRunningSendError: (result: unknown) => {
         if (!result || typeof result !== 'object' || (result as any).ok !== false) return false;
         const errorCode = typeof (result as any).errorCode === 'string' ? String((result as any).errorCode).trim().toLowerCase() : '';
@@ -263,6 +273,41 @@ describe('SessionExecutionRunDetailsView', () => {
         expect(messageDetailsSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('presentation');
     });
 
+    it('passes explicit server scope through execution-run get, send, and stop RPCs', async () => {
+        const sessionExecutionRuns = await import('@/sync/ops/sessionExecutionRuns');
+        const sendSpy = vi.mocked(sessionExecutionRuns.sessionExecutionRunSend);
+        const stopSpy = vi.mocked(sessionExecutionRuns.sessionExecutionRunStop);
+        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
+
+        const screen = await renderScreen(<SessionExecutionRunDetailsView
+                    sessionId="s1"
+                    runId="run_1"
+                    serverId="server-route"
+                    presentation="panel"
+                />);
+        tree = screen.tree;
+
+        expect(getRunSpy).toHaveBeenCalledWith('s1', { runId: 'run_1', includeStructured: true }, { serverId: 'server-route' });
+
+        await act(async () => {
+            screen.changeTextByTestId('session-run-details-send-input', 'follow up');
+        });
+
+        await act(async () => {
+            await screen.pressByTestIdAsync('session-run-details-send');
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(sendSpy).toHaveBeenCalledWith('s1', { runId: 'run_1', message: 'follow up' }, { serverId: 'server-route' });
+
+        await act(async () => {
+            await screen.pressByTestIdAsync('session-run-details-stop');
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(stopSpy).toHaveBeenCalledWith('s1', { runId: 'run_1' }, { serverId: 'server-route' });
+    });
+
     it('skips the execution-run info card when embedded under the subagent details header', async () => {
         const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
         executionRunInfoCardSpy.mockClear();
@@ -376,6 +421,47 @@ describe('SessionExecutionRunDetailsView', () => {
             expect(screen.findByTestId('session-run-details-send')).toBeNull();
         });
         expect(screen.findByTestId('session-run-details-send')).toBeNull();
+    });
+
+    it('reloads and hides the stop control when stopping races with a terminal run', async () => {
+        const sessionExecutionRuns = await import('@/sync/ops/sessionExecutionRuns');
+        const stopSpy = vi.mocked(sessionExecutionRuns.sessionExecutionRunStop);
+        stopSpy.mockResolvedValueOnce({
+            ok: false,
+            error: 'Not running',
+            errorCode: 'execution_run_not_allowed',
+        });
+        getRunSpy
+            .mockResolvedValueOnce(createExecutionRunGetResponse({ status: 'running' }))
+            .mockResolvedValueOnce(createExecutionRunGetResponse({
+                status: 'failed',
+                finishedAtMs: 2,
+                error: { code: 'execution_run_failed', message: 'startup timeout' },
+            }));
+        const { SessionExecutionRunDetailsView } = await import('./SessionExecutionRunDetailsView');
+
+        const screen = await renderScreen(<SessionExecutionRunDetailsView
+                    sessionId="s1"
+                    runId="run_1"
+                    presentation="panel"
+                />);
+        tree = screen.tree;
+
+        expect(screen.findByTestId('session-run-details-stop')).toBeTruthy();
+
+        await act(async () => {
+            await screen.pressByTestIdAsync('session-run-details-stop');
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(stopSpy).toHaveBeenCalledWith('s1', expect.objectContaining({ runId: 'run_1' }));
+        await vi.waitFor(() => {
+            expect(screen.findByTestId('session-run-details-stop')).toBeNull();
+        });
+        expect(executionRunInfoCardSpy.mock.calls.at(-1)?.[0]?.run).toEqual(expect.objectContaining({
+            runId: 'run_1',
+            status: 'failed',
+        }));
     });
 
     it('falls back to the persisted transcript when execution.run.get no longer finds the run', async () => {
