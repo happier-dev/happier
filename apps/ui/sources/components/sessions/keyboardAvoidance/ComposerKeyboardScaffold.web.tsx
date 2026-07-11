@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, type LayoutChangeEvent } from 'react-native';
+import { View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
 import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -12,6 +12,13 @@ import { useComposerKeyboardLayout } from './useComposerKeyboardLayout.web';
 function normalizeScaffoldHeight(height: number): number | undefined {
     if (!Number.isFinite(height) || height <= 0) return undefined;
     return Math.round(height);
+}
+
+function flattenStyleItems(style: StyleProp<ViewStyle>): Array<StyleProp<ViewStyle>> {
+    if (Array.isArray(style)) {
+        return style.flatMap((item) => flattenStyleItems(item as StyleProp<ViewStyle>));
+    }
+    return style ? [style] : [];
 }
 
 export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): React.ReactElement {
@@ -53,7 +60,7 @@ export function ComposerKeyboardScaffold(props: ComposerKeyboardScaffoldProps): 
                 style={[
                     { flexBasis: 0, flexGrow: 1, minHeight: 0, minWidth: 0, backgroundColor: theme.colors.surface.base },
                     liftPaddingStyle,
-                    props.style,
+                    ...flattenStyleItems(props.style),
                 ]}
             >
                 <View

@@ -107,7 +107,41 @@ describe('ComposerKeyboardScrollInset', () => {
         expect(readHeight(node?.props.style)).toBe(192);
     });
 
-    it('ignores stale native total inset payloads after the composer and keyboard have collapsed', async () => {
+    it('applies notified totals even when guest-runtime shared-value reads lag behind', async () => {
+        const listeners = new Set<(height: number) => void>();
+        const layout = createLayout({
+            bottomInset: 267,
+            composerHeight: 153,
+            keyboardHeightForInset: 267,
+            listBottomInset: 420,
+            subscribeListBottomInset: (listener) => {
+                listeners.add(listener);
+                listener(420);
+                return () => {
+                    listeners.delete(listener);
+                };
+            },
+        });
+
+        const screen = await renderScreen(
+            <ComposerKeyboardProvider layout={layout}>
+                <ComposerKeyboardScrollInset testID="transcript-composer-keyboard-inset" />
+            </ComposerKeyboardProvider>,
+        );
+
+        const node = screen.findByTestId('transcript-composer-keyboard-inset');
+        expect(readHeight(node?.props.style)).toBe(420);
+
+        await act(async () => {
+            for (const listener of listeners) {
+                listener(439);
+            }
+        });
+
+        expect(readHeight(node?.props.style)).toBe(439);
+    });
+
+    it('settles on the last notified total after the composer and keyboard have collapsed', async () => {
         const onHeightChange = vi.fn();
         const listeners = new Set<(height: number) => void>();
         const layout = createLayout({
@@ -138,13 +172,15 @@ describe('ComposerKeyboardScrollInset', () => {
         expect(onHeightChange).toHaveBeenCalledWith(134);
 
         await act(async () => {
-            layout.listBottomInset.value = 303;
             for (const listener of listeners) {
                 listener(303);
+            }
+            for (const listener of listeners) {
+                listener(134);
             }
         });
 
         expect(readHeight(node?.props.style)).toBe(134);
-        expect(onHeightChange).not.toHaveBeenCalledWith(303);
+        expect(onHeightChange).toHaveBeenLastCalledWith(134);
     });
 });

@@ -50,11 +50,7 @@ export function ComposerKeyboardScrollInset(props: Readonly<{
         applyHeight(resolveCurrentInsetHeight(layout));
         if (layout.subscribeListBottomInset) {
             return layout.subscribeListBottomInset((nextHeight) => {
-                if (Platform.OS === 'web') {
-                    applyHeight(nextHeight);
-                    return;
-                }
-                applyHeight(resolveNativeCurrentInsetHeight(layout));
+                applyHeight(nextHeight);
             });
         }
         return undefined;

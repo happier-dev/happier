@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -113,6 +113,34 @@ describe('ComposerKeyboardScaffold web', () => {
         });
 
         expect(webScaffoldLayout.lastOptions?.availablePanelMaxHeight).toBe(420);
+    });
+
+    it('applies array style overrides without nesting them under the scaffold style array', async () => {
+        const { ComposerKeyboardScaffold } = await import('./ComposerKeyboardScaffold.web');
+        const screen = await renderScreen(
+            <ComposerKeyboardScaffold
+                mode="newSession"
+                testID="scaffold"
+                style={[
+                    { justifyContent: 'center' },
+                    { justifyContent: 'flex-end' },
+                ]}
+                composer={<React.Fragment>composer</React.Fragment>}
+            >
+                <React.Fragment>content</React.Fragment>
+            </ComposerKeyboardScaffold>,
+        );
+
+        const scaffold = screen.tree.root
+            .findAllByType('AnimatedView' as never)
+            .find((node) => node.props.testID === 'scaffold');
+        if (!scaffold) {
+            throw new Error('Expected scaffold root to render as an animated view');
+        }
+        const style = scaffold.props.style as unknown[];
+
+        expect(style.some(Array.isArray)).toBe(false);
+        expect(StyleSheet.flatten(style as StyleProp<ViewStyle>)?.justifyContent).toBe('flex-end');
     });
 
     it('suppresses background keyboard lift while a foreground modal owns keyboard avoidance', async () => {
