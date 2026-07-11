@@ -8,6 +8,7 @@ import {
 import { describeBackgroundServiceTargetMode } from '@happier-dev/cli-common/happierRuntime';
 
 import type { DoctorSnapshot } from './doctorSnapshot';
+import { redactDoctorDiagnosticText } from './doctorRedaction';
 
 type HappierDoctorInstallationInventory = NonNullable<NonNullable<DoctorSnapshot['installations']>['happier']>;
 type HappierDoctorServiceInventory = NonNullable<NonNullable<DoctorSnapshot['services']>['happier']>;
@@ -20,6 +21,12 @@ type DoctorSnapshotAutomaticStartupEntry = NonNullable<DoctorSnapshot['automatic
 function formatUnknown(value: string | null | undefined): string {
   const normalized = String(value ?? '').trim();
   return normalized || '(unknown)';
+}
+
+function formatDoctorUrl(value: string | null | undefined): string {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) return '(unknown)';
+  return redactDoctorDiagnosticText(normalized);
 }
 
 function formatOwnerLabel(snapshot: DoctorSnapshot): string {
@@ -80,7 +87,7 @@ function formatActiveInvocationSummary(snapshot: DoctorSnapshot): string {
       value: [
         formatUnknown(daemon?.startedWithCliVersion),
         formatUnknown(daemon?.startedWithPublicReleaseChannel),
-        formatUnknown(snapshot.daemonStatus?.server.localServerUrl ?? snapshot.daemonStatus?.server.serverUrl),
+        formatDoctorUrl(snapshot.daemonStatus?.server.localServerUrl ?? snapshot.daemonStatus?.server.serverUrl),
       ].join(' • '),
     },
     {
@@ -132,7 +139,7 @@ function formatServiceLine(service: HappierDoctorService): string {
     service.targetMode ? describeBackgroundServiceTargetMode(service.targetMode) : null,
     service.ring ?? null,
     service.instanceId ?? null,
-    service.publicServerUrl ?? service.serverUrl ?? null,
+    service.publicServerUrl || service.serverUrl ? formatDoctorUrl(service.publicServerUrl ?? service.serverUrl ?? null) : null,
     service.definitionPath,
   ].filter(Boolean);
   return parts.join(' • ');
@@ -169,7 +176,7 @@ function formatLocalRelayLine(relay: DoctorSnapshotLocalRelay): string {
     relay.id,
     relay.releaseChannel,
     relay.version ?? null,
-    relay.relayUrl ?? null,
+    relay.relayUrl ? formatDoctorUrl(relay.relayUrl) : null,
     relay.healthy === true ? 'healthy' : relay.healthy === false ? 'needs attention' : null,
     relay.running === true ? 'running' : relay.running === false ? 'stopped' : null,
   ].filter(Boolean).join(' • ');
@@ -181,7 +188,7 @@ function formatAutomaticStartupLine(entry: DoctorSnapshotAutomaticStartupEntry):
     entry.releaseChannel ?? null,
     entry.targetMode ? describeBackgroundServiceTargetMode(entry.targetMode) : null,
     entry.running === true ? 'running' : entry.running === false ? 'stopped' : null,
-    entry.relayUrl ?? null,
+    entry.relayUrl ? formatDoctorUrl(entry.relayUrl) : null,
   ].filter(Boolean).join(' • ');
 }
 
@@ -204,8 +211,8 @@ function renderDoctorSnapshotDiagnostics(snapshot: DoctorSnapshot): string {
         value: [
           formatUnknown(snapshot.activeStack?.activeServerId),
           formatUnknown(snapshot.activeStack?.releaseChannel),
-          formatUnknown(snapshot.activeStack?.relayUrl),
-          snapshot.activeStack?.localRelayUrl ?? null,
+          formatDoctorUrl(snapshot.activeStack?.relayUrl),
+          snapshot.activeStack?.localRelayUrl ? formatDoctorUrl(snapshot.activeStack.localRelayUrl) : null,
         ].filter(Boolean).join(' • '),
       },
       {

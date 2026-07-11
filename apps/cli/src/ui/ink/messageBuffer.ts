@@ -5,6 +5,8 @@ export interface BufferedMessage {
     type: 'user' | 'assistant' | 'system' | 'tool' | 'result' | 'status'
 }
 
+export const DEFAULT_MESSAGE_BUFFER_MAX_MESSAGES = 500
+
 export class MessageBuffer {
     private messages: BufferedMessage[] = []
     private listeners: Array<(messages: BufferedMessage[]) => void> = []
@@ -18,6 +20,7 @@ export class MessageBuffer {
             type
         }
         this.messages.push(message)
+        this.trimToMaxMessages()
         this.notifyListeners()
     }
 
@@ -82,7 +85,14 @@ export class MessageBuffer {
     }
 
     private notifyListeners(): void {
+        if (this.listeners.length === 0) return
         const messages = this.getMessages()
         this.listeners.forEach(listener => listener(messages))
+    }
+
+    private trimToMaxMessages(): void {
+        const extra = this.messages.length - DEFAULT_MESSAGE_BUFFER_MAX_MESSAGES
+        if (extra <= 0) return
+        this.messages.splice(0, extra)
     }
 }

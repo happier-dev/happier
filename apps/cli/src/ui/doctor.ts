@@ -10,7 +10,7 @@ import { configuration } from '@/configuration'
 import { readSettings, readCredentials } from '@/persistence'
 import { checkIfDaemonRunningAndCleanupStaleState } from '@/daemon/controlClient'
 import { findRunawayHappyProcesses, findAllHappyProcesses } from '@/daemon/doctor'
-import { readDaemonState, type DaemonLocallyPersistedState } from '@/persistence'
+import { readDaemonState } from '@/persistence'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -22,6 +22,14 @@ import {
     formatDoctorSpawnPathLabel,
 } from '@/ui/doctorRuntimeDiagnostics'
 import { renderDoctorHappierRuntimeInventory } from '@/ui/doctorRuntimeInventory'
+import {
+    redactDaemonStateForDisplay,
+    redactDoctorDiagnosticText,
+    redactDoctorProcessCommandForDisplay,
+    redactSettingsForDisplay,
+} from '@/ui/doctorRedaction'
+
+export { redactDaemonStateForDisplay } from '@/ui/doctorRedaction'
 
 export function maskValue(value: string): string;
 export function maskValue(value: string | undefined): string | undefined;
@@ -42,28 +50,6 @@ export function maskValue(value: string | undefined): string | undefined {
     }
 
     return `<${value.length} chars>`;
-}
-
-type SettingsForDisplay = Awaited<ReturnType<typeof readSettings>>;
-
-function redactSettingsForDisplay(settings: SettingsForDisplay): SettingsForDisplay {
-    const redacted = JSON.parse(JSON.stringify(settings ?? {})) as SettingsForDisplay;
-    const redactedRecord = redacted as unknown as Record<string, unknown>;
-
-    // Remove any legacy CLI-local env cache; it may contain secrets.
-    if (Object.prototype.hasOwnProperty.call(redactedRecord, 'localEnvironmentVariables')) {
-        delete redactedRecord.localEnvironmentVariables;
-    }
-
-    return redacted;
-}
-
-export function redactDaemonStateForDisplay(state: DaemonLocallyPersistedState): Record<string, unknown> {
-    const redacted = JSON.parse(JSON.stringify(state ?? {})) as Record<string, unknown>;
-    if (typeof redacted.controlToken === 'string' && redacted.controlToken.trim() !== '') {
-        redacted.controlToken = '<redacted>';
-    }
-    return redacted;
 }
 
 /**
@@ -168,23 +154,23 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         // Configuration
         console.log(chalk.bold('⚙️  Configuration'));
         console.log(`Happier Home: ${chalk.blue(configuration.happyHomeDir)}`);
-        console.log(`Relay URL: ${chalk.blue(configuration.serverUrl)}`);
+        console.log(`Relay URL: ${chalk.blue(redactDoctorDiagnosticText(configuration.serverUrl))}`);
         console.log(`Logs Dir: ${chalk.blue(configuration.logsDir)}`);
 
         // Environment
         console.log(chalk.bold('\n🌍 Environment Variables'));
         const env = getEnvironmentInfo();
-        console.log(`HAPPIER_HOME_DIR: ${env.HAPPIER_HOME_DIR ? chalk.green(env.HAPPIER_HOME_DIR) : chalk.gray('not set')}`);
-        console.log(`HAPPIER_SERVER_URL: ${env.HAPPIER_SERVER_URL ? chalk.green(env.HAPPIER_SERVER_URL) : chalk.gray('not set')}`);
+        console.log(`HAPPIER_HOME_DIR: ${env.HAPPIER_HOME_DIR ? chalk.green(redactDoctorDiagnosticText(env.HAPPIER_HOME_DIR)) : chalk.gray('not set')}`);
+        console.log(`HAPPIER_SERVER_URL: ${env.HAPPIER_SERVER_URL ? chalk.green(redactDoctorDiagnosticText(env.HAPPIER_SERVER_URL)) : chalk.gray('not set')}`);
         console.log(`DANGEROUSLY_LOG_TO_SERVER: ${env.DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING ? chalk.yellow('ENABLED') : chalk.gray('not set')}`);
-        console.log(`DEBUG: ${env.DEBUG ? chalk.green(env.DEBUG) : chalk.gray('not set')}`);
-        console.log(`NODE_ENV: ${env.NODE_ENV ? chalk.green(env.NODE_ENV) : chalk.gray('not set')}`);
+        console.log(`DEBUG: ${env.DEBUG ? chalk.green(redactDoctorDiagnosticText(env.DEBUG)) : chalk.gray('not set')}`);
+        console.log(`NODE_ENV: ${env.NODE_ENV ? chalk.green(redactDoctorDiagnosticText(env.NODE_ENV)) : chalk.gray('not set')}`);
 
         // Connections summary (server/account/server profiles)
         if (snapshot) {
             console.log(chalk.bold('\n🧭 Connections'));
             console.log(`Resolved Relay ID: ${chalk.green(snapshot.server.activeServerId)}`);
-            console.log(`Resolved Relay URL: ${chalk.blue(snapshot.server.serverUrl)}`);
+            console.log(`Resolved Relay URL: ${chalk.blue(redactDoctorDiagnosticText(snapshot.server.serverUrl))}`);
             if (snapshot.accountId) {
                 console.log(`Account: ${chalk.green(snapshot.accountId)}`);
             } else {
@@ -199,7 +185,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
             if (snapshot.settings.servers.length > 0) {
                 console.log('Configured relays:');
                 for (const server of snapshot.settings.servers.slice(0, 12)) {
-                    console.log(`  - ${server.name} (${server.id}) → ${server.serverUrl}`);
+                    console.log(`  - ${server.name} (${server.id}) → ${redactDoctorDiagnosticText(server.serverUrl)}`);
                 }
                 if (snapshot.settings.servers.length > 12) {
                     console.log(`  … and ${snapshot.settings.servers.length - 12} more`);
@@ -306,7 +292,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
                         const color = type === 'current' ? chalk.green :
                             type.startsWith('dev') ? chalk.cyan :
                                 type.includes('daemon') ? chalk.blue : chalk.gray;
-                        console.log(`  ${color(`PID ${pid}`)}: ${chalk.gray(command)}`);
+                        console.log(`  ${color(`PID ${pid}`)}: ${chalk.gray(redactDoctorProcessCommandForDisplay(command))}`);
                     });
                 });
             } else {

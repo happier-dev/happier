@@ -7,6 +7,122 @@ function stripAnsi(value: string): string {
 }
 
 describe('renderDoctorHappierRuntimeInventory', () => {
+  it('redacts URLs rendered by runtime inventory sections', async () => {
+    const { renderDoctorHappierRuntimeInventory } = await import('./doctorRuntimeInventory');
+    const secretUrl = (label: string) =>
+      `https://doctor-${label}-user:doctor-${label}-password-123456@relay.example.test/api?mode=dev&profile=sk-doctor-${label}-profile-secret-123456&token=doctor-${label}-token-123456#doctor-${label}-fragment-secret-123456`;
+
+    const snapshot: DoctorSnapshot = {
+      capturedAt: '2026-04-07T10:11:12.000Z',
+      server: {
+        activeServerId: 'cloud',
+        serverUrl: secretUrl('server'),
+        publicServerUrl: secretUrl('public'),
+        webappUrl: 'https://app.happier.dev',
+      },
+      accountId: null,
+      settings: {
+        activeServerId: 'cloud',
+        servers: [],
+        knownAccountIds: [],
+      },
+      daemonStatus: {
+        server: {
+          activeServerId: 'cloud',
+          serverUrl: secretUrl('daemon'),
+          localServerUrl: secretUrl('local'),
+          publicServerUrl: secretUrl('daemon-public'),
+          webappUrl: 'https://app.happier.dev',
+          comparableKey: 'relay.example.test',
+        },
+        daemon: {
+          running: true,
+          pid: 1234,
+          httpPort: 3005,
+          startedWithCliVersion: '1.2.0',
+          startedWithPublicReleaseChannel: 'preview',
+          serviceManaged: true,
+          serviceLabel: 'com.happier.test',
+        },
+        service: { installed: true, running: true },
+        auth: {
+          authenticated: true,
+          machineRegistered: true,
+          machineId: 'machine_1',
+          needsAuth: false,
+          accountId: null,
+        },
+      },
+      installations: {
+        happier: {
+          activeInvocation: null,
+          installations: [],
+        },
+      },
+      services: {
+        happier: {
+          services: [
+            {
+              id: 'daemon:secret',
+              serviceType: 'daemon',
+              platform: 'darwin',
+              backend: 'launchd',
+              label: 'com.happier.secret',
+              verification: 'verified',
+              targetMode: 'default-following',
+              ring: 'preview',
+              instanceId: 'cloud',
+              scope: 'user',
+              definitionPath: '/Users/tester/Library/LaunchAgents/com.happier.secret.plist',
+              executablePath: '/opt/happier/bin/happier',
+              serverUrl: secretUrl('service'),
+              publicServerUrl: secretUrl('service-public'),
+              installed: true,
+              running: true,
+            },
+          ],
+        },
+      },
+      localRelays: {
+        relays: [
+          {
+            id: 'local-secret',
+            releaseChannel: 'preview',
+            relayUrl: secretUrl('relay'),
+            version: null,
+            installed: true,
+            healthy: true,
+            running: true,
+          },
+        ],
+      },
+      automaticStartup: {
+        entries: [
+          {
+            id: 'startup-secret',
+            label: 'Startup secret',
+            scope: 'user',
+            installed: true,
+            releaseChannel: 'preview',
+            targetMode: 'default-following',
+            relayUrl: secretUrl('startup'),
+            running: true,
+          },
+        ],
+      },
+    } as DoctorSnapshot;
+
+    const rendered = stripAnsi(renderDoctorHappierRuntimeInventory(snapshot));
+
+    expect(rendered).toContain('mode=dev');
+    expect(rendered).toMatch(/redacted/i);
+    expect(rendered).not.toContain('doctor-local-user');
+    expect(rendered).not.toContain('doctor-service-password-123456');
+    expect(rendered).not.toContain('sk-doctor-relay-profile-secret-123456');
+    expect(rendered).not.toContain('doctor-startup-token-123456');
+    expect(rendered).not.toContain('doctor-daemon-fragment-secret-123456');
+  });
+
   it('renders active runtime, installations, services, and repair guidance', async () => {
     const { renderDoctorHappierRuntimeInventory } = await import('./doctorRuntimeInventory');
 

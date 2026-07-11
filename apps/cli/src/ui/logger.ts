@@ -6,13 +6,22 @@
  */
 
 import chalk from 'chalk'
-import { appendFileSync } from 'fs'
 import { configuration } from '../configuration'
-import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, join } from 'node:path'
 import { inspect } from 'node:util'
 import { writeConsoleErrorBestEffort, writeConsoleLogBestEffort } from '../utils/writeConsoleBestEffort'
+import { BufferedFileAppender } from './logFileAppender'
+import { isFileLogLevelEnabled, resolveFileLogLevel, type FileLogLevel } from './logFileLevel'
+import { pruneLogsByCount } from '@/utils/logs/pruneLogsByCount'
+import {
+  DAEMON_LOG_SUFFIX,
+  LOG_FILE_SUFFIX,
+  resolveCrashedSessionLogKeepCount,
+  resolveDaemonLogKeepCount,
+  resolveSessionLogKeepCount,
+} from '@/utils/logs/logRetention'
 // Note: readDaemonState is imported lazily inside listDaemonLogFiles() to avoid
 // circular dependency: logger.ts ↔ persistence.ts
 
@@ -59,13 +68,109 @@ function getSessionLogPath(): string {
   return join(resolveLogsDir(), filename)
 }
 
+async function pruneCurrentProcessLogsBestEffort(currentLogPath: string): Promise<void> {
+  const logsDir = resolveLogsDir()
+  if (configuration.isDaemonProcess) {
+    await pruneLogsByCount({
+      dir: logsDir,
+      suffix: DAEMON_LOG_SUFFIX,
+      keepCount: resolveDaemonLogKeepCount(),
+      keepPath: currentLogPath,
+    })
+    return
+  }
+
+  await pruneLogsByCount({
+    dir: logsDir,
+    suffix: LOG_FILE_SUFFIX,
+    excludeSuffix: DAEMON_LOG_SUFFIX,
+    keepCount: resolveSessionLogKeepCount(),
+    keepPath: currentLogPath,
+    keepPaths: resolveCrashedSessionLogKeepPaths(logsDir),
+  })
+}
+
+type CrashedSessionExitReportReference = Readonly<{
+  pid: number;
+  observedAt: number;
+}>
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isNonZeroSessionExitReport(report: Readonly<Record<string, unknown>>): boolean {
+  return (typeof report.code === 'number' && report.code !== 0)
+    || (typeof report.signal === 'string' && report.signal.trim().length > 0)
+}
+
+function readNonZeroSessionExitReportReference(reportPath: string): CrashedSessionExitReportReference | null {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(reportPath, 'utf8'))
+    if (!isRecord(parsed) || !isNonZeroSessionExitReport(parsed)) return null
+    const pid = typeof parsed.pid === 'number' && Number.isSafeInteger(parsed.pid) && parsed.pid > 0
+      ? parsed.pid
+      : null
+    if (pid === null) return null
+    const observedAt = typeof parsed.observedAt === 'number' && Number.isFinite(parsed.observedAt)
+      ? parsed.observedAt
+      : statSync(reportPath).mtimeMs
+    return { pid, observedAt }
+  } catch {
+    return null
+  }
+}
+
+function resolveCrashedSessionLogKeepPaths(logsDir: string): string[] {
+  const keepCount = resolveCrashedSessionLogKeepCount()
+  if (keepCount <= 0) return []
+  try {
+    const sessionExitDir = join(logsDir, 'session-exit')
+    const crashedPids = new Set(
+      readdirSync(sessionExitDir)
+        .filter((file) => file.endsWith('.json'))
+        .map((file) => readNonZeroSessionExitReportReference(join(sessionExitDir, file)))
+        .filter((entry): entry is CrashedSessionExitReportReference => entry !== null)
+        .sort((a, b) => b.observedAt - a.observedAt)
+        .slice(0, keepCount)
+        .map((entry) => entry.pid),
+    )
+    if (crashedPids.size === 0) return []
+    return readdirSync(logsDir)
+      .filter((file) => file.endsWith(LOG_FILE_SUFFIX) && !file.endsWith(DAEMON_LOG_SUFFIX))
+      .filter((file) => {
+        const match = /-pid-(\d+)\.log$/.exec(file)
+        if (!match) return false
+        return crashedPids.has(Number(match[1]))
+      })
+      .map((file) => join(logsDir, file))
+  } catch {
+    return []
+  }
+}
+
 class Logger {
   private dangerouslyUnencryptedServerLoggingUrl: string | undefined
   private hasLoggedFileWriteError: boolean = false
+  private readonly fileLogLevel: FileLogLevel
+  private readonly debugFileEnabled: boolean
+  private readonly infoFileEnabled: boolean
+  private readonly warnFileEnabled: boolean
+  private readonly fileAppender: BufferedFileAppender
 
   constructor(
     public readonly logFilePath = getSessionLogPath()
   ) {
+    this.fileLogLevel = resolveFileLogLevel({ env: process.env, isDaemonProcess: configuration.isDaemonProcess })
+    this.debugFileEnabled = isFileLogLevelEnabled(this.fileLogLevel, 'debug')
+    this.infoFileEnabled = isFileLogLevelEnabled(this.fileLogLevel, 'info')
+    this.warnFileEnabled = isFileLogLevelEnabled(this.fileLogLevel, 'warn')
+    this.fileAppender = new BufferedFileAppender({
+      filePath: this.logFilePath,
+      onWriteError: (error) => this.handleFileWriteError(error),
+    })
+    void pruneCurrentProcessLogsBestEffort(this.logFilePath).catch(() => {})
+
     // Remote logging enabled only when explicitly set with server URL
     if (process.env.DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING 
       && process.env.HAPPIER_SERVER_URL) {
@@ -81,6 +186,7 @@ class Logger {
   }
 
   debug(message: string, ...args: unknown[]): void {
+    if (!this.debugFileEnabled) return
     this.logToFile(`[${this.localTimezoneTimestamp()}]`, message, ...args)
 
     // NOTE: @kirill does not think its a good ideas,
@@ -153,7 +259,8 @@ class Logger {
   
   info(message: string, ...args: unknown[]): void {
     this.logToConsole('info', '', message, ...args)
-    this.debug(message, args)
+    if (!this.infoFileEnabled) return
+    this.logToFile(`[${this.localTimezoneTimestamp()}]`, message, ...args)
   }
   
   infoDeveloper(message: string, ...args: unknown[]): void {
@@ -168,11 +275,17 @@ class Logger {
   
   warn(message: string, ...args: unknown[]): void {
     this.logToConsole('warn', '', message, ...args)
-    this.debug(`[WARN] ${message}`, ...args)
+    if (!this.warnFileEnabled) return
+    this.logToFile(`[${this.localTimezoneTimestamp()}]`, `[WARN] ${message}`, ...args)
   }
   
   getLogPath(): string {
     return this.logFilePath
+  }
+
+  flushSync(): void {
+    this.fileAppender.flushSync()
+    void pruneCurrentProcessLogsBestEffort(this.logFilePath).catch(() => {})
   }
   
   private logToConsole(level: 'debug' | 'error' | 'info' | 'warn', prefix: string, message: string, ...args: unknown[]): void {
@@ -259,30 +372,13 @@ class Logger {
       })
     }
     
-    // Handle async file path
-    try {
-      appendFileSync(this.logFilePath, logLine)
-    } catch (appendError) {
-      // Most common failure in tests/first-run is missing logs directory.
-      // Create it and retry once, but never throw from logging.
-      const err = appendError as NodeJS.ErrnoException
-      if (err?.code === 'ENOENT') {
-        try {
-          mkdirSync(dirname(this.logFilePath), { recursive: true })
-          appendFileSync(this.logFilePath, logLine)
-          return
-        } catch (retryError) {
-          appendError = retryError
-        }
-      }
+    this.fileAppender.append(logLine)
+  }
 
-      // Never throw from logging: log files are best-effort and should not break the CLI.
-      // When DEBUG is set, surface the first write failure for easier debugging.
-      if (process.env.DEBUG && !this.hasLoggedFileWriteError) {
-        writeConsoleErrorBestEffort('[DEV MODE ONLY] Failed to append to log file:', appendError)
-        this.hasLoggedFileWriteError = true
-      }
-      // In production (and after the first DEBUG warning), fail silently to avoid disturbing the session.
+  private handleFileWriteError(error: unknown): void {
+    if (process.env.DEBUG && !this.hasLoggedFileWriteError) {
+      writeConsoleErrorBestEffort('[DEV MODE ONLY] Failed to append to log file:', error)
+      this.hasLoggedFileWriteError = true
     }
   }
 }
