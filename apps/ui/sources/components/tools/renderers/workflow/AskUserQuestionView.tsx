@@ -3,11 +3,12 @@ import { View, TouchableOpacity } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ToolViewProps } from '../core/_registry';
 import { resolvePermissionRequestId } from '../core/resolvePermissionRequestId';
+import { resolveAgentUiBehaviorFromSessionMetadata } from '@/agents/registry/registryUiBehavior';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { sessionAllowWithAnswers } from '@/sync/ops';
 import { storage } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
-import { t } from '@/text';
+import { t, type TranslationKey } from '@/text';
 import { Ionicons } from '@expo/vector-icons';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { resolveAgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
@@ -215,7 +216,15 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
 
     // Parse input
     const input = tool.input as AskUserQuestionInput | undefined;
-    const questions = input?.questions;
+    const session = sessionId ? storage.getState().sessions[sessionId] : undefined;
+    const presentedInput = input
+        ? resolveAgentUiBehaviorFromSessionMetadata(session?.metadata)
+            ?.workflow
+            ?.resolveAskUserQuestionPresentation?.({ input, translate: (key) => t(key as TranslationKey) }) ?? input
+        : undefined;
+    const questions = presentedInput && typeof presentedInput === 'object' && 'questions' in presentedInput
+        ? (presentedInput as AskUserQuestionInput).questions
+        : undefined;
 
     if (!questions || !Array.isArray(questions) || questions.length === 0) {
         return null;
@@ -224,7 +233,6 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
     const isRunning = tool.state === 'running';
     const canApprovePermissions = interaction?.canApprovePermissions ?? true;
     const toolCallId = resolvePermissionRequestId(tool);
-    const session = sessionId ? storage.getState().sessions[sessionId] : undefined;
     const activeMatchingRequest = toolCallId ? (session as any)?.agentState?.requests?.[toolCallId] : null;
     const hasActiveAskUserQuestionRequest =
         activeMatchingRequest?.tool === 'AskUserQuestion' &&

@@ -3,15 +3,16 @@ import { View, Platform, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 import type { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
+import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { Text } from '@/components/ui/text/Text';
 import { collectSubAgentSummaryTools } from './collectSubAgentSummaryTools';
 import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 
 type TaskOperation = 'run' | 'create' | 'list' | 'update' | 'unknown';
@@ -122,10 +123,11 @@ export const SubAgentSummarySection = React.memo<{
     detailLevel?: 'title' | 'summary' | 'full';
     sessionId?: string;
     messageId?: string;
+    interaction?: TranscriptInteraction;
     opts?: Readonly<{
         hideResultInlineWhenBackgroundRun?: boolean;
     }>;
-}>(function SubAgentSummarySection({ tool, metadata, messages, detailLevel = 'summary', sessionId, messageId, opts }) {
+}>(function SubAgentSummarySection({ tool, metadata, messages, detailLevel = 'summary', sessionId, messageId, interaction, opts }) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const router = useRouter();
@@ -141,13 +143,15 @@ export const SubAgentSummarySection = React.memo<{
         });
     }, [messageId, tool.id]);
 
-    const canOpenDetails = Boolean(sessionId && routeMessageId) && detailLevel !== 'full';
+    const canOpenDetails = Boolean(sessionId && routeMessageId)
+        && detailLevel !== 'full'
+        && interaction?.disableToolNavigation !== true;
     const handleOpenDetails = React.useCallback(() => {
-        if (!sessionId || !routeMessageId) return;
+        if (!sessionId || !routeMessageId || interaction?.disableToolNavigation === true) return;
         navigateWithBlurOnWeb(() => {
             router.push(`/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(routeMessageId)}`);
         });
-    }, [routeMessageId, router, sessionId]);
+    }, [interaction?.disableToolNavigation, routeMessageId, router, sessionId]);
 
     if (detailLevel === 'title') return null;
 

@@ -80,7 +80,7 @@ function resultHasRequestInterruptedSignal(value: unknown, depth = 0): boolean {
     return false;
 }
 
-export const SubAgentRunView = React.memo<ToolViewProps>(({ tool, messages, detailLevel, sessionId, messageId }) => {
+export const SubAgentRunView = React.memo<ToolViewProps>(({ tool, messages, detailLevel, sessionId, messageId, interaction }) => {
     if (tool.state === 'running') {
         return (
             <SubAgentSummarySection
@@ -90,6 +90,7 @@ export const SubAgentRunView = React.memo<ToolViewProps>(({ tool, messages, deta
                 detailLevel={detailLevel}
                 sessionId={sessionId}
                 messageId={messageId}
+                interaction={interaction}
                 opts={{ hideResultInlineWhenBackgroundRun: false }}
             />
         );
@@ -107,6 +108,7 @@ export const SubAgentRunView = React.memo<ToolViewProps>(({ tool, messages, deta
                     detailLevel={detailLevel}
                     sessionId={sessionId}
                     messageId={messageId}
+                    interaction={interaction}
                     opts={{ hideResultInlineWhenBackgroundRun: false }}
                 />
             );

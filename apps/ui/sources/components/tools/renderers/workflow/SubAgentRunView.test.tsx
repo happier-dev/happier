@@ -53,6 +53,50 @@ describe('SubAgentRunView', () => {
         expect(text).toContain('Working...');
     });
 
+    it('keeps nested +N tool navigation disabled when the canonical interaction denies it', async () => {
+        const messages = Array.from({ length: 5 }, (_, index) => ({
+            kind: 'tool-call',
+            id: `message-${index}`,
+            localId: null,
+            createdAt: index + 2,
+            tool: {
+                id: `tool-${index}`,
+                name: 'Read',
+                state: 'completed',
+                input: { file_path: `/file-${index}.txt` },
+                result: 'ok',
+                createdAt: index + 2,
+                startedAt: index + 2,
+                completedAt: index + 2,
+            },
+        }));
+
+        const screen = await renderScreen(<SubAgentRunView
+            tool={{
+                id: 'subagent-run',
+                name: 'SubAgentRun',
+                state: 'running',
+                input: { intent: 'delegate' },
+                result: null,
+            } as any}
+            metadata={null as any}
+            messages={messages as any}
+            sessionId="public-session"
+            messageId="parent-message"
+            detailLevel="summary"
+            interaction={{
+                canSendMessages: false,
+                canApprovePermissions: false,
+                permissionDisabledReason: 'public',
+                disableToolNavigation: true,
+            }}
+        />);
+
+        const moreToolsRow = screen.findByTestId('task-like-summary-more-tools');
+        expect(moreToolsRow).toBeTruthy();
+        expect(moreToolsRow?.props.onPress).toBeUndefined();
+    });
+
     it('renders sidechain text messages for abort-like Request interrupted errors', async () => {
         let tree!: renderer.ReactTestRenderer;
         tree = (await renderScreen(<SubAgentRunView
