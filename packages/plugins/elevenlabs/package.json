@@ -1,0 +1,36 @@
+{
+  "name": "@happier-dev/plugins-elevenlabs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "package.json"],
+  "scripts": {
+    "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
+    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+  },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./protocol/voice": { "types": "./dist/protocol/voice/index.d.ts", "default": "./dist/protocol/voice/index.js" },
+    "./ui/voice": {
+      "types": "./dist/ui/voice/index.d.ts",
+      "react-native": "./dist/ui/voice/index.native.js",
+      "default": "./dist/ui/voice/index.js"
+    },
+    "./agent/voice": { "types": "./dist/agent/voice/index.d.ts", "default": "./dist/agent/voice/index.js" }
+  },
+  "dependencies": {
+    "@elevenlabs/client": "1.3.1",
+    "@elevenlabs/react-native": "1.1.3",
+    "@happier-dev/agents": "0.0.0",
+    "@happier-dev/protocol": "0.0.0",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
