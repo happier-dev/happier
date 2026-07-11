@@ -11,8 +11,8 @@ import type {
   ScmOperationErrorCode,
   ScmHostingProviderRef,
   ScmPullRequestSummary,
-} from '@happier-dev/protocol';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
 import { githubHostingProviderAdapter } from '../adapter.js';
 import { createGithubCliAdapter, type GithubCliPullRequestAdapter } from './cliAdapter.js';

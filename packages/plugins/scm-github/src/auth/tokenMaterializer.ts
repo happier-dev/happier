@@ -1,7 +1,5 @@
-import {
-  getConnectedAccountDescriptor,
-  type ConnectedServiceCredentialRecordV1,
-} from '@happier-dev/protocol';
+import { getConnectedAccountDescriptor } from '@happier-dev/plugin-sdk/experimental/manifest/connectedAccountDescriptors';
+import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/scm';
 
 export type GithubScmHostingTokenMaterializationRequest = Readonly<{
   kind: 'scm_hosting_token';

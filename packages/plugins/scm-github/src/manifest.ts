@@ -1,4 +1,4 @@
-import { getConnectedAccountDescriptor } from '@happier-dev/protocol';
+import { getConnectedAccountDescriptor } from '@happier-dev/plugin-sdk/experimental/manifest/connectedAccountDescriptors';
 import { definePluginManifest, type PluginManifestV2 } from '@happier-dev/plugin-sdk';
 
 const githubConnectedAccountDescriptor = getConnectedAccountDescriptor('github');
@@ -20,9 +20,10 @@ export const PLUGIN_MANIFEST = definePluginManifest({
     resolvedVersion: '0.0.0',
   },
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: ['scmHostingProviders', 'connectedAccountDescriptors'] },
-  targets: {},
-  capabilities: {},
+  activationEvents: ['onScmProvider:scm.github'],
+  uses: ['scmHostingProviders', 'connectedAccountDescriptors'],
+  entrypoints: { main: './dist/index.js' },
+  permissions: { required: [], optional: [] },
   contributes: {
     scmHostingProviders: [
       {
@@ -31,12 +32,12 @@ export const PLUGIN_MANIFEST = definePluginManifest({
         displayName: 'GitHub',
         baseUrl: 'https://github.com',
         remoteHostMatchers: {
-          exactHosts: ['github.com', 'github.company.com', 'ghe.internal.test'],
+          exactHosts: ['github.com'],
         },
         urlSafety: {
           allowedSchemes: ['https:'],
-          allowedBaseUrls: ['https://github.com', 'https://github.company.com', 'https://ghe.internal.test'],
-          allowedOrigins: ['https://github.com', 'https://github.company.com', 'https://ghe.internal.test'],
+          allowedBaseUrls: ['https://github.com'],
+          allowedOrigins: ['https://github.com'],
         },
         capabilities: {
           compareUrl: true,

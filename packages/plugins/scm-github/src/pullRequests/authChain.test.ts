@@ -1,4 +1,7 @@
-import type { ScmHostingProviderRef, ScmPullRequestSummary } from '@happier-dev/protocol';
+import type {
+  ScmHostingProviderRef,
+  ScmPullRequestSummary,
+} from '@happier-dev/plugin-sdk/scm';
 import { describe, expect, it } from 'vitest';
 
 const githubProvider: ScmHostingProviderRef = {

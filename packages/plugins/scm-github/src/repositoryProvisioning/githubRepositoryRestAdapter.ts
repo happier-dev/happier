@@ -6,11 +6,15 @@ import type {
   ScmHostingProviderRuntimeServices,
 } from '@happier-dev/plugin-sdk';
 import type {
+  ScmForgeHttpErrorContext,
+  ScmForgeHttpFetcher,
+  ScmForgeHttpResponse,
   ScmHostingProviderRef,
   ScmHostingRepositoryAuthSummary,
   ScmHostingRepositoryPublishTarget,
   ScmHostingRepositorySummary,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/scm';
+import { requestScmForgeJson } from '@happier-dev/plugin-sdk/scm';
 
 import {
   createGithubRepositoryAlreadyExistsError,
@@ -26,15 +30,9 @@ import {
 } from './githubRepositoryApiBase.js';
 import { mapGithubRepositorySummary } from './githubRepositoryMapping.js';
 
-type GithubRestResponse = Readonly<{
-  ok: boolean;
-  status: number;
-  statusText: string;
-  json(): Promise<unknown>;
-  text(): Promise<string>;
-}>;
+type GithubRestResponse = ScmForgeHttpResponse;
 
-export type GithubRepositoryRestFetcher = (url: string, init?: RequestInit) => Promise<GithubRestResponse>;
+export type GithubRepositoryRestFetcher = ScmForgeHttpFetcher;
 
 export type GithubRepositoryRestTokenResolution =
   | Readonly<{
@@ -107,36 +105,22 @@ function repoPath(input: Readonly<{ owner: string; repositoryName: string }>): s
   return `${encodePathSegment(input.owner)}/${encodePathSegment(input.repositoryName)}`;
 }
 
-async function readGithubJson(response: GithubRestResponse): Promise<unknown> {
-  if (response.ok) return response.json();
-  if (response.status === 401) {
+function mapGithubRepositoryRestError(context: ScmForgeHttpErrorContext): Error {
+  if (context.status === 401) {
     throw createGithubRepositoryAuthRequiredError('GitHub REST authentication failed');
   }
-  if (response.status === 403) {
+  if (context.status === 403) {
     throw createGithubRepositoryRemoteRejectedError('GitHub REST request was forbidden');
   }
-  if (response.status === 404) {
+  if (context.status === 404) {
     throw createGithubRepositoryNotFoundError();
   }
-  if (response.status === 422) {
-    const body = await readGithubErrorBody(response);
-    if (isAlreadyExistsValidationError(body)) {
+  if (context.status === 422) {
+    if (isAlreadyExistsValidationError(context.body)) {
       throw createGithubRepositoryAlreadyExistsError();
     }
   }
-  throw createGithubRepositoryCommandFailedError(`GitHub REST request failed with status ${response.status || response.statusText}`);
-}
-
-async function readGithubErrorBody(response: GithubRestResponse): Promise<unknown> {
-  try {
-    return await response.json();
-  } catch {
-    try {
-      return JSON.parse(await response.text());
-    } catch {
-      return null;
-    }
-  }
+  throw createGithubRepositoryCommandFailedError(`GitHub REST request failed with status ${context.status || context.statusText}`);
 }
 
 function isAlreadyExistsValidationError(body: unknown): boolean {
@@ -237,10 +221,15 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
     profileKey?: string;
   }>> {
     const auth = await resolveToken(provider, runtimeServices);
-    const raw = await readGithubJson(await fetcher(`${resolveGithubRepositoryApiBaseUrl(provider)}${path}`, {
-      ...init,
-      headers: buildHeaders(auth.token),
-    }));
+    const raw = await requestScmForgeJson({
+      url: `${resolveGithubRepositoryApiBaseUrl(provider)}${path}`,
+      init: {
+        ...init,
+        headers: buildHeaders(auth.token),
+      },
+      fetcher,
+      mapError: mapGithubRepositoryRestError,
+    });
     return {
       raw,
       ...(auth.profileKey ? { profileKey: auth.profileKey } : {}),

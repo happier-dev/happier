@@ -2,7 +2,7 @@ import type {
   ScmHostingProviderRef,
   ScmHostingRepositorySummary,
   ScmHostingRepositoryVisibility,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/scm';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);

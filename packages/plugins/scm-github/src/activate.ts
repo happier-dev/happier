@@ -1,4 +1,6 @@
-import type { PluginApiV1 } from '@happier-dev/plugin-sdk';
+import type {
+  PluginApi,
+} from '@happier-dev/plugin-sdk';
 
 import { GITHUB_SCM_HOSTING_PROVIDER_ID } from './adapter.js';
 import {
@@ -8,7 +10,7 @@ import {
 import { githubPullRequestAdapter } from './pullRequests/authChain.js';
 import { githubRepositoryProvisioningAdapter } from './repositoryProvisioning/createRepositoryWithAuthFallback.js';
 
-export function activate(api: PluginApiV1): void {
+export function activate(api: PluginApi): void {
   api.registerScmHostingProvider({
     id: GITHUB_SCM_HOSTING_PROVIDER_ID,
     auth: {

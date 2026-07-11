@@ -10,7 +10,7 @@ import type {
   ScmHostingRepositoryAuthSummary,
   ScmHostingRepositoryPublishTarget,
   ScmHostingRepositorySummary,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/scm';
 
 import {
   createGithubRepositoryAuthRequiredError,

@@ -11,7 +11,7 @@ import type {
 import type {
   ScmHostingProviderRef,
   ScmPullRequestSummary,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/scm';
 
 import { resolveGithubCheckoutReferenceFromPullRequest } from './checkoutReference.js';
 import {

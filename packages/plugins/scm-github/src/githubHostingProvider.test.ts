@@ -33,10 +33,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
         trustPolicy: 'local_trusted',
         installPolicy: 'link',
       },
-      runtime: {
-        apiVersion: 1,
-        capabilities: ['scmHostingProviders', 'connectedAccountDescriptors'],
-      },
+      uses: ['scmHostingProviders', 'connectedAccountDescriptors'],
       contributes: {
         scmHostingProviders: [
           {
@@ -45,20 +42,12 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
             displayName: 'GitHub',
             baseUrl: 'https://github.com',
             remoteHostMatchers: {
-              exactHosts: expect.arrayContaining(['github.com', 'github.company.com', 'ghe.internal.test']),
+              exactHosts: ['github.com'],
             },
             urlSafety: {
               allowedSchemes: ['https:'],
-              allowedBaseUrls: expect.arrayContaining([
-                'https://github.com',
-                'https://github.company.com',
-                'https://ghe.internal.test',
-              ]),
-              allowedOrigins: expect.arrayContaining([
-                'https://github.com',
-                'https://github.company.com',
-                'https://ghe.internal.test',
-              ]),
+              allowedBaseUrls: ['https://github.com'],
+              allowedOrigins: ['https://github.com'],
             },
             capabilities: expect.objectContaining({
               compareUrl: true,
@@ -83,7 +72,20 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
       },
     });
     expect(mod.PLUGIN_MANIFEST.contributes).not.toHaveProperty('hooks');
-  });
+    const [provider] = mod.PLUGIN_MANIFEST.contributes.scmHostingProviders;
+    const shippedValues = [
+      ...(provider.remoteHostMatchers?.exactHosts ?? []),
+      ...(provider.urlSafety?.allowedBaseUrls ?? []),
+      ...(provider.urlSafety?.allowedOrigins ?? []),
+    ];
+    expect(shippedValues).not.toContain('github.company.com');
+    expect(shippedValues).not.toContain('ghe.internal.test');
+    expect(shippedValues).not.toContain('https://github.company.com');
+    expect(shippedValues).not.toContain('https://ghe.internal.test');
+    for (const value of shippedValues) {
+      expect(value).not.toMatch(/(?:^|[.:/])(?:[^/]*\.test|[^/]*\.company\.com)(?:$|[/:])/);
+    }
+  }, 30_000);
 
   it('registers the manifest-declared GitHub adapter during activation', async () => {
     const mod = await import('./activate.js').catch(() => null);
@@ -187,12 +189,15 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
     });
   });
 
-  it('detects GitHub HTTPS, SSH, and enterprise-style remotes without github.com-only matching', async () => {
+  it('detects bundled GitHub remotes and supports enterprise hosts through test-local options', async () => {
     const mod = await import('./adapter.js').catch(() => null);
     expect(mod).not.toBeNull();
     if (!mod) return;
 
     const adapter = mod.githubHostingProviderAdapter as Adapter;
+    const enterpriseAdapter = mod.createGithubScmHostingProviderAdapter({
+      exactHosts: ['github.company.com', 'ghe.internal.test'],
+    }) as Adapter;
 
     expect(adapter.detectRemote({
       remoteName: 'origin',
@@ -212,7 +217,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
       nameWithOwner: 'happier-dev/happier',
       remoteName: 'upstream',
     });
-    expect(adapter.detectRemote({
+    expect(enterpriseAdapter.detectRemote({
       remoteName: 'origin',
       remoteUrl: 'ssh://git@github.company.com/happier-dev/happier.git',
     })).toMatchObject({
@@ -220,7 +225,7 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
       baseUrl: 'https://github.company.com',
       nameWithOwner: 'happier-dev/happier',
     });
-    expect(adapter.detectRemote({
+    expect(enterpriseAdapter.detectRemote({
       remoteName: 'origin',
       remoteUrl: 'ssh://git@ghe.internal.test/happier-dev/happier.git',
     })).toMatchObject({

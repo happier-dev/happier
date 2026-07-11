@@ -10,9 +10,13 @@ import type {
 } from '@happier-dev/plugin-sdk';
 import type {
   ScmHostingProviderRef,
+  ScmForgeHttpErrorContext,
+  ScmForgeHttpFetcher,
+  ScmForgeHttpResponse,
   ScmPullRequestState,
   ScmPullRequestSummary,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/scm';
+import { requestScmForgeJson } from '@happier-dev/plugin-sdk/scm';
 
 import { resolveGithubCheckoutReferenceFromPullRequest } from './checkoutReference.js';
 import { mapGithubDefaultBranch } from './defaultBranch.js';
@@ -23,15 +27,9 @@ import {
 } from './errors.js';
 import { mapGithubPullRequest } from './mapping.js';
 
-type GithubRestResponse = Readonly<{
-  ok: boolean;
-  status: number;
-  statusText: string;
-  json(): Promise<unknown>;
-  text(): Promise<string>;
-}>;
+type GithubRestResponse = ScmForgeHttpResponse;
 
-export type GithubRestFetcher = (url: string, init?: RequestInit) => Promise<GithubRestResponse>;
+export type GithubRestFetcher = ScmForgeHttpFetcher;
 
 export type GithubRestTokenResolution =
   | Readonly<{
@@ -194,15 +192,14 @@ async function resolveToken(
   };
 }
 
-async function readGithubJson(response: GithubRestResponse): Promise<unknown> {
-  if (response.ok) return response.json();
-  if (response.status === 401 || response.status === 403) {
+function mapGithubRestError(context: ScmForgeHttpErrorContext): Error {
+  if (context.status === 401 || context.status === 403) {
     throw createGithubAuthRequiredError('GitHub REST authentication failed');
   }
-  if (response.status === 404) {
+  if (context.status === 404) {
     throw createGithubNotFoundError();
   }
-  throw createGithubCommandFailedError(`GitHub REST request failed with status ${response.status || response.statusText}`);
+  throw createGithubCommandFailedError(`GitHub REST request failed with status ${context.status || context.statusText}`);
 }
 
 function readPullRequestNumberFromProviderUrl(provider: ScmHostingProviderRef, url: string): number | null {
@@ -257,10 +254,15 @@ export function createGithubRestAdapter(params?: Readonly<{
   ): Promise<unknown> {
     const auth = await resolveToken(provider, tokenResolver, runtimeServices);
     profileKeyByProvider.set(providerAuthProfileScopeKey(provider), auth.profileKey ?? null);
-    return readGithubJson(await fetcher(url, {
-      ...init,
-      headers: buildHeaders(auth.token),
-    }));
+    return requestScmForgeJson({
+      url,
+      init: {
+        ...init,
+        headers: buildHeaders(auth.token),
+      },
+      fetcher,
+      mapError: mapGithubRestError,
+    });
   }
 
   async function getPullRequest(input: ScmHostingProviderPullRequestGetInput): Promise<ScmPullRequestSummary | null> {

@@ -1,4 +1,4 @@
-import type { ScmHostingProviderRef } from '@happier-dev/protocol';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm';
 import type {
   ScmHostingProviderCompareUrlInput,
   ScmHostingProviderRemoteDetectionInput,
@@ -9,7 +9,7 @@ import { encodeCompareRef, parseScmRemoteUrl, stripTrailingSlash } from './remot
 
 export const GITHUB_SCM_HOSTING_PROVIDER_ID = 'scm.github';
 export const GITHUB_REMOTE_HOST_MATCHERS = Object.freeze({
-  exactHosts: Object.freeze(['github.com', 'github.company.com', 'ghe.internal.test']),
+  exactHosts: Object.freeze(['github.com']),
 });
 export const GITHUB_URL_SAFETY = Object.freeze({
   allowedSchemes: Object.freeze(['https:']),
