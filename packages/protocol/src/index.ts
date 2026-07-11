@@ -1,5 +1,9 @@
 export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
 
+export {
+  isUnsafeTelemetryDataKey,
+  normalizeTelemetryDataKey,
+} from './common/sensitiveKeys.js';
 export * from './local/services/index.js';
 export * from './ssh/tunnels.js';
 export * from './ssh/hostTrust.js';
@@ -17,10 +21,10 @@ export type {
   SettingDefinitionMap,
   SettingStorageScope,
   SettingValueKind,
-} from './settingsRegistry/settingDefinition.js';
-export { buildSettingArtifacts } from './settingsRegistry/buildSettingArtifacts.js';
-export type { SettingArtifacts } from './settingsRegistry/buildSettingArtifacts.js';
-export { defineSettingDefinitions } from './settingsRegistry/settingDefinition.js';
+} from './settings/registry/settingDefinition.js';
+export { buildSettingArtifacts } from './settings/registry/buildSettingArtifacts.js';
+export type { SettingArtifacts } from './settings/registry/buildSettingArtifacts.js';
+export { defineSettingDefinitions } from './settings/registry/settingDefinition.js';
 export type {
   SessionAuthoringAutomationV1,
   SessionAuthoringCheckoutCreationDraftV1,
@@ -35,7 +39,7 @@ export type {
   SessionAuthoringFieldSurface,
   SessionAuthoringTerminalV1,
   SessionAuthoringValueV1,
-} from './sessionAuthoring/index.js';
+} from './sessions/authoring/index.js';
 export {
   SESSION_AUTHORING_CONTEXT_KINDS,
   SESSION_AUTHORING_FIELD_CATALOG,
@@ -48,7 +52,33 @@ export {
   SessionAuthoringValueV1Schema,
   buildSessionAuthoringFieldArtifacts,
   defineSessionAuthoringFields,
-} from './sessionAuthoring/index.js';
+} from './sessions/authoring/index.js';
+export {
+  SESSION_RUNTIME_ACTIVITY_PROJECTION_LEASE_MS,
+  SESSION_RUNTIME_ACTIVITY_SOURCE_LIMIT,
+  SESSION_RUNTIME_ACTIVITY_OWNER_LIVE_FRESHNESS_MS,
+  SessionRuntimeActivityProjectionV1Schema,
+  SessionRuntimeActivitySourceClassV1Schema,
+  SessionRuntimeActivitySourceKindV1Schema,
+  SessionRuntimeActivitySourceStatusV1Schema,
+  SessionRuntimeActivitySourceV1Schema,
+  SessionRuntimeActivityV1Schema,
+  buildSessionRuntimeActivityV1,
+  hasActiveSessionRuntimeActivity,
+  isRuntimeActivityOwnerLive,
+  isSessionRuntimeActivityProjectionIdleForPendingDrain,
+  listActiveSessionRuntimeActivitySources,
+  readSessionRuntimeActivityV1,
+  type BuildSessionRuntimeActivityV1Input,
+  type RuntimeActivityOwnerLivenessInput,
+  type SessionRuntimeActivityProjectionForPendingDrain,
+  type SessionRuntimeActivityProjectionV1,
+  type SessionRuntimeActivitySourceClassV1,
+  type SessionRuntimeActivitySourceKindV1,
+  type SessionRuntimeActivitySourceStatusV1,
+  type SessionRuntimeActivitySourceV1,
+  type SessionRuntimeActivityV1,
+} from './sessions/runtime/activity/index.js';
 export {
   BackendTargetKeySchema,
   BackendTargetKindSchema,
@@ -60,7 +90,7 @@ export {
   type BackendTargetKey,
   type BackendTargetKind,
   type BackendTargetRefV1,
-} from './backendTargets/backendTargetRef.js';
+} from './backends/targets/backendTargetRef.js';
 export {
   BackendTargetKeyV2Schema,
   BackendTargetRefV2InputSchema,
@@ -76,8 +106,51 @@ export {
   type BackendTargetRefV2,
   type BackendTargetRefV2Input,
   type BackendTargetSourceKindV2,
-} from './backendTargets/backendTargetRefV2.js';
+} from './backends/targets/backendTargetRefV2.js';
 export * from './sessions/index.js';
+export * from './spawn/envOverlay.js';
+export * from './models/descriptor.js';
+export * from './providers/index.js';
+export {
+  ProviderWireProtocolSchema,
+  ProviderCompatibilityCapabilitiesV1Schema,
+  ProviderCompatibilityEvidenceV1Schema,
+  ProviderCompatibilityOverrideV1Schema,
+  type ProviderWireProtocol,
+  type ProviderCompatibilityCapabilitiesV1,
+  type ProviderCompatibilityEvidenceV1,
+  type ProviderCompatibilityOverrideV1,
+} from './providers/capabilities/v1.js';
+export {
+  ProviderCatalogDeclarationV1Schema,
+  ProviderCatalogProbeV1Schema,
+  type ProviderCatalogDeclarationV1,
+  type ProviderCatalogProbeV1,
+} from './providers/catalog/descriptorV1.js';
+export {
+  ProviderContributionV1Schema,
+  ProviderEndpointTemplateV1Schema,
+  ProviderModelLoadDescriptorV1Schema,
+  type ProviderContributionV1,
+  type ProviderEndpointTemplateV1,
+  type ProviderModelLoadDescriptorV1,
+} from './providers/contributions/v1.js';
+export {
+  ProviderApiKeyCredentialRequirementV1Schema,
+  ProviderCredentialTransportV1Schema,
+  type ProviderApiKeyCredentialRequirementV1,
+  type ProviderCredentialTransportV1,
+} from './providers/credentials/v1.js';
+export {
+  ProviderCatalogCommandFallbackV1Schema,
+  ProviderDetectionDescriptorV1Schema,
+  type ProviderCatalogCommandFallbackV1,
+  type ProviderDetectionDescriptorV1,
+} from './providers/detection/v1.js';
+export {
+  ProviderModelDescriptorV1Schema,
+  type ProviderModelDescriptorV1,
+} from './models/descriptor.js';
 export * from './runtime/index.js';
 export * from './backends/index.js';
 export {
@@ -85,12 +158,12 @@ export {
   isLegacyConfiguredAcpFlavorCarrier,
   isLegacyConfiguredAcpCompatible,
   readLegacyConfiguredAcpBackendId,
-} from './backendTargets/compat/customAcp.js';
+} from './backends/targets/compat/customAcp.js';
 export {
   readLegacyContinueWithReplayCompatBackendTargetInput,
   normalizeLegacyContinueWithReplayRpcParamsInput,
   validateLegacyContinueWithReplayRpcParamsCompat,
-} from './backendTargets/compat/continueWithReplayRpcParamsCompat.js';
+} from './backends/targets/compat/continueWithReplayRpcParamsCompat.js';
 export {
   ActionDefinitionBindingsV1Schema,
   ActionDefinitionExamplesV1Schema,
@@ -164,42 +237,6 @@ export {
   type ExtensionId,
 } from './extensions/extensionId.js';
 export {
-  ProviderAuthV1Schema,
-  ProviderDefinitionV1Schema,
-  ProviderDisplayV1Schema,
-  ProviderInstallV1Schema,
-  ProviderSessionHandoffV1Schema,
-  ProviderSessionResumeV1Schema,
-  ProviderSessionV1Schema,
-  ProviderTerminalRuntimeV1Schema,
-  ProviderUiV1Schema,
-  type ProviderAuthV1,
-  type ProviderDefinitionV1,
-  type ProviderDisplayV1,
-  type ProviderInstallV1,
-  type ProviderSessionHandoffV1,
-  type ProviderSessionResumeV1,
-  type ProviderSessionV1,
-  type ProviderTerminalRuntimeV1,
-  type ProviderUiV1,
-} from './extensions/providerDefinitionV1.js';
-export {
-  ProviderCliInstallCommandV1Schema as ProviderCliRuntimeInstallCommandV1Schema,
-  ProviderCliInstallPlatformV1Schema as ProviderCliRuntimeInstallPlatformV1Schema,
-  ProviderCliManagedInstallSpecV1Schema as ProviderCliRuntimeManagedInstallSpecV1Schema,
-  ProviderCliManualInstallKindV1Schema as ProviderCliRuntimeManualInstallKindV1Schema,
-  ProviderCliManualInstallRecipesV1Schema as ProviderCliRuntimeManualInstallRecipesV1Schema,
-  ProviderCliRuntimeV1Schema,
-  ProviderCliSourcePreferenceV1Schema as ProviderCliRuntimeSourcePreferenceV1Schema,
-  type ProviderCliInstallCommandV1 as ProviderCliRuntimeInstallCommandV1,
-  type ProviderCliInstallPlatformV1 as ProviderCliRuntimeInstallPlatformV1,
-  type ProviderCliManagedInstallSpecV1 as ProviderCliRuntimeManagedInstallSpecV1,
-  type ProviderCliManualInstallKindV1 as ProviderCliRuntimeManualInstallKindV1,
-  type ProviderCliManualInstallRecipesV1 as ProviderCliRuntimeManualInstallRecipesV1,
-  type ProviderCliRuntimeV1,
-  type ProviderCliSourcePreferenceV1 as ProviderCliRuntimeSourcePreferenceV1,
-} from './extensions/providerCliRuntimeV1.js';
-export {
   ExtensionActionAvailabilityV2Schema,
   ExtensionActionConfirmationV2Schema,
   ExtensionActionContributionV2Schema,
@@ -227,7 +264,6 @@ export {
   ExtensionHookContributionV2Schema,
   ExtensionLifecycleEventV2Schema,
   ExtensionLifecycleHandlerContributionV2Schema,
-  ExtensionProviderContributionV2Schema,
   ExtensionResourceContributionV2Schema,
   ExtensionResourceKindV2Schema,
   ExtensionToolContributionV2Schema,
@@ -245,7 +281,6 @@ export {
   type ExtensionHookContributionV2,
   type ExtensionLifecycleEventV2,
   type ExtensionLifecycleHandlerContributionV2,
-  type ExtensionProviderContributionV2,
   type ExtensionResourceContributionV2,
   type ExtensionResourceKindV2,
   type ExtensionToolContributionV2,
@@ -355,6 +390,15 @@ export {
   PluginBackendDefinitionV1Schema,
   PluginBackendCapabilitiesV1Schema,
   PluginBackendExecutionRunCapabilitiesV1Schema,
+  PluginBackendExternalSessionSourceDeclarationV1Schema,
+  PluginBackendExternalSessionSourceKeySegmentV1Schema,
+  PluginBackendExternalSessionSourceKeyV1Schema,
+  PluginBackendExternalSessionSourceSchemaFieldV1Schema,
+  PluginBackendExternalSessionSourceSchemaRefinementV1Schema,
+  PluginBackendExternalSessionSourceSchemaV1Schema,
+  PluginBackendExternalSessionSourceWhenV1Schema,
+  PluginBackendExternalSessionSurfaceV1Schema,
+  PluginBackendSurfacesV1Schema,
   PluginBackendInstallV1Schema,
   PluginBackendLaunchV1Schema,
   PluginBackendProbeV1Schema,
@@ -362,21 +406,34 @@ export {
   type PluginBackendCapabilitiesV1,
   type PluginBackendDefinitionV1,
   type PluginBackendExecutionRunCapabilitiesV1,
+  type PluginBackendExternalSessionSourceDeclarationV1,
+  type PluginBackendExternalSessionSourceKeySegmentV1,
+  type PluginBackendExternalSessionSourceKeyV1,
+  type PluginBackendExternalSessionSourceSchemaFieldV1,
+  type PluginBackendExternalSessionSourceSchemaRefinementV1,
+  type PluginBackendExternalSessionSourceSchemaV1,
+  type PluginBackendExternalSessionSourceWhenV1,
+  type PluginBackendExternalSessionSurfaceV1,
+  type PluginBackendSurfacesV1,
   type PluginBackendInstallV1,
   type PluginBackendLaunchV1,
   type PluginBackendProbeV1,
 } from './plugins/backendDefinitionV1.js';
 export {
   PluginAgentContributionV2Schema,
-  PluginBackendContributionV2Schema,
-  PluginBackendEngineAcpTimeoutsV2Schema,
-  PluginBackendEngineAcpTransportV2Schema,
-  PluginBackendEngineAcpV2Schema,
-  PluginBackendEngineCustomV2Schema,
-  PluginBackendEngineLaunchV2Schema,
-  PluginBackendEngineV2Schema,
-  PluginBackendTargetSourceKindV2Schema,
-  PluginBackendTargetV2Schema,
+  PluginAgentRuntimeAcpTimeoutsV2Schema,
+  PluginAgentRuntimeAcpTransportV2Schema,
+  PluginAgentRuntimeAcpV2Schema,
+  PluginAgentRuntimeCustomV2Schema,
+  PluginAgentRuntimeLaunchV2Schema,
+  PluginAgentRuntimeV2Schema,
+  PluginAgentRuntimeTargetSourceKindV2Schema,
+  PluginAgentRuntimeTargetV2Schema,
+  PluginBrowserActionContributionV1Schema,
+  PluginBrowserActionKindV1Schema,
+  PluginBrowserActionPolicyV1Schema,
+  PluginBrowserProfileModeV1Schema,
+  PluginBrowserTargetContributionV1Schema,
   PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2,
   PluginCommandContributionV2Schema,
   PluginCommandVisibilityV2Schema,
@@ -384,15 +441,22 @@ export {
   PluginHookContributionV2Schema,
   PluginHookScopeV1Schema,
   PluginHostedWebContributionV1Schema,
+  PluginEmbeddedWebBundleContributionV1Schema,
+  PluginHostedWebCspPolicyV1Schema,
+  PluginHostedWebOriginV1Schema,
+  PluginHostedWebSecurityPolicyV1Schema,
   PluginLifecycleEventV2Schema,
   PluginLifecycleHandlerContributionV2Schema,
   PluginConnectedAccountDescriptorContributionV2Schema,
+  PluginAgentSettingsContributionV1Schema,
+  PluginAgentSettingsFieldSchemaV1Schema,
+  PluginAgentSettingsFieldV1Schema,
   PluginPromptAssetContributionV1Schema,
   PluginReactNativeBundleContributionV1Schema,
   PluginResourceContributionV2Schema,
   PluginResourceKindV2Schema,
   PluginSessionHeaderActionDescriptorV1Schema,
-  PluginSessionSurfaceDescriptorV1Schema,
+  PluginSurfacePlacementDescriptorV1Schema,
   PluginStructuredMessageDescriptorV1Schema,
   PluginSystemToolContributionV1Schema,
   PluginSystemToolSourceV1Schema,
@@ -405,32 +469,52 @@ export {
   PluginUiFieldV2Schema,
   PluginUiTranslationsContributionV1Schema,
   type PluginAgentContributionV2,
-  type ParsedPluginBackendContributionV2,
-  type PluginBackendContributionV2,
-  type PluginBackendEngineAcpTimeoutsV2,
-  type PluginBackendEngineAcpTransportV2,
-  type PluginBackendEngineAcpV2,
-  type PluginBackendEngineCustomV2,
-  type PluginBackendEngineLaunchV2,
-  type PluginBackendEngineV2,
-  type PluginBackendTargetSourceKindV2,
-  type PluginBackendTargetV2,
+  type ParsedPluginAgentContributionV2,
+  type PluginAgentRuntimeAcpTimeoutsV2,
+  type PluginAgentRuntimeAcpTransportV2,
+  type PluginAgentRuntimeAcpV2,
+  type PluginAgentRuntimeCustomV2,
+  type PluginAgentRuntimeLaunchV2,
+  type PluginAgentRuntimeV2,
+  type PluginAgentRuntimeTargetSourceKindV2,
+  type PluginAgentRuntimeTargetV2,
+  type PluginBrowserActionContributionV1,
+  type PluginBrowserActionKindV1,
+  type PluginBrowserActionPolicyV1,
+  type PluginBrowserProfileModeV1,
+  type PluginBrowserTargetContributionV1,
   type PluginCommandContributionV2,
   type PluginCommandVisibilityV2,
   type PluginContributesV2,
   type PluginHookContributionV2,
   type PluginHookScopeV1,
   type PluginHostedWebContributionV1,
+  type PluginEmbeddedWebBundleContributionV1,
+  type PluginHostedWebCspPolicyV1,
+  type PluginHostedWebOriginV1,
+  type PluginHostedWebSecurityPolicyV1,
   type PluginLifecycleEventV2,
   type PluginLifecycleHandlerContributionV2,
   type PluginConnectedAccountDescriptorContributionV2,
+  type PluginAgentSettingsAnalyticsV1,
+  type PluginAgentSettingsContributionV1,
+  type PluginAgentSettingsFieldSchemaV1,
+  type PluginAgentSettingsFieldV1,
+  type PluginAgentSettingsUiDescriptorV1,
   type PluginPromptAssetContributionV1,
   type PluginReactNativeBundleContributionV1,
   type PluginResourceContributionV2,
   type PluginResourceKindV2,
   type PluginSessionHeaderActionDescriptorV1,
-  type PluginSessionSurfaceDescriptorV1,
   type PluginStructuredMessageDescriptorV1,
+  type PluginBrowserPanelHostActionScopeV1,
+  type PluginSurfaceBrowserHostActionEffectV1,
+  type PluginSurfaceBrowserHostActionPolicyOwnerV1,
+  type PluginSurfaceHostActionDescriptorV1,
+  type PluginSurfacePlacementDescriptorV1,
+  type PluginSurfacePlacementKindV1,
+  type PluginSurfaceRendererRefV1,
+  type PluginSurfaceTargetV1,
   type PluginSystemToolContributionV1,
   type PluginSystemToolSourceV1,
   type PluginUiArtifactContributionV1,
@@ -442,6 +526,18 @@ export {
   type PluginUiFieldV2,
   type PluginUiTranslationsContributionV1,
 } from './plugins/contributions/v2.js';
+export {
+  agentSettingsContributionToUiDescriptor,
+  booleanAgentSetting,
+  buildAgentSettingsDefaults,
+  defineAgentSettingsContribution,
+  enumAgentSetting,
+  enumArrayAgentSetting,
+  jsonObjectStringAgentSetting,
+  positiveIntegerAgentSetting,
+  stringAgentSetting,
+  stringRecordAgentSetting,
+} from './plugins/contributions/agentSettings.js';
 export {
   PluginHostedWebBridgeEnvelopeV1Schema,
   PluginHostedWebBridgeResponseEnvelopeV1Schema,
@@ -456,10 +552,23 @@ export {
   PluginUiArtifactCompatibilityKeyV1Schema,
   PluginUiArtifactDigestV1Schema,
   PluginUiArtifactIntegrityBindingV1Schema,
+  PluginUiArtifactRevocationFeedBodyV1Schema,
+  PluginUiArtifactRevocationFeedEnvelopeV1Schema,
   PluginUiArtifactRevocationScopeV1Schema,
   PluginUiArtifactRevocationV1Schema,
+  PluginUiArtifactSignatureEnvelopeV1Schema,
+  PluginUiArtifactSignaturePayloadV1Schema,
+  PluginUiArtifactTrustRootKeyV1Schema,
+  PluginUiArtifactTrustRootV1Schema,
   PluginUiExecutableArtifactManifestV1Schema,
+  createPluginUiArtifactRevocationFeedSigningInputV1,
+  createPluginUiArtifactSignaturePayloadV1,
+  createPluginUiArtifactSignatureSigningInputV1,
   derivePluginUiArtifactCacheKeyV1,
+  hasPluginUiExecutableArtifactIntegrityV1,
+  verifyPluginUiArtifactRevocationFeedV1,
+  verifyPluginUiArtifactSignatureForArtifactV1,
+  verifyPluginUiArtifactSignatureV1,
   type PluginHostedWebBridgeEnvelopeV1,
   type PluginHostedWebBridgeResponseEnvelopeV1,
   type PluginHostedWebBridgeResponseKindV1,
@@ -474,9 +583,19 @@ export {
   type PluginUiArtifactCompatibilityKeyV1,
   type PluginUiArtifactDigestV1,
   type PluginUiArtifactIntegrityBindingV1,
+  type PluginUiArtifactRevocationFeedBodyV1,
+  type PluginUiArtifactRevocationFeedEnvelopeV1,
   type PluginUiArtifactRevocationScopeV1,
   type PluginUiArtifactRevocationV1,
+  type PluginUiArtifactSignatureEnvelopeV1,
+  type PluginUiArtifactSignaturePayloadV1,
+  type PluginUiArtifactTrustRootKeyV1,
+  type PluginUiArtifactTrustRootV1,
   type PluginUiExecutableArtifactManifestV1,
+  type PluginUiExecutableArtifactManifestWithIntegrityV1,
+  type VerifyPluginUiArtifactRevocationFeedV1Result,
+  type VerifyPluginUiArtifactSignatureForArtifactV1Result,
+  type VerifyPluginUiArtifactSignatureV1Result,
 } from './plugins/ui/index.js';
 export {
   PluginEventContributionV1Schema,
@@ -570,27 +689,30 @@ export {
   type ScmBackendContributionTooling,
 } from './plugins/contributions/scmBackends.js';
 export {
-  PluginInstallableContributionV2Schema,
-  type PluginInstallableContributionV2,
-} from './plugins/contributions/installables.js';
+  PluginManagedDependencyContributionV2Schema,
+  type PluginManagedDependencyContributionV2,
+} from './plugins/contributions/managedDependencies.js';
 export {
   buildPluginContributionFamilySchemaV2,
   definePluginContributionFamilyV2,
   type PluginContributionFamilyDescriptorV2,
 } from './plugins/contributions/families.js';
 export {
-  PluginCapabilitiesV2Schema,
-  PluginDaemonTargetV2Schema,
+  PluginEntrypointV2Schema,
+  PluginEntrypointsV2Schema,
   PluginEnginesV2Schema,
+  PluginManifestDeclaresV2Schema,
+  PluginManifestPermissionsV2Schema,
   PluginManifestV2Schema,
-  PluginTargetsV2Schema,
-  type ParsedPluginCapabilitiesV2,
+  type ParsedPluginManifestDeclaresV2,
+  type ParsedPluginManifestPermissionsV2,
   type ParsedPluginManifestV2,
-  type PluginCapabilitiesV2,
-  type PluginDaemonTargetV2,
+  type PluginEntrypointV2,
+  type PluginEntrypointsV2,
   type PluginEnginesV2,
+  type PluginManifestDeclaresV2,
+  type PluginManifestPermissionsV2,
   type PluginManifestV2,
-  type PluginTargetsV2,
 } from './plugins/manifest/v2.js';
 export {
   createPluginInstallationManifestPublisherSigningInputV1,
@@ -663,6 +785,12 @@ export {
   PluginPermissionGrantStatusV1Schema,
   PluginPermissionGrantTargetScopeV1Schema,
   PluginPermissionGrantV1Schema,
+  PLUGIN_DE_SCOPED_CAPABILITIES_V1,
+  PLUGIN_DECLARED_CAPABILITIES_V1,
+  PLUGIN_ENFORCED_PERMISSION_CAPABILITIES_V1,
+  PLUGIN_EXPERIMENTAL_UNIMPLEMENTED_CAPABILITIES_V1,
+  PluginCapabilityDeclarationV1Schema,
+  PluginDeclaredCapabilityV1Schema,
   PluginPermissionCapabilityV1Schema,
   PluginPermissionDeclarationV1Schema,
   type PluginPermissionGrantActionIdV1,
@@ -686,6 +814,8 @@ export {
   type PluginPermissionGrantStatusV1,
   type PluginPermissionGrantTargetScopeV1,
   type PluginPermissionGrantV1,
+  type PluginCapabilityDeclarationV1,
+  type PluginDeclaredCapabilityV1,
   type PluginPermissionCapabilityV1,
   type PluginPermissionDeclarationV1,
 } from './plugins/permissions/v1.js';
@@ -704,9 +834,7 @@ export {
   type PluginContributionProvenanceV1,
 } from './plugins/contributionIdentity.js';
 export {
-  PluginRuntimeApiV1Schema,
   PluginRuntimeCapabilityFamilyV1Schema,
-  type PluginRuntimeApiV1,
   type PluginRuntimeCapabilityFamilyV1,
 } from './plugins/runtime/api.js';
 export {
@@ -749,8 +877,9 @@ export {
   PluginHookIdV1Schema,
   PluginHookPurityV1Schema,
   PluginHookScopeV1Schema as ExtensionHookScopeV1Schema,
-  SubagentEndHookPayloadV1Schema,
-  SubagentStartHookPayloadV1Schema,
+  PluginHookSupportedRuntimeFamilyV1Schema,
+  SubagentEndedHookPayloadV1Schema,
+  SubagentStartedHookPayloadV1Schema,
   getPluginHookDefinitionV1,
   getPluginHookDefinitionV1 as getExtensionHookDefinitionV1,
   validatePluginHookPayloadV1,
@@ -764,9 +893,10 @@ export {
   type PluginHookIdV1 as ExtensionHookIdV1,
   type PluginHookPurityV1,
   type PluginHookScopeV1 as ExtensionHookScopeV1,
+  type PluginHookSupportedRuntimeFamilyV1,
   type PluginHookPayloadSchemaMapV1,
-  type SubagentEndHookPayloadV1,
-  type SubagentStartHookPayloadV1,
+  type SubagentEndedHookPayloadV1,
+  type SubagentStartedHookPayloadV1,
 } from './plugins/hooks/catalog.js';
 export {
   BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_V1,
@@ -824,7 +954,7 @@ export {
   type AcpCatalogSettingsV1,
   type AcpCatalogSupportHintV1,
   type AcpCatalogTransportProfileV1,
-} from './acpCatalog/settingsV1.js';
+} from './acp/catalog/settingsV1.js';
 
 export {
   deriveAccountMachineKeyFromRecoverySecret,
@@ -885,7 +1015,7 @@ export {
   type TransferSessionExportOpenResponse,
   type TransferSessionId,
   type TransferSessionImportOpenResponse,
-} from './transferSessions/index.js';
+} from './transfers/sessions/index.js';
 
 export {
   TRANSFER_RELAY_V2_SOCKET_EVENT,
@@ -895,10 +1025,11 @@ export {
   type TransferRelayV2Recipient,
   type TransferRelayV2SendEnvelope,
   type TransferRelayV2Sender,
-} from './transferRelayV2/index.js';
+} from './transfers/relay/v2/index.js';
 
 export {
   resolveNotificationChannelsV1FromAccountSettings,
+  SessionPendingQueueDeliveryTimingSchema,
   SessionPendingQueueDrainModeSchema,
   UsageLimitRecoverySettingsV1Schema,
 } from './account/settings/accountSettings.js';
@@ -926,13 +1057,10 @@ export {
 export {
   buildProviderAccountUsageRecordId,
   buildProviderAccountUsageOpaqueLocalCredentialRef,
-  normalizeProviderAccountUsageAliases,
   openProviderAccountUsageSnapshotCiphertext,
   projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1,
   projectProviderAccountUsageToConnectedServiceQuotaSnapshot,
   ProviderAccountSubjectRefV1Schema,
-  ProviderAccountUsageAdoptionV1Schema,
-  ProviderAccountUsageAliasV1Schema,
   ProviderAccountUsageConfidenceV1Schema,
   ProviderAccountUsageQuotaScopeV1Schema,
   ProviderAccountUsageRecordIdSchema,
@@ -944,8 +1072,6 @@ export {
   sealProviderAccountUsageSnapshotCiphertext,
   SealedProviderAccountUsageSnapshotV1Schema,
   type ProviderAccountSubjectRefV1,
-  type ProviderAccountUsageAdoptionV1,
-  type ProviderAccountUsageAliasV1,
   type ProviderAccountUsageConfidenceV1,
   type ProviderAccountUsageDiagnosticV1,
   type ProviderAccountUsageQuotaScopeV1,
@@ -958,6 +1084,11 @@ export {
   type SealedProviderAccountUsageSnapshotV1,
 } from './connect/accountUsage.js';
 
+export {
+  clearConnectedServiceAuthGroupMemberRuntimeBlockers,
+  readConnectedServiceManualActiveProfileRuntimeBlocker,
+  type ConnectedServiceManualActiveProfileRuntimeBlocker,
+} from './connect/connectedServiceAuthGroupMemberRuntimeStatePolicy.js';
 export {
   ConnectedServiceCredentialFormatSchema,
   ConnectedServiceCredentialKindSchema,
@@ -989,9 +1120,19 @@ export {
   ConnectedServiceCredentialRecordV1Schema,
   ConnectedServiceIdSchema,
   ConnectedServiceProfileIdSchema,
+  ConnectedServiceQuotaRecoveryCreditKindV1Schema,
+  ConnectedServiceQuotaRecoveryCreditStatusV1Schema,
+  ConnectedServiceQuotaRecoveryCreditV1Schema,
+  ConnectedServiceQuotaRecoveryCreditsV1Schema,
   ConnectedServiceQuotaMeterV1Schema,
   ConnectedServiceQuotaSnapshotV1Schema,
+  ConnectedServiceQuotaSourceV1Schema,
   ConnectedServiceQuotaUnitV1Schema,
+  ConnectedServiceUsageSourceBindingKindV1Schema,
+  ConnectedServiceUsageSourceV1Schema,
+  isConnectedServiceCredentialHealthStatusReconnectRequired,
+  isConnectedServiceCredentialHealthStatusUsable,
+  normalizeConnectedServiceCredentialHealthStatus,
   SessionConnectedServiceAuthSwitchRpcParamsSchema,
   SealedConnectedServiceCredentialV1Schema,
   SealedConnectedServiceQuotaSnapshotV1Schema,
@@ -1025,13 +1166,27 @@ export {
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceId,
   type ConnectedServiceProfileId,
+  type ConnectedServiceQuotaRecoveryCreditKindV1,
+  type ConnectedServiceQuotaRecoveryCreditStatusV1,
+  type ConnectedServiceQuotaRecoveryCreditV1,
+  type ConnectedServiceQuotaRecoveryCreditsV1,
   type ConnectedServiceQuotaMeterV1,
   type ConnectedServiceQuotaSnapshotV1,
+  type ConnectedServiceQuotaSourceV1,
   type ConnectedServiceQuotaUnitV1,
+  type ConnectedServiceUsageSourceBindingKindV1,
+  type ConnectedServiceUsageSourceV1,
   type SessionConnectedServiceAuthSwitchRpcParams,
   type SealedConnectedServiceCredentialV1,
   type SealedConnectedServiceQuotaSnapshotV1,
 } from './connect/connectedServiceSchemas.js';
+export {
+  normalizeConnectedServiceSelectionInput,
+  normalizeConnectedServiceSelectionForRunStart,
+  CONNECTED_SERVICE_SELECTION_VALID_FORMS,
+  type NormalizeConnectedServiceSelectionResult,
+  type NormalizeConnectedServiceSelectionForRunStartResult,
+} from './connect/normalizeConnectedServiceSelectionInput.js';
 export {
   ConnectedServiceLimitCategoryV1Schema,
   normalizeConnectedServiceLimitCategoryV1,
@@ -1086,13 +1241,12 @@ export {
 
 export {
   BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR,
-} from './providers/bitbucket/connectedAccountDescriptor.js';
+} from './connect/descriptors/bitbucket.js';
 
 export {
   openConnectedServiceCredentialCiphertext,
   openConnectedServiceQuotaSnapshotCiphertext,
   sealConnectedServiceCredentialCiphertext,
-  sealConnectedServiceQuotaSnapshotCiphertext,
 } from './connect/connectedServiceCipher.js';
 
 export {
@@ -1110,6 +1264,7 @@ export { parseBooleanEnv, parseOptionalBooleanEnv } from './env/parseBooleanEnv.
 export type { ServerRetentionCapabilities } from './features/payload/capabilities/serverRetentionCapabilities.js';
 export type { ServerUsageAnalyticsCapabilities } from './features/payload/capabilities/serverUsageAnalyticsCapabilities.js';
 export {
+  SessionContextUsageSnapshotV1Schema,
   ServerUsageAnalyticsCapabilitiesSchema,
   UsageAnalyticsBreakdownDimensionSchema,
   UsageAnalyticsBreakdownEntrySchema,
@@ -1125,8 +1280,10 @@ export {
   UsageObservationCostSchema,
   UsageObservationScopeSchema,
   UsageObservationTokensSchema,
+  computeContextPercentUsed,
 } from './usage/index.js';
 export type {
+  SessionContextUsageSnapshotV1,
   UsageAnalyticsBreakdownDimension,
   UsageAnalyticsBreakdownEntry,
   UsageAnalyticsBreakdowns,
@@ -1155,7 +1312,7 @@ export {
   type MachineDaemonOwnershipMetadata,
   type MachineOwnerConflictMetadata,
   type MachineOwnerConflictSocketPayload,
-} from './machineOwnership/daemonOwnership.js';
+} from './machines/ownership/daemonOwnership.js';
 
 export {
   buildReadyNotificationContent,
@@ -1165,14 +1322,7 @@ export {
   CODEX_BACKEND_MODES,
   normalizeCodexBackendMode,
   type CodexBackendMode,
-} from './providers/codex/backendMode.js';
-export {
-  CodexAppServerGoalSchema,
-  CodexAppServerGoalStatusSchema,
-  normalizeCodexAppServerGoalToSessionWorkStateItem,
-  type CodexAppServerGoal,
-  type CodexAppServerGoalStatus,
-} from './providers/codex/appServerGoal.js';
+} from './agents/generated/runtime/descriptors/codex.js';
 
 export {
   ActivityWebhookPayloadV1Schema,
@@ -1219,7 +1369,7 @@ export {
   type LiveActivityRemoteUpdateActivityKey,
   type LiveActivityRemoteUpdateEvent,
   type LiveActivityRemoteUpdateRequestV1,
-} from './liveActivities/remoteUpdates.js';
+} from './activity/live/remoteUpdates.js';
 export {
   DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
   LiveActivityRemoteUpdateCapabilityDiagnosticsSchema,
@@ -1238,7 +1388,7 @@ export {
   type LiveActivityRemoteUpdateModeResolution,
   type LiveActivityRemoteUpdateModeResolutionReason,
   type ResolveLiveActivityRemoteUpdateModeParams,
-} from './liveActivities/remoteUpdateCapabilities.js';
+} from './activity/live/remoteUpdateCapabilities.js';
 export {
   classifyLiveActivityApnsDeliveryResponse,
   deriveLiveActivityApnsDeliveryFields,
@@ -1249,7 +1399,7 @@ export {
   type LiveActivityApnsEvent,
   type LiveActivityApnsPriority,
   type LiveActivityApnsTemplate,
-} from './liveActivities/apnsDelivery.js';
+} from './activity/live/apnsDelivery.js';
 
 export {
   WorkspaceCheckoutKindSchema,
@@ -1304,22 +1454,62 @@ export {
 export {
   SESSION_MESSAGE_ROLES,
   SessionMessageRoleSchema,
+  resolveTranscriptBodySessionMessageRole,
+  type ResolveTranscriptBodySessionMessageRoleInput,
   type SessionMessageRole,
-} from './sessionMessages/sessionMessageRole.js';
+  type TranscriptBodySessionMessageProtocol,
+} from './sessions/messages/sessionMessageRole.js';
+export {
+  isNonSteerablePromptPayload,
+  isNonSteerableSpecialCommandType,
+  parseClear,
+  parseCompact,
+  parseSpecialCommand,
+  type ClearCommandResult,
+  type CompactCommandResult,
+  type SpecialCommandResult,
+  type SpecialCommandType,
+} from './sessions/messages/specialCommands.js';
 export {
   SessionStoredMessageContentSchema,
   type SessionStoredMessageContent,
-} from './sessionMessages/sessionStoredMessageContent.js';
+} from './sessions/messages/sessionStoredMessageContent.js';
 export {
+  PENDING_DELIVERY_BLOCKED_REASONS,
+  PendingDeliveryBlockedReasonSchema,
+  isPendingDeliveryBlockedReason,
+  normalizePendingDeliveryBlockedReason,
+  type PendingDeliveryBlockedReason,
+} from './sessions/messages/pendingDeliveryBlockedReason.js';
+export {
+  isPendingDeliveryStatusTransitionAllowedV1,
+  normalizePendingDeliveryStatusV1,
+  parsePendingDeliveryStatusV1,
+  pendingDeliveryStatusV1ToPersistedFields,
+  type PendingDeliveryResolvedReasonV1,
+  type PendingDeliveryStatusPersistedFieldsV1,
+  type PendingDeliveryStatusPersistedProjectionV1,
+  type PendingDeliveryStatusTransitionTargetV1,
+  type PendingDeliveryStatusV1,
+} from './sessions/messages/pendingDeliveryStatusV1.js';
+export {
+  ACTIVITY_SESSION_SYSTEM_RECORD_KINDS,
+  ActivitySessionSystemRecordKindSchema,
+  ActivitySessionSystemRecordPayloadSchema,
+  ActivitySessionSystemRecordRawPayloadSchema,
+  ActivityWorkflowRunSystemRecordPayloadSchema,
   MEMORY_SESSION_SYSTEM_RECORD_KINDS,
   MemorySessionSystemRecordKindSchema,
   MemorySessionSystemRecordPayloadSchema,
   MemorySummaryShardSystemRecordPayloadSchema,
   MemorySynopsisSystemRecordPayloadSchema,
+  SESSION_SYSTEM_RECORD_ACTIVITY_NAMESPACE,
   SESSION_SYSTEM_RECORD_CATALOG,
   SESSION_SYSTEM_RECORD_KINDS,
   SESSION_SYSTEM_RECORD_MEMORY_NAMESPACE,
   SESSION_SYSTEM_RECORD_NAMESPACES,
+  buildWorkflowRunSystemRecordLocalId,
+  isActivitySessionSystemRecordKind,
   SessionSystemRecordContentSchema,
   SessionSystemRecordKindSchema,
   SessionSystemRecordLatestQuerySchema,
@@ -1336,6 +1526,10 @@ export {
   getSessionSystemRecordPayloadSchema,
   isMemorySessionSystemRecordKind,
   isRegisteredSessionSystemRecordKind,
+  type ActivitySessionSystemRecordKind,
+  type ActivitySessionSystemRecordPayload,
+  type ActivitySessionSystemRecordRawPayload,
+  type ActivityWorkflowRunSystemRecordPayload,
   type MemorySessionSystemRecordKind,
   type MemorySessionSystemRecordPayload,
   type MemorySummaryShardSystemRecordPayload,
@@ -1356,7 +1550,7 @@ export {
   type SessionSystemRecordPayload,
   type SessionSystemRecordUpsertRequest,
   type SessionSystemRecordUpsertResponse,
-} from './sessionSystemRecords/index.js';
+} from './sessions/system/records/index.js';
 export {
   SESSION_MEDIA_MESSAGE_META_KIND_V1,
   SessionMediaItemV1Schema,
@@ -1374,7 +1568,7 @@ export {
   type SessionMediaMessageMetaV1,
   type SessionMediaMessagePayloadV1,
   type SessionMediaOriginV1,
-} from './sessionMessages/sessionMediaV1.js';
+} from './sessions/messages/sessionMediaV1.js';
 export {
   ConnectedServiceRuntimeAuthRecoveryTranscriptStatusV1Schema,
   ConnectedServiceSwitchAttemptedContinuityModeV1Schema,
@@ -1389,7 +1583,14 @@ export {
   RuntimeConfigOutcomeStatusV1Schema,
   RuntimeConfigOutcomeTimingV1Schema,
   RuntimeConfigOutcomeChangeKeyV1Schema,
+  SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT,
+  SESSION_MESSAGE_USER_ATTENTION_IMPACT,
+  SessionMessageAttentionImpactSchema,
+  agentEventAttentionImpact,
+  agentEventLocalIdAttentionImpact,
+  buildAgentEventLocalId,
   createTranscriptRawRecordV1Schema,
+  type SessionMessageAttentionImpact,
   type ConnectedServiceRuntimeAuthRecoveryTranscriptStatusV1,
   type ConnectedServiceSwitchAttemptedContinuityModeV1,
   type ConnectedServiceSwitchAttemptOutcomeActionV1,
@@ -1403,13 +1604,13 @@ export {
   type RuntimeConfigOutcomeStatusV1,
   type RuntimeConfigOutcomeTimingV1,
   type RuntimeConfigOutcomeChangeKeyV1,
-} from './sessionMessages/transcriptRawRecordV1.js';
-export { coerceSessionUserPromptV1 } from './sessionMessages/coerceSessionUserPromptV1.js';
+} from './sessions/messages/transcriptRawRecordV1.js';
+export { coerceSessionUserPromptV1 } from './sessions/messages/coerceSessionUserPromptV1.js';
 export {
   SESSION_ATTACH_METADATA_IDENTITY_POLICIES,
   SessionAttachMetadataIdentityPolicySchema,
   type SessionAttachMetadataIdentityPolicy,
-} from './session/attachMetadataIdentityPolicy.js';
+} from './sessions/attach/metadataIdentityPolicy.js';
 
 export {
   StoredJsonContentEnvelopeSchema,
@@ -1457,7 +1658,12 @@ export {
   sealTerminalProvisioningV2Payload,
 } from './crypto/terminalProvisioningV2.js';
 
-export { decodeBase64, encodeBase64, type Base64Variant } from './crypto/base64.js';
+export {
+  decodeBase64,
+  encodeBase64,
+  readCanonicalPaddedBase64DecodedLength,
+  type Base64Variant,
+} from './crypto/base64.js';
 
 export {
   McpServerBindingOverridesV1Schema,
@@ -1474,19 +1680,19 @@ export {
   type McpServerCatalogEntryV1,
   type McpServersSettingsV1,
   type McpValueRefV1,
-} from './mcpServers/settingsV1.js';
+} from './mcp/servers/settingsV1.js';
 
 export {
   resolveEffectiveServersV1,
   type ResolveEffectiveServersV1Result,
   type ResolvedMcpServerV1,
-} from './mcpServers/resolveEffectiveServersV1.js';
+} from './mcp/servers/resolveEffectiveServersV1.js';
 export {
   parseSessionMcpSelectionV1Json,
   readSessionMcpSelectionV1FromMetadata,
   SessionMcpSelectionV1Schema,
   type SessionMcpSelectionV1,
-} from './mcpServers/sessionSelectionV1.js';
+} from './mcp/servers/sessionSelectionV1.js';
 export {
   resolveManagedSessionMcpSelectionV1,
   type ManagedSessionMcpAvailabilityV1,
@@ -1494,11 +1700,11 @@ export {
   type ManagedSessionMcpReasonCodeV1,
   type ManagedSessionMcpSelectionItemV1,
   type ResolveManagedSessionMcpSelectionV1Result,
-} from './mcpServers/resolveManagedSessionMcpSelectionV1.js';
+} from './mcp/servers/resolveManagedSessionMcpSelectionV1.js';
 export {
   inferMcpServerAuthModeV1,
   type McpServerAuthModeV1,
-} from './mcpServers/authModeV1.js';
+} from './mcp/servers/authModeV1.js';
 export {
   BuiltInMcpPreviewEntryV1Schema,
   DaemonMcpServersPreviewRequestSchema,
@@ -1518,7 +1724,7 @@ export {
   type McpPreviewEntryAvailabilityV1,
   type McpPreviewScopeKindV1,
   type McpPreviewSourceKindV1,
-} from './mcpServers/previewV1.js';
+} from './mcp/servers/previewV1.js';
 
 export {
   DaemonMcpServersDetectRequestSchema,
@@ -1537,7 +1743,7 @@ export {
   type DaemonMcpServersTestResponse,
   type DetectedMcpServerV1,
   type McpDetectedProviderV1,
-} from './mcpServers/daemonRpcV1.js';
+} from './mcp/servers/daemonRpcV1.js';
 export {
   DaemonFilesystemListDirectoryRequestSchema,
   DaemonFilesystemListDirectoryResponseSchema,
@@ -1549,11 +1755,12 @@ export {
   type DaemonFilesystemListRootsResponse,
   type MachineFileBrowserDirectoryEntry,
   type MachineFileBrowserRoot,
-} from './machineFileBrowser.js';
+} from './machines/fileBrowser.js';
 
 export {
   SPAWN_SESSION_ERROR_CODES,
   SPAWN_SESSION_ERROR_DETAIL_KINDS,
+  SpawnSessionErrorCodeSchema,
   isConnectedServiceUxDiagnosticSpawnErrorDetail,
   isConnectedServiceResumeUnreachableSpawnErrorDetail,
   isSpawnSessionErrorDetail,
@@ -1565,7 +1772,7 @@ export {
   type SpawnSessionErrorDetail,
   type SpawnSessionErrorDetailKind,
   type SpawnSessionResult,
-} from './spawnSession.js';
+} from './sessions/spawnSession.js';
 export {
   HappierReplayDialogItemSchema,
   HappierReplayStrategySchema,
@@ -1577,8 +1784,7 @@ export {
   type SessionContinueWithReplayRequest,
   type SessionContinueWithReplayRpcParams,
   type SessionContinueWithReplayRpcResult,
-} from './sessionContinueWithReplay.js';
-export { parseSessionContinueWithReplayRpcParamsCompatIngress } from './sessionContinueWithReplayCompat.js';
+} from './sessions/continueWithReplay.js';
 export {
   SessionForkPointSchema,
   SessionForkRpcParamsSchema,
@@ -1588,7 +1794,7 @@ export {
   type SessionForkRpcParams,
   type SessionForkRpcResult,
   type SessionForkStrategy,
-} from './sessionFork.js';
+} from './sessions/fork.js';
 export {
   SessionRollbackTargetSchema,
   SessionRollbackRpcParamsSchema,
@@ -1596,12 +1802,12 @@ export {
   type SessionRollbackTarget,
   type SessionRollbackRpcParams,
   type SessionRollbackRpcResult,
-} from './sessionRollback.js';
+} from './sessions/rollback.js';
 export {
   resolveSessionRollbackPlan,
   type CompletedConversationTurn,
   type SessionRollbackPlan,
-} from './sessionRollbackPlanning.js';
+} from './sessions/rollbackPlanning.js';
 export {
   CHECKPOINT_CODE_ROLLBACK_RECEIPT_IDS,
   CheckpointCodeRollbackActionRequestSchema,
@@ -1621,12 +1827,23 @@ export {
   RPC_ERROR_CODES,
   RPC_ERROR_MESSAGES,
   RPC_METHODS,
+  SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS,
   isRpcMethodNotFoundResult,
+  parseSocketRpcAuthorizationContext,
+  resolveSocketRpcSessionWriteAuthorizationMethod,
   type RpcErrorCode,
   type RpcMethod,
-} from './rpc.js';
+  type SocketRpcAuthorizationContext,
+  type SocketRpcAuthorizationContextKind,
+  type SocketRpcSessionWriteAuthorizationContext,
+} from './rpc/index.js';
 export {
   DAEMON_VOICE_INFERENCE_REQUEST_ID_MAX_LENGTH,
+  DAEMON_VOICE_INFERENCE_STREAM_ID_MAX_LENGTH,
+  DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK_BASE64_MAX_LENGTH,
+  DAEMON_VOICE_INFERENCE_TTS_STREAM_SEGMENT_AUDIO_BASE64_MAX_LENGTH,
+  DAEMON_VOICE_INFERENCE_TTS_STREAM_SEGMENT_TEXT_MAX_LENGTH,
+  DAEMON_VOICE_INFERENCE_STT_STREAM_PCM_FORMAT,
   LocalNeuralExecutionSchema,
   DaemonVoiceInferenceServiceStateSchema,
   DaemonVoiceInferenceAudioCodecSchema,
@@ -1636,9 +1853,12 @@ export {
   DaemonVoiceInferenceInstallPhaseSchema,
   DaemonVoiceInferenceInstallProgressSchema,
   DaemonVoiceInferenceModelInstallStateSchema,
+  DaemonVoiceInferenceModelRuntimeStateSchema,
   DaemonVoiceInferenceModelStatusSchema,
   DaemonVoiceInferenceErrorCodeSchema,
   DaemonVoiceInferenceErrorSchema,
+  DaemonVoiceInferenceStreamIdSchema,
+  DaemonVoiceInferenceSttStreamPcmFormatSchema,
   DaemonVoiceInferenceStatusRequestSchema,
   DaemonVoiceInferenceStatusResponseSchema,
   DaemonVoiceInferenceModelsListRequestSchema,
@@ -1655,10 +1875,36 @@ export {
   DaemonVoiceInferenceTtsSynthesizeResponseSchema,
   DaemonVoiceInferenceTtsCancelRequestSchema,
   DaemonVoiceInferenceTtsCancelResponseSchema,
+  DaemonVoiceInferenceTtsStreamStartRequestSchema,
+  DaemonVoiceInferenceTtsStreamStartResponseSchema,
+  DaemonVoiceInferenceTtsStreamSegmentAudioSchema,
+  DaemonVoiceInferenceTtsStreamEventSchema,
+  DaemonVoiceInferenceTtsStreamNextRequestSchema,
+  DaemonVoiceInferenceTtsStreamNextResponseSchema,
+  DaemonVoiceInferenceTtsStreamAckRequestSchema,
+  DaemonVoiceInferenceTtsStreamAckResponseSchema,
+  DaemonVoiceInferenceTtsStreamCancelReasonSchema,
+  DaemonVoiceInferenceTtsStreamCancelRequestSchema,
+  DaemonVoiceInferenceTtsStreamCancelResponseSchema,
+  DaemonVoiceInferenceTtsStreamStateSchema,
+  DaemonVoiceInferenceTtsStreamStatusRequestSchema,
+  DaemonVoiceInferenceTtsStreamStatusResponseSchema,
   DaemonVoiceInferenceSttTranscribeRequestSchema,
   DaemonVoiceInferenceSttTranscribeResponseSchema,
   DaemonVoiceInferenceSttCancelRequestSchema,
   DaemonVoiceInferenceSttCancelResponseSchema,
+  DaemonVoiceInferenceSttStreamStartRequestSchema,
+  DaemonVoiceInferenceSttStreamStartResponseSchema,
+  DaemonVoiceInferenceSttStreamEventSchema,
+  DaemonVoiceInferenceSttStreamChunkRequestSchema,
+  DaemonVoiceInferenceSttStreamChunkResponseSchema,
+  DaemonVoiceInferenceSttStreamFinishRequestSchema,
+  DaemonVoiceInferenceSttStreamFinishResponseSchema,
+  DaemonVoiceInferenceSttStreamCancelRequestSchema,
+  DaemonVoiceInferenceSttStreamCancelResponseSchema,
+  DaemonVoiceInferenceSttStreamStateSchema,
+  DaemonVoiceInferenceSttStreamStatusRequestSchema,
+  DaemonVoiceInferenceSttStreamStatusResponseSchema,
   type LocalNeuralExecution,
   type DaemonVoiceInferenceServiceState,
   type DaemonVoiceInferenceAudioCodec,
@@ -1668,9 +1914,12 @@ export {
   type DaemonVoiceInferenceInstallPhase,
   type DaemonVoiceInferenceInstallProgress,
   type DaemonVoiceInferenceModelInstallState,
+  type DaemonVoiceInferenceModelRuntimeState,
   type DaemonVoiceInferenceModelStatus,
   type DaemonVoiceInferenceErrorCode,
   type DaemonVoiceInferenceError,
+  type DaemonVoiceInferenceStreamId,
+  type DaemonVoiceInferenceSttStreamPcmFormat,
   type DaemonVoiceInferenceStatusRequest,
   type DaemonVoiceInferenceStatusResponse,
   type DaemonVoiceInferenceModelsListRequest,
@@ -1685,6 +1934,20 @@ export {
   type DaemonVoiceInferenceModelsWarmResponse,
   type DaemonVoiceInferenceTtsSynthesizeRequest,
   type DaemonVoiceInferenceTtsSynthesizeResponse,
+  type DaemonVoiceInferenceTtsStreamStartRequest,
+  type DaemonVoiceInferenceTtsStreamStartResponse,
+  type DaemonVoiceInferenceTtsStreamSegmentAudio,
+  type DaemonVoiceInferenceTtsStreamEvent,
+  type DaemonVoiceInferenceTtsStreamNextRequest,
+  type DaemonVoiceInferenceTtsStreamNextResponse,
+  type DaemonVoiceInferenceTtsStreamAckRequest,
+  type DaemonVoiceInferenceTtsStreamAckResponse,
+  type DaemonVoiceInferenceTtsStreamCancelReason,
+  type DaemonVoiceInferenceTtsStreamCancelRequest,
+  type DaemonVoiceInferenceTtsStreamCancelResponse,
+  type DaemonVoiceInferenceTtsStreamState,
+  type DaemonVoiceInferenceTtsStreamStatusRequest,
+  type DaemonVoiceInferenceTtsStreamStatusResponse,
   DaemonVoiceInferenceTtsChunkRequestSchema,
   type DaemonVoiceInferenceTtsChunkRequest,
   DaemonVoiceInferenceTtsChunkResponseSchema,
@@ -1719,31 +1982,149 @@ export {
   type DaemonVoiceInferenceSttTranscribeResponse,
   type DaemonVoiceInferenceSttCancelRequest,
   type DaemonVoiceInferenceSttCancelResponse,
-} from './daemonVoiceInference.js';
+  type DaemonVoiceInferenceSttStreamStartRequest,
+  type DaemonVoiceInferenceSttStreamStartResponse,
+  type DaemonVoiceInferenceSttStreamEvent,
+  type DaemonVoiceInferenceSttStreamChunkRequest,
+  type DaemonVoiceInferenceSttStreamChunkResponse,
+  type DaemonVoiceInferenceSttStreamFinishRequest,
+  type DaemonVoiceInferenceSttStreamFinishResponse,
+  type DaemonVoiceInferenceSttStreamCancelRequest,
+  type DaemonVoiceInferenceSttStreamCancelResponse,
+  type DaemonVoiceInferenceSttStreamState,
+  type DaemonVoiceInferenceSttStreamStatusRequest,
+  type DaemonVoiceInferenceSttStreamStatusResponse,
+} from './daemon/voiceInference.js';
+export * from './daemon/voiceCredentials.js';
+export * from './daemon/voiceOpenAiCompat.js';
+export {
+  VOICE_MODEL_PACK_CONTRIBUTION_MAX_COMPONENT_BYTES_V1,
+  VOICE_MODEL_PACK_CONTRIBUTION_MAX_FILES_V1,
+  VoiceModelPackContributionV1Schema,
+  VoiceModelPackExecutionHostV1Schema,
+  VoiceModelPackLicenseV1Schema,
+  VoiceModelPackManifestV1Schema,
+  VoiceModelPackRuntimeV1Schema,
+  type VoiceModelPackContributionV1,
+  type VoiceModelPackExecutionHostV1,
+  type VoiceModelPackLicenseV1,
+  type VoiceModelPackManifestV1,
+  type VoiceModelPackRuntimeV1,
+} from './voice/modelPacks/contributionV1.js';
 export {
   ModelPackKindSchema,
+  ModelPackRuntimeFamilySchema,
   ModelPackManifestSchema,
   ModelPackVoiceCatalogEntrySchema,
   parseModelPackManifest,
   type ModelPackKind,
+  type ModelPackRuntimeFamily,
   type ModelPackManifest,
   type ModelPackVoiceCatalogEntry,
 } from './voice/modelPacks/manifest.js';
+export {
+  assertManifestPathsSafe,
+  assertPackIdFilesystemSafe,
+  filePathParts,
+} from './voice/modelPacks/pathSafety.js';
+export {
+  KOKORO_DEFAULT_TTS_PACK_ID,
+  LEGACY_KOKORO_TTS_ASSET_IDS,
+  MODEL_PACK_CATALOG,
+  getDefaultModelPackId,
+  getModelPackCatalogEntry,
+  listModelPackCatalogEntries,
+  resolveCanonicalModelPackId,
+  type ModelPackCatalogEntry,
+} from './voice/modelPacks/catalog.js';
+export {
+  VOICE_RUNTIME_ACCEPTED_STT_INPUT_FORMATS,
+  VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT,
+  VOICE_RUNTIME_MEMORY_BUDGET_BYTES_BOUNDS,
+  VOICE_RUNTIME_MEMORY_BUDGET_DEFAULTS,
+  VOICE_RUNTIME_PER_MODEL_CONCURRENCY_BOUNDS,
+  VOICE_RUNTIME_STT_DEFAULTS,
+  VOICE_RUNTIME_STT_MAX_UPLOAD_BYTES_BOUNDS,
+  VOICE_RUNTIME_STT_PCM_FORMAT,
+  VOICE_RUNTIME_TTS_DEFAULTS,
+  VOICE_RUNTIME_TTS_LATENCY_BUDGET_BOUNDS,
+  VOICE_RUNTIME_TTS_LATENCY_DEMOTION_THRESHOLD_BOUNDS,
+  VOICE_RUNTIME_WARM_DEFAULTS,
+  VOICE_RUNTIME_WARM_IDLE_RESIDENCY_BOUNDS,
+  type VoiceRuntimeBounds,
+  type VoiceRuntimeDaemonSttPcmFormat,
+  type VoiceRuntimeSttPcmFormat,
+} from './voice/runtimeConfig.js';
+export {
+  HAPPIER_VOICE_BINDING_NONCE_DYNAMIC_VARIABLE,
+  HAPPIER_VOICE_LEASE_ID_DYNAMIC_VARIABLE,
+} from './voice/sessionBinding.js';
+export {
+  VoiceProviderIdSchema,
+  VoiceProviderSettingsEnvelopeV1Schema,
+  VoiceProviderSettingsJsonValueV1Schema,
+  VoiceProviderSettingsRecordV1Schema,
+  type VoiceProviderId,
+  type VoiceProviderSettingsEnvelopeV1,
+  type VoiceProviderSettingsJsonValueV1,
+  type VoiceProviderSettingsRecordV1,
+} from './voice/realtime/providerSettings.js';
+export {
+  VoiceBundledUiDescriptorV1Schema,
+  VoiceConversationProviderDescriptorV1Schema,
+  VoiceReadinessRequirementSchema,
+  VoiceReadinessRoleSchema,
+  VoiceRuntimePlatformSchema,
+  VoiceProviderSelectionOptionV1Schema,
+  VoiceSpeechEngineDescriptorV1Schema,
+  VoiceTurnSupportDescriptorV1Schema,
+  type VoiceBundledUiDescriptorV1,
+  type VoiceConversationProviderDescriptorV1,
+  type VoiceReadinessRequirement,
+  type VoiceReadinessRole,
+  type VoiceRuntimePlatform,
+  type VoiceProviderSelectionOptionV1,
+  type VoiceSpeechEngineDescriptorV1,
+  type VoiceTurnSupportDescriptorV1,
+} from './voice/realtime/capabilities.js';
+export {
+  VoiceRealtimeJsonValueSchema,
+  VoiceRealtimeToolCallV1Schema,
+  VoiceRealtimeToolResultStatusSchema,
+  VoiceRealtimeToolResultV1Schema,
+  VoiceTranscriptCanonicalEventV1Schema,
+  type VoiceRealtimeJsonArray,
+  type VoiceRealtimeJsonObject,
+  type VoiceRealtimeJsonValue,
+  type VoiceRealtimeToolCallV1,
+  type VoiceRealtimeToolResultStatus,
+  type VoiceRealtimeToolResultV1,
+  type VoiceTranscriptCanonicalEventV1,
+} from './voice/realtime/events.js';
 export { VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION } from './voice/voiceAgentRunMetadataContract.js';
+export {
+  buildVoiceAgentRunMetadataV1,
+  doesVoiceAgentRunMetadataMatchBackendTarget,
+  isVoiceAgentRunMetadataV1,
+  parseVoiceAgentRunMetadataV1,
+  resolveVoiceAgentRunBackendId,
+  voiceAgentRunMetadataV1Equal,
+  type BuildVoiceAgentRunMetadataV1Params,
+  type VoiceAgentRunMetadataV1,
+} from './voice/voiceAgentRunMetadataV1.js';
 export {
   createRpcCallError,
   isRpcMethodNotAvailableError,
   isRpcMethodNotFoundError,
   readRpcErrorCode,
   type RpcErrorCarrier,
-} from './rpcErrors.js';
-export { CHECKLIST_IDS, resumeChecklistId, type ChecklistId } from './checklists.js';
+} from './rpc/errors.js';
+export { CHECKLIST_IDS, resumeChecklistId, type ChecklistId } from './checklists/index.js';
 export {
   BUILT_IN_INSTALLABLE_CONTRIBUTIONS,
   BUILT_IN_INSTALLABLES_REGISTRY,
   INSTALLABLES_CATALOG,
   INSTALLABLE_KEYS,
-  CODEX_ACP_INSTALLABLE_DESCRIPTOR,
   InstallableAutoUpdateModeSchema,
   InstallableConsentModeSchema,
   InstallableDefaultPolicySchema,
@@ -1754,7 +2135,6 @@ export {
   resolveInstallablesRegistry,
   toInstallableCatalogEntry,
   CODEX_ACP_DEP_ID,
-  CODEX_ACP_DIST_TAG,
   AZ_BINARY_NAME,
   AZ_CLI_SETUP_URL,
   AZ_DEP_ID,
@@ -1783,9 +2163,13 @@ export {
   type InstallableSourceKind,
   type InstallablesRegistry,
   type ResolveInstallablesRegistryInput,
-} from './installables.js';
-export { applyInstallablePolicyOverride, resolveInstallablePolicy, type InstallablePolicyOverride } from './installablesPolicy.js';
-export { SOCKET_RPC_EVENTS, type SocketRpcEvent } from './socketRpc.js';
+} from './installables/index.js';
+export {
+  applyInstallablePolicyOverride,
+  resolveInstallablePolicy,
+  type InstallablePolicyOverride,
+} from './installables/policy.js';
+export { SOCKET_RPC_EVENTS, type SocketRpcEvent } from './rpc/socket.js';
 export {
   ChangeEntrySchema,
   ChangeKindSchema,
@@ -1797,7 +2181,7 @@ export {
   type ChangesResponse,
   type CurrentCursorResponse,
   type CursorGoneError,
-} from './changes.js';
+} from './changes/index.js';
 export {
   type CapabilitiesDescribeResponse,
   type CapabilitiesDetectRequest,
@@ -1809,7 +2193,7 @@ export {
   type CapabilityDetectResult,
   type CapabilityId,
   type CapabilityKind,
-} from './capabilities.js';
+} from './capabilities/index.js';
 
 export {
   EphemeralUpdateSchema,
@@ -1830,7 +2214,7 @@ export {
   type UpdateContainer,
   type UpdateMetadataAckResponse,
   type UpdateStateAckResponse,
-} from './updates.js';
+} from './updates/index.js';
 
 export { SENT_FROM_VALUES, SentFromSchema, createSentFromSchema, type SentFrom } from './sentFrom.js';
 export {
@@ -1902,6 +2286,7 @@ export {
   SessionStopEnvelopeSchema,
   SessionStopResultSchema,
   SessionShareSchema,
+  SessionCatchUpAuthorizationV1Schema,
   V2SessionByIdNotFoundSchema,
   V2SessionByIdResponseSchema,
   V2SessionListResponseSchema,
@@ -1961,6 +2346,7 @@ export {
   type SessionStatusResult,
   type SessionStopResult,
   type SessionShare,
+  type SessionCatchUpAuthorizationV1,
   type V2SessionByIdNotFound,
   type V2SessionByIdResponse,
   type V2SessionListResponse,
@@ -1977,51 +2363,64 @@ export {
   readSystemSessionMetadataFromMetadata,
   buildSystemSessionMetadataV1,
   type SessionWaitResult,
-} from './sessionControl/contract.js';
+} from './sessions/control/contract.js';
+
+export {
+  SessionTerminalComposerClearRequestV1Schema,
+  SessionTerminalComposerClearResultV1Schema,
+  buildUnsupportedSessionTerminalComposerClearResult,
+  type SessionTerminalComposerClearRequestV1,
+  type SessionTerminalComposerClearResultV1,
+} from './sessions/control/terminalComposerClearV1.js';
+
+export {
+  SESSION_RUNNER_RESTART_DISABLED_REASONS,
+  SESSION_RUNNER_RESTART_MODES_V1,
+  SESSION_RUNNER_RESTART_REASONS_V1,
+  SESSION_RUNNER_RESTART_STATUSES_V1,
+  RestartAllSessionRunnersRequestV1Schema,
+  RestartAllSessionRunnersResultV1Schema,
+  RestartSessionRunnerRequestV1Schema,
+  RestartSessionRunnerResultV1Schema,
+  RestartSessionRunnerStatusV1Schema,
+  SessionRunnerRestartDisabledReasonSchema,
+  SessionRunnerRestartModeV1Schema,
+  SessionRunnerRestartReasonV1Schema,
+  type RestartAllSessionRunnersRequestV1,
+  type RestartAllSessionRunnersResultV1,
+  type RestartSessionRunnerRequestV1,
+  type RestartSessionRunnerResultV1,
+  type RestartSessionRunnerStatusV1,
+  type SessionRunnerRestartDisabledReason,
+  type SessionRunnerRestartModeV1,
+  type SessionRunnerRestartReasonV1,
+} from './sessions/control/sessionRunnerRestartV1.js';
+
+export {
+  SESSION_RUNNER_RUNTIME_METADATA_KEY,
+  SESSION_RUNNER_RUNTIME_STATE_FIELD_ID,
+  SessionRunnerStatusGetRequestV1Schema,
+  SessionRunnerDaemonEntrypointSourceV1Schema,
+  SessionRunnerEntrypointSourceV1Schema,
+  SessionRunnerRuntimeStateV1Schema,
+  SessionRunnerRuntimeStatusSourceV1Schema,
+  SessionRunnerStartedByV1Schema,
+  SessionRunnerStartingModeV1Schema,
+  SessionRunnerVersionStateV1Schema,
+  type SessionRunnerStatusGetRequestV1,
+  type SessionRunnerDaemonEntrypointSourceV1,
+  type SessionRunnerEntrypointSourceV1,
+  type SessionRunnerRuntimeStateV1,
+  type SessionRunnerRuntimeStatusSourceV1,
+  type SessionRunnerStartedByV1,
+  type SessionRunnerStartingModeV1,
+  type SessionRunnerVersionStateV1,
+} from './sessions/control/sessionRunnerRuntimeV1.js';
 
 export {
   resolveManualUnreadCursorBoundary,
   type ResolveManualUnreadCursorBoundaryInput,
-} from './sessionControl/readCursor.js';
-
-export {
-  DefaultSessionFoldersV1,
-  MoveSessionFolderAssignmentsRequestSchema,
-  MoveSessionFolderAssignmentsResponseSchema,
-  QuerySessionFolderSessionsRequestSchema,
-  QuerySessionFolderSessionsResponseSchema,
-  SESSION_FOLDER_ASSIGNMENT_QUERY_MAX_FOLDER_IDS,
-  SESSION_FOLDER_ASSIGNMENT_QUERY_MAX_LIMIT,
-  SESSION_FOLDER_ASSIGNMENT_QUERY_MAX_SESSION_IDS,
-  SESSION_FOLDER_MAX_COUNT,
-  SESSION_FOLDER_MAX_DEPTH,
-  SESSION_FOLDER_MAX_ID_LENGTH,
-  SESSION_FOLDER_MAX_NAME_LENGTH,
-  SESSION_FOLDER_MAX_PATH_LENGTH,
-  SESSION_FOLDER_VISUAL_DEPTH_CAP,
-  SessionFolderAssignmentListRequestSchema,
-  SessionFolderAssignmentListResponseSchema,
-  SessionFolderAssignmentMutationResultSchema,
-  SessionFolderAssignmentSchema,
-  SessionFolderV1Schema,
-  SessionFolderWorkspaceRefV1Schema,
-  SessionFoldersV1Schema,
-  SetSessionFolderAssignmentRequestSchema,
-  SetSessionFolderAssignmentResponseSchema,
-  type MoveSessionFolderAssignmentsRequest,
-  type MoveSessionFolderAssignmentsResponse,
-  type QuerySessionFolderSessionsRequest,
-  type QuerySessionFolderSessionsResponse,
-  type SessionFolderAssignment,
-  type SessionFolderAssignmentListRequest,
-  type SessionFolderAssignmentListResponse,
-  type SessionFolderAssignmentMutationResult,
-  type SessionFolderV1,
-  type SessionFolderWorkspaceRefV1,
-  type SessionFoldersV1,
-  type SetSessionFolderAssignmentRequest,
-  type SetSessionFolderAssignmentResponse,
-} from './sessionFolders/index.js';
+} from './sessions/control/readCursor.js';
 
 export {
   AcpConfiguredBackendV1Schema,
@@ -2029,7 +2428,7 @@ export {
   createAcpConfiguredBackendV1Schema,
   buildAcpConfiguredBackendV1,
   readAcpConfiguredBackendV1FromMetadata,
-} from './sessionMetadata/acpConfiguredBackendV1.js';
+} from './sessions/metadata/acpConfiguredBackendV1.js';
 
 export {
   SessionRollbackRangeV1Schema,
@@ -2040,7 +2439,7 @@ export {
   createSessionRollbackRangesV1Schema,
   buildSessionRollbackRangesV1,
   readSessionRollbackRangesV1FromMetadata,
-} from './sessionMetadata/sessionRollbackRangesV1.js';
+} from './sessions/metadata/sessionRollbackRangesV1.js';
 
 export {
   AgentRuntimeFacetsV1Schema,
@@ -2048,18 +2447,17 @@ export {
   type AgentRuntimeTranscriptSourceFacetV1,
   createAgentRuntimeFacetsV1Schema,
   readAgentRuntimeFacetsV1,
-} from './sessionMetadata/agentRuntimeFacetsV1.js';
+} from './sessions/metadata/agentRuntimeFacetsV1.js';
 export {
   RuntimeDescriptorV1Schema,
   type RuntimeDescriptorV1,
   type RuntimeDescriptorEnvelopeV1,
-  type RuntimeDescriptorProviderExtraV1,
-  readCanonicalAgentRuntimeDescriptorV1ForProvider,
+  type RuntimeDescriptorAgentExtraV1,
   createRuntimeDescriptorV1Schema,
   readRuntimeDescriptorV1,
-  readRuntimeDescriptorV1ForProvider,
-  readCanonicalRuntimeDescriptorV1ForProvider,
-} from './sessionMetadata/runtimeDescriptorV1.js';
+  readRuntimeDescriptorV1ForAgent,
+  readCanonicalRuntimeDescriptorV1ForAgent,
+} from './sessions/metadata/runtimeDescriptorV1.js';
 export {
   CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_METADATA_KEY,
   ConnectedServiceMaterializationIdentityV1Schema,
@@ -2067,7 +2465,7 @@ export {
   readConnectedServiceMaterializationIdentityV1FromMetadata,
   writeConnectedServiceMaterializationIdentityV1ToMetadata,
   type ConnectedServiceMaterializationIdentityV1,
-} from './sessionMetadata/connectedServiceMaterializationIdentityV1.js';
+} from './sessions/metadata/connectedServiceMaterializationIdentityV1.js';
 export {
   SESSION_CONTINUATION_RECOVERY_METADATA_KEY,
   SessionContinuationRecoveryAttemptStatusV1Schema,
@@ -2086,7 +2484,7 @@ export {
   type SessionContinuationReplayModeV1,
   type SessionContinuationRecoveryV1,
   type SessionContinuationResumePromptModeV1,
-} from './sessionMetadata/sessionContinuationRecoveryV1.js';
+} from './sessions/metadata/sessionContinuationRecoveryV1.js';
 export {
   SESSION_PENDING_QUEUE_HOLD_METADATA_KEY,
   SESSION_PENDING_QUEUE_HOLD_MAX_TTL_MS,
@@ -2099,7 +2497,7 @@ export {
   type SessionPendingQueueHoldEntryV1,
   type SessionPendingQueueHoldV1,
   type WriteSessionPendingQueueHoldV1Input,
-} from './sessionMetadata/sessionPendingQueueHoldV1.js';
+} from './sessions/metadata/sessionPendingQueueHoldV1.js';
 export {
   PROVIDER_ACCOUNT_USAGE_REFS_MAX_RECORD_IDS,
   PROVIDER_ACCOUNT_USAGE_REFS_METADATA_KEY,
@@ -2108,20 +2506,19 @@ export {
   readProviderAccountUsageRecordIdsFromMetadata,
   writeProviderAccountUsageRecordIdToMetadata,
   type ProviderAccountUsageRefsV1,
-} from './sessionMetadata/providerAccountUsageRefsV1.js';
+} from './sessions/metadata/providerAccountUsageRefsV1.js';
 export {
   LegacyAgentRuntimeDescriptorV1Schema,
   readRawRuntimeDescriptorV1FromMetadata,
   readRuntimeDescriptorV1FromMetadata,
   writeRuntimeDescriptorV1ToMetadata,
   type RuntimeDescriptorMetadataCarrier,
-} from './sessionMetadata/compat/runtimeDescriptorMetadata.js';
+} from './sessions/metadata/compat/runtimeDescriptorMetadata.js';
 
 export {
   ModelOverrideV1Schema,
   type ModelOverrideV1,
   createModelOverrideV1Schema,
-  buildModelOverrideV1,
   AcpSessionModeOverrideV1Schema,
   type AcpSessionModeOverrideV1,
   createAcpSessionModeOverrideV1Schema,
@@ -2135,30 +2532,39 @@ export {
   createCodexRuntimeDescriptorV1Schema,
   buildCodexRuntimeDescriptorV1,
   readCodexRuntimeDescriptorV1BackendMode,
-} from './sessionMetadata/metadataOverridesV1.js';
+} from './sessions/metadata/metadataOverridesV1.js';
+
+export {
+  SpawnConfigOptionValueSchema,
+  type SpawnConfigOptionValue,
+  buildAcpConfigOptionOverridesV1FromConfigOptions,
+  findSpawnConfigOptionAliasConflicts,
+  mergeSpawnConfigOptionAliases,
+  type SpawnConfigOptionsAliasConflict,
+} from './actions/sessionSpawnConfigOptions.js';
 
 export {
   SessionTerminalMetadataSchema,
   type SessionTerminalMetadata,
   createSessionTerminalMetadataSchema,
-} from './sessionMetadata/terminalMetadata.js';
+} from './sessions/metadata/terminalMetadata.js';
 
 export {
   WINDOWS_REMOTE_SESSION_LAUNCH_MODES,
   WindowsRemoteSessionLaunchModeSchema,
   type WindowsRemoteSessionLaunchMode,
-} from './sessionMetadata/windowsRemoteSessionLaunchMode.js';
+} from './sessions/metadata/windowsRemoteSessionLaunchMode.js';
 
 export {
   DEFAULT_WINDOWS_TERMINAL_WINDOW_NAME,
   normalizeWindowsTerminalWindowName,
   WindowsTerminalWindowNameSchema,
-} from './sessionMetadata/windowsTerminalWindowName.js';
+} from './sessions/metadata/windowsTerminalWindowName.js';
 
 export {
   compareMachineHosts,
   normalizeMachineHost,
-} from './machineHost/normalizeMachineHost.js';
+} from './machines/host/normalizeMachineHost.js';
 export {
   compareMachineHomeDirs,
   isSameMachineLocality,
@@ -2168,20 +2574,24 @@ export {
   type MachineLocalityInput,
   type MachineLocalityResult,
   type NormalizeMachineHomeDirOptions,
-} from './machineIdentity/index.js';
+} from './machines/identity/index.js';
 
 export {
   SESSION_PERMISSION_MODES,
   SessionPermissionModeSchema,
   type SessionPermissionMode,
   createSessionPermissionModeSchema,
-} from './sessionMetadata/sessionPermissionModes.js';
+} from './sessions/metadata/sessionPermissionModes.js';
 
 export {
+  SESSION_USER_MESSAGE_DELIVERY_INTENT_META_KEY,
   SessionMessageMetaSchema,
+  readSessionUserMessageDeliveryIntentMeta,
   type SessionMessageMeta,
+  type SessionUserMessageDeliveryIntentV1,
   createSessionMessageMetaSchema,
-} from './sessionMessages/sessionMessageMeta.js';
+  withSessionUserMessageDeliveryIntentMeta,
+} from './sessions/messages/sessionMessageMeta.js';
 
 export {
   SESSION_STATE_FIELD_CLASSES,
@@ -2199,11 +2609,14 @@ export {
   SessionStateRuntimeDescriptorValueSchema,
   SessionStateProviderSessionIdValueSchema,
   SessionStateModelValueSchema,
+  SessionStateModelReadCompatValueSchema,
+  SessionStateModelWriteValueSchema,
   SessionStatePermissionModeValueSchema,
   SessionStateAcpSessionModeValueSchema,
   SessionStateAcpConfigOptionValueSchema,
   SessionStateTitleValueSchema,
   SessionStateWorkStateValueSchema,
+  SessionStateRuntimeActivityValueSchema,
   SessionStateReadStateValueSchema,
   SessionStateAttentionValueSchema,
   SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
@@ -2228,8 +2641,10 @@ export {
   type SessionStateFieldId,
   type SessionStateFieldRegistry,
   type SessionStateFieldValue,
-} from './session/state/index.js';
+  type SessionModelSelectionIntentReadCompatV1,
+} from './sessions/state/index.js';
 export {
+  SessionWorkStateGoalCapabilitiesV1Schema,
   SessionWorkStateItemKindV1Schema,
   SessionWorkStateItemOriginV1Schema,
   SessionWorkStateItemV1Schema,
@@ -2244,6 +2659,8 @@ export {
   DaemonSessionVendorPluginCatalogListRequestV1Schema,
   SessionUsageLimitCheckNowRequestV1Schema,
   SessionUsageLimitCheckNowResponseV1Schema,
+  SessionUsageLimitConsumeResetCreditRequestV1Schema,
+  SessionUsageLimitConsumeResetCreditResponseV1Schema,
   SessionUsageLimitOperationResponseV1Schema,
   SessionUsageLimitWaitResumeCancelRequestV1Schema,
   SessionUsageLimitWaitResumeCancelResponseV1Schema,
@@ -2256,6 +2673,11 @@ export {
   mergeSessionWorkStateV1,
   readDisplayableSessionWorkStateV1,
   readSessionWorkStateV1FromMetadata,
+  resolveSessionWorkStatePrimaryItemId,
+  ConnectedServiceQuotaRecoveryCreditConsumeRequestV1Schema,
+  ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1Schema,
+  ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1Schema,
+  ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema,
   SessionGoalClearRequestV1Schema,
   SessionGoalGetRequestV1Schema,
   SessionGoalSetRequestV1Schema,
@@ -2263,14 +2685,30 @@ export {
   SessionSkillCatalogItemV1Schema,
   SessionSkillCatalogListRequestV1Schema,
   SessionSkillCatalogListResponseV1Schema,
+  SessionConnectedServiceAuthApplyGenerationAppliedViaV1Schema,
+  SessionConnectedServiceAuthApplyGenerationReasonV1Schema,
+  SessionConnectedServiceAuthApplyGenerationRequestV1Schema,
+  SessionConnectedServiceAuthApplyGenerationResponseV1Schema,
   SessionConnectedServiceAuthInvalidateTransportsRequestV1Schema,
   SessionConnectedServiceAuthInvalidateTransportsResponseV1Schema,
+  SessionConnectedServiceAuthReadRuntimeIdentityReasonV1Schema,
+  SessionConnectedServiceAuthReadRuntimeIdentityRequestV1Schema,
+  SessionConnectedServiceAuthReadRuntimeIdentityResponseV1Schema,
+  SessionConnectedServiceAuthRuntimeIdentityProofStrengthV1Schema,
+  SessionConnectedServiceAuthRuntimeIdentityStrategyV1Schema,
+  SessionPendingQueueMaterializeNextRequestV1Schema,
+  SessionPendingQueueMaterializeNextResponseV1Schema,
   SessionVendorPluginCatalogListRequestV1Schema,
   SessionVendorPluginCatalogListResponseV1Schema,
   SessionVendorPluginSummaryV1Schema,
   SessionWorkStateGetRequestV1Schema,
   SessionWorkStateGetResponseV1Schema,
   writeSessionWorkStateV1ToMetadata,
+  type ResolveSessionWorkStatePrimaryOptions,
+  type ConnectedServiceQuotaRecoveryCreditConsumeRequestV1,
+  type ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1,
+  type ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1,
+  type ConnectedServiceQuotaRecoveryCreditConsumeResponseV1,
   type DaemonSessionGoalClearRequestV1,
   type DaemonSessionGoalGetRequestV1,
   type DaemonSessionGoalSetRequestV1,
@@ -2278,6 +2716,8 @@ export {
   type DaemonSessionVendorPluginCatalogListRequestV1,
   type SessionUsageLimitCheckNowRequestV1,
   type SessionUsageLimitCheckNowResponseV1,
+  type SessionUsageLimitConsumeResetCreditRequestV1,
+  type SessionUsageLimitConsumeResetCreditResponseV1,
   type SessionUsageLimitOperationResponseV1,
   type SessionUsageLimitWaitResumeCancelRequestV1,
   type SessionUsageLimitWaitResumeCancelResponseV1,
@@ -2290,11 +2730,23 @@ export {
   type SessionSkillCatalogItemV1,
   type SessionSkillCatalogListRequestV1,
   type SessionSkillCatalogListResponseV1,
+  type SessionConnectedServiceAuthApplyGenerationAppliedViaV1,
+  type SessionConnectedServiceAuthApplyGenerationReasonV1,
+  type SessionConnectedServiceAuthApplyGenerationRequestV1,
+  type SessionConnectedServiceAuthApplyGenerationResponseV1,
   type SessionConnectedServiceAuthInvalidateTransportsRequestV1,
   type SessionConnectedServiceAuthInvalidateTransportsResponseV1,
+  type SessionConnectedServiceAuthReadRuntimeIdentityReasonV1,
+  type SessionConnectedServiceAuthReadRuntimeIdentityRequestV1,
+  type SessionConnectedServiceAuthReadRuntimeIdentityResponseV1,
+  type SessionConnectedServiceAuthRuntimeIdentityProofStrengthV1,
+  type SessionConnectedServiceAuthRuntimeIdentityStrategyV1,
+  type SessionPendingQueueMaterializeNextRequestV1,
+  type SessionPendingQueueMaterializeNextResponseV1,
   type SessionVendorPluginCatalogListRequestV1,
   type SessionVendorPluginCatalogListResponseV1,
   type SessionVendorPluginSummaryV1,
+  type SessionWorkStateGoalCapabilitiesV1,
   type SessionWorkStateItemKindV1,
   type SessionWorkStateItemOriginV1,
   type SessionWorkStateItemV1,
@@ -2307,7 +2759,42 @@ export {
   type SessionWorkStateV1,
   type SessionWorkStateWriteItemV1,
   type SessionWorkStateWriteSnapshotV1,
-} from './sessionWorkState/index.js';
+} from './sessions/work/state/index.js';
+export {
+  SESSION_WORKFLOW_ACTIVITY_RECENT_RUNS_LIMIT,
+  SESSION_WORKFLOW_RUN_SNAPSHOT_PROJECTION_VERSION,
+  SESSION_WORKFLOW_RUN_SNAPSHOT_RESULT_PREVIEW_MAX,
+  SESSION_WORKFLOW_RUN_SNAPSHOT_SUMMARY_MAX,
+  SESSION_WORKFLOW_RUN_SNAPSHOT_TITLE_MAX,
+  SessionWorkflowActivityHeadlineTruncationV1Schema,
+  SessionWorkflowActivityHeadlineV1Schema,
+  SessionWorkflowAgentSnapshotV1Schema,
+  SessionWorkflowAgentStatusV1Schema,
+  SessionWorkflowPhaseSnapshotV1Schema,
+  SessionWorkflowRunHeadlineV1Schema,
+  SessionWorkflowRunSnapshotV1Schema,
+  SessionWorkflowRunStatusReasonV1Schema,
+  SessionWorkflowRunStatusV1Schema,
+  boundRecentWorkflowRunHeadlines,
+  buildSessionWorkflowActivityHeadline,
+  bumpWorkflowRunRecordRevision,
+  findWorkflowPhaseForAgent,
+  isTerminalWorkflowRunStatus,
+  isWorkflowRunSnapshotMaterialChange,
+  resolvePrimaryWorkflowRunId,
+  resolveWorkflowAgentPhaseTitle,
+  sortActiveWorkflowRunHeadlines,
+  type BuildSessionWorkflowActivityHeadlineInput,
+  type SessionWorkflowActivityHeadlineTruncationV1,
+  type SessionWorkflowActivityHeadlineV1,
+  type SessionWorkflowAgentSnapshotV1,
+  type SessionWorkflowAgentStatusV1,
+  type SessionWorkflowPhaseSnapshotV1,
+  type SessionWorkflowRunHeadlineV1,
+  type SessionWorkflowRunSnapshotV1,
+  type SessionWorkflowRunStatusReasonV1,
+  type SessionWorkflowRunStatusV1,
+} from './sessions/work/workflow/index.js';
 export {
   ChangeConfidenceSchema,
   ChangeEvidenceSourceSchema,
@@ -2336,7 +2823,7 @@ export {
   type SessionWorkingTreeMatchedFile,
   type SessionWorkingTreeProjection,
   type TurnChangeSet,
-} from './sessionChanges/index.js';
+} from './sessions/changes/index.js';
 export {
   ServerAddEnvelopeSchema,
   ServerAddResultSchema,
@@ -2361,7 +2848,7 @@ export {
   type ServerSetResult,
   type ServerTestResult,
   type ServerUseResult,
-} from './serverControl/contract.js';
+} from './server/control/contract.js';
 export {
   ProviderRefreshPolicySchema,
   VcsFreshnessSchema,
@@ -2369,7 +2856,7 @@ export {
   type ProviderRefreshPolicy,
   type VcsFreshness,
   type VcsFreshnessSource,
-} from './scmFreshness.js';
+} from './scm/freshness.js';
 export {
   SCM_BACKEND_CAPABILITY_GROUPS,
   ScmBackendCapabilitiesSchema,
@@ -2383,7 +2870,7 @@ export {
   type ScmBackendCapabilityLeaf,
   type ScmBackendCapabilitySupportLevel,
   type ScmBackendCapabilityUnavailableReason,
-} from './scmBackendCapabilities.js';
+} from './scm/backendCapabilities.js';
 export {
   SCM_COMMIT_MESSAGE_MAX_LENGTH,
   SCM_COMMIT_PATCH_MAX_COUNT,
@@ -2419,6 +2906,7 @@ export {
   ScmLogEntrySchema,
   ScmLogListRequestSchema,
   ScmLogListResponseSchema,
+  ScmSelectedMutationPathSchema,
   ScmOperationErrorCodeSchema,
   ScmOperationStateSchema,
   ScmPathStatsSchema,
@@ -2484,6 +2972,7 @@ export {
   type ScmDiffFileResponse,
   type ScmEntryKind,
   type ScmLogEntry,
+  type ScmSelectedMutationPath,
   type ScmLogListRequest,
   type ScmLogListResponse,
   type ScmOperationErrorCode,
@@ -2517,7 +3006,7 @@ export {
   type ScmWorktreesEnrichmentResponse,
   type ScmWorkingEntry,
   type ScmWorkingSnapshot,
-} from './scm.js';
+} from './scm/index.js';
 export {
   ScmFollowupActionSchema,
   ScmHostingProviderCapabilitiesSchema,
@@ -2582,7 +3071,7 @@ export {
   type ScmPullRequestState,
   type ScmPullRequestStatusProjection,
   type ScmPullRequestSummary,
-} from './scmPullRequests.js';
+} from './scm/pullRequests.js';
 export {
   SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION,
   ScmDiffSummaryCacheEntrySchema,
@@ -2619,7 +3108,7 @@ export {
   type ScmDiffSummarySourceKind,
   type ScmDiffSummaryTruncation,
   type ScmDiffSummaryTruncationReason,
-} from './scmDiffSummary.js';
+} from './scm/diffSummary.js';
 export {
   ScmRepositoryCloneAuthorizationTokenSchema,
   ScmRepositoryCloneInputSchema,
@@ -2635,7 +3124,7 @@ export {
   type ScmRepositoryCloneTarget,
   type ScmRepositoryCloneTargetDescription,
   type SourceControlCloneProtocol,
-} from './scmRepositoryClone.js';
+} from './scm/repositoryClone.js';
 export {
   ScmHostingRepositoryAuthProfileKindSchema,
   ScmHostingRepositoryAuthStateSchema,
@@ -2680,7 +3169,7 @@ export {
   type ScmRepositoryRemoveIndexLockReason,
   type ScmRepositoryRemoveIndexLockRequest,
   type ScmRepositoryRemoveIndexLockResponse,
-} from './scmRepositoryProvisioning.js';
+} from './scm/repositoryProvisioning.js';
 export {
   ScmBranchCheckoutRequestSchema,
   ScmBranchCheckoutResponseSchema,
@@ -2704,7 +3193,7 @@ export {
   type ScmBranchType,
   type ScmRemotePublishRequest,
   type ScmRemotePublishResponse,
-} from './scmBranches.js';
+} from './scm/branches.js';
 export {
   SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
   ScmWorktreeCreateRequestSchema,
@@ -2721,7 +3210,13 @@ export {
   type ScmWorktreePruneResponse,
   type ScmWorktreeRemoveRequest,
   type ScmWorktreeRemoveResponse,
-} from './scmWorktrees.js';
+} from './scm/worktrees.js';
+export {
+  normalizeWorktreeDisplayName,
+  hasForbiddenGitRefName,
+  buildWorktreeRelativePath,
+  WORKTREE_RELATIVE_PARENT_DIR,
+} from './scm/worktreeName.js';
 export {
   ScmStashApplyRequestSchema,
   ScmStashApplyResponseSchema,
@@ -2747,24 +3242,25 @@ export {
   type ScmStashPopResponse,
   type ScmStashShowRequest,
   type ScmStashShowResponse,
-} from './scmStash.js';
+} from './scm/stash.js';
 export {
   resolveScmScopedChangedPaths,
   scmPathMatchesScopePath,
-} from './scmPathScope.js';
+} from './scm/pathScope.js';
 export {
   createGitScmCapabilities,
   createSaplingScmCapabilities,
   createScmCapabilitiesFromBackendCapabilities,
   createScmCapabilities,
-} from './scmCapabilities.js';
+} from './scm/capabilities.js';
 
 export {
   VOICE_ACTIONS_BLOCK,
+  VOICE_TOOL_RESULT_CHANNEL,
   VoiceAssistantActionSchema,
   extractVoiceActionsFromAssistantText,
   type VoiceAssistantAction,
-} from './voiceActions.js';
+} from './voice/actions.js';
 
 export {
   HappierStructuredInputV1EnvelopeSchema,
@@ -2779,7 +3275,7 @@ export {
   type SessionUserMessageSendMeta,
   type SessionUserMessageSendRequest,
   type SessionUserMessageSendResponse,
-} from './sessionUserMessageRpc.js';
+} from './sessions/userMessageRpc.js';
 
 export {
   ExecutionRunIntentSchema,
@@ -2866,7 +3362,7 @@ export {
   type ExecutionRunTurnStreamEventDone,
   type ExecutionRunTurnStreamEventError,
   type ExecutionRunStatus,
-} from './executionRuns.js';
+} from './execution/runs/index.js';
 
 export {
   DaemonExecutionRunMarkerSchema,
@@ -2879,18 +3375,35 @@ export {
   type DaemonExecutionRunEntry,
   type DaemonExecutionRunListRequest,
   type DaemonExecutionRunListResponse,
-} from './daemonExecutionRuns.js';
+} from './daemon/executionRuns.js';
 
 export {
-  DaemonContributionRegistryProjectionProviderEntryV1Schema,
+  DaemonContributionRegistryProjectionAgentEntryV1Schema,
   DaemonContributionRegistryProjectionBackendEntryV1Schema,
   DaemonContributionRegistryProjectionActionEntryV1Schema,
   DaemonContributionRegistryProjectionResourceEntryV1Schema,
   DaemonContributionRegistryProjectionUiDescriptorEntryV1Schema,
   DaemonContributionRegistryProjectionUiFieldV1Schema,
   DaemonContributionRegistryProjectionV1Schema,
+  DaemonReactNativeHostRuntimeIdentityV1Schema,
+  DaemonReactNativeHostRuntimeScriptManagerReadinessV1Schema,
+  DaemonEmbeddedWebDeploymentCspCapabilityV1Schema,
   DaemonContributionRegistryProjectionDescribeRequestSchema,
   DaemonContributionRegistryProjectionDescribeResponseSchema,
+  DaemonPluginSettingsGetRequestSchema,
+  DaemonPluginSettingsGetResponseSchema,
+  DaemonPluginSettingsSetRequestSchema,
+  DaemonPluginSettingsSetResponseSchema,
+  DaemonPluginSettingsSnapshotSchema,
+  DaemonPluginReactNativeBundleCacheIdentityV1Schema,
+  DaemonPluginEmbeddedWebBundleCacheIdentityV1Schema,
+  DaemonPluginUiArtifactBytesCacheIdentityV1Schema,
+  DaemonPluginUiArtifactBytesReadRequestSchema,
+  DaemonPluginUiArtifactBytesReadResponseSchema,
+  DaemonPluginReactNativeCrashReportReasonV1Schema,
+  DaemonPluginReactNativeCrashReportV1Schema,
+  DaemonPluginReactNativeCrashReportRequestV1Schema,
+  DaemonPluginReactNativeCrashReportResponseV1Schema,
   PluginProjectedActionV2Schema,
   PluginProjectedBackendV2Schema,
   PluginProjectedCommandSurfaceV2Schema,
@@ -2899,15 +3412,18 @@ export {
   PluginProjectedHookV2Schema,
   PluginProjectedFamilyEntryV2Schema,
   PluginProjectedFamilyV2Schema,
-  PluginProjectedProviderV2Schema,
+  PluginProjectedAgentV2Schema,
   PluginProjectedResourceV2Schema,
+  PluginProjectedSettingsFieldV2Schema,
+  PluginProjectedSettingsStorageScopeV2Schema,
+  PluginProjectedSettingsV2Schema,
   PluginProjectedToolV2Schema,
   PluginProjectedUiDescriptorV2Schema,
   PluginProjectionDiagnosticV2Schema,
   PluginProjectionInstalledPackageV2Schema,
   PluginProjectionSourceV2Schema,
   PluginProjectionV2Schema,
-  type DaemonContributionRegistryProjectionProviderEntryV1,
+  type DaemonContributionRegistryProjectionAgentEntryV1,
   type DaemonContributionRegistryProjectionBackendEntryV1,
   type DaemonContributionRegistryProjectionActionEntryV1,
   type DaemonContributionRegistryProjectionResourceEntryV1,
@@ -2915,8 +3431,25 @@ export {
   type DaemonContributionRegistryProjectionUiFieldV1,
   type DaemonContributionRegistryProjectionV1,
   type DaemonContributionRegistryProjection,
+  type DaemonReactNativeHostRuntimeIdentityV1,
+  type DaemonReactNativeHostRuntimeScriptManagerReadinessV1,
+  type DaemonEmbeddedWebDeploymentCspCapabilityV1,
   type DaemonContributionRegistryProjectionDescribeRequest,
   type DaemonContributionRegistryProjectionDescribeResponse,
+  type DaemonPluginSettingsGetRequest,
+  type DaemonPluginSettingsGetResponse,
+  type DaemonPluginSettingsSetRequest,
+  type DaemonPluginSettingsSetResponse,
+  type DaemonPluginSettingsSnapshot,
+  type DaemonPluginReactNativeBundleCacheIdentityV1,
+  type DaemonPluginEmbeddedWebBundleCacheIdentityV1,
+  type DaemonPluginUiArtifactBytesCacheIdentityV1,
+  type DaemonPluginUiArtifactBytesReadRequest,
+  type DaemonPluginUiArtifactBytesReadResponse,
+  type DaemonPluginReactNativeCrashReportReasonV1,
+  type DaemonPluginReactNativeCrashReportV1,
+  type DaemonPluginReactNativeCrashReportRequestV1,
+  type DaemonPluginReactNativeCrashReportResponseV1,
   type PluginProjectedActionV2,
   type PluginProjectedBackendV2,
   type PluginProjectedCommandSurfaceV2,
@@ -2925,15 +3458,18 @@ export {
   type PluginProjectedHookV2,
   type PluginProjectedFamilyEntryV2,
   type PluginProjectedFamilyV2,
-  type PluginProjectedProviderV2,
+  type PluginProjectedAgentV2,
   type PluginProjectedResourceV2,
+  type PluginProjectedSettingsFieldV2,
+  type PluginProjectedSettingsStorageScopeV2,
+  type PluginProjectedSettingsV2,
   type PluginProjectedToolV2,
   type PluginProjectedUiDescriptorV2,
   type PluginProjectionDiagnosticV2,
   type PluginProjectionInstalledPackageV2,
   type PluginProjectionSourceV2,
   type PluginProjectionV2,
-} from './daemonContributionRegistryProjection.js';
+} from './daemon/contributionRegistryProjection.js';
 
 export {
   DaemonTerminalErrorCodeSchema,
@@ -2974,17 +3510,53 @@ export {
   type DaemonTerminalCloseResponse,
   type DaemonTerminalRestartRequest,
   type DaemonTerminalRestartResponse,
-} from './daemonTerminal.js';
+} from './daemon/terminal.js';
 
 export {
-  EXTERNAL_SESSIONS_PROVIDER_IDS,
-  EXTERNAL_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1,
+  TERMINAL_STREAM_MAX_ENCODED_BYTES,
+  TERMINAL_STREAM_MAX_FRAME_DECODED_BYTES,
+  TERMINAL_STREAM_MAX_FRAMES,
+  TERMINAL_STREAM_MAX_READ_BYTES,
+  TERMINAL_BRACKETED_PASTE_END,
+  TERMINAL_BRACKETED_PASTE_START,
+  TerminalInputEventSchema,
+  encodeTerminalPasteInput,
+  terminalInputEventToPtyAction,
+  TerminalStreamAckRequestSchema,
+  TerminalStreamAckResponseSchema,
+  TerminalStreamBytesEncodingSchema,
+  TerminalStreamBytesFrameSchema,
+  TerminalStreamControlFrameSchema,
+  TerminalStreamFrameSchema,
+  TerminalStreamInputRequestSchema,
+  TerminalStreamInputResponseSchema,
+  TerminalStreamReadRequestSchema,
+  TerminalStreamReadResponseSchema,
+  decodeTerminalStreamBytesFrame,
+  encodeTerminalStreamBytes,
+  type TerminalInputEvent,
+  type TerminalInputPtyAction,
+  type TerminalStreamAckRequest,
+  type TerminalStreamAckResponse,
+  type TerminalStreamBytesEncoding,
+  type TerminalStreamBytesFrame,
+  type TerminalStreamControlFrame,
+  type TerminalStreamFrame,
+  type TerminalStreamInputRequest,
+  type TerminalStreamInputResponse,
+  type TerminalStreamReadRequest,
+  type TerminalStreamReadResponse,
+} from './terminal/index.js';
+
+export {
+  EXTERNAL_SESSIONS_AGENT_IDS,
+  EXTERNAL_SESSIONS_AGENT_IDS_BY_SOURCE_KIND_V1,
   type ExternalSessionsSourceKindV1,
   resolveExternalSessionsSourceKey,
 } from './sessions/external/sourceCatalog.js';
 
 export {
-  ExternalSessionsProviderIdSchema,
+  ExternalSessionsAgentIdSchema,
   ExternalSessionsSourceSchema,
   ExternalSessionsSearchModeSchema,
   ExternalSessionCandidateV1Schema,
@@ -3010,7 +3582,7 @@ export {
   ExternalSessionTakeoverResponseSchema,
   ExternalSessionTakeoverPersistRequestSchema,
   ExternalSessionTakeoverPersistResponseSchema,
-  type ExternalSessionsProviderId,
+  type ExternalSessionsAgentId,
   type ExternalSessionsSource,
   type ExternalSessionsSearchMode,
   type ExternalSessionCandidateV1,
@@ -3088,7 +3660,7 @@ export {
   type SessionHandoffPrepareTargetRequest,
   type SessionHandoffPrepareTargetResponse,
   type SessionHandoffMetadataV2,
-  type SessionHandoffProviderBundleTransferPublication,
+  type SessionHandoffAgentBundleTransferPublication,
   type SessionHandoffProgressCheckpoint,
   type SessionHandoffProgressWarningCode,
   type SessionHandoffProgressTimelineKindV1,
@@ -3108,7 +3680,7 @@ export {
   SESSION_HANDOFF_PROGRESS_FULL_TIMELINE_WITH_SOURCE_SCAN,
   SESSION_HANDOFF_PROGRESS_MINIMAL_TIMELINE,
   resolveSessionHandoffProgressTimeline,
-} from './sessionControl/handoff/handoffRpc.js';
+} from './sessions/control/handoff/handoffRpc.js';
 
 export {
   MachineTransferReceiveEnvelopeSchema,
@@ -3121,23 +3693,23 @@ export {
   type TransferChunkEnvelope,
   type TransferEndpointCandidate,
   type TransferStreamEnvelope,
-} from './machineTransfer/transferStream.js';
+} from './machines/transfer/transferStream.js';
 export {
   normalizeDirectPeerImportEndpointBaseUrl,
   normalizeDirectPeerTransferEndpointBaseUrl,
-} from './machineTransfer/directPeerUrls.js';
+} from './machines/transfer/directPeerUrls.js';
 export {
   createDeterministicRandomBytesFromBase64,
   transferChunkEncryptionVectors,
   type TransferChunkEncryptionVector,
-} from './machineTransfer/transferChunkEncryptionVectors.js';
+} from './machines/transfer/transferChunkEncryptionVectors.js';
 
 export {
   canonicalizeServerUrlForIdentity,
   createServerUrlComparableKey,
   SERVER_URL_COMPARABLE_KEY_ERROR_CODE,
   ServerUrlComparableKeyError,
-} from './serverUrls/index.js';
+} from './server/urls/index.js';
 export {
   SYSTEM_TASK_PROTOCOL_VERSION,
   SystemTaskEventSchema,
@@ -3203,13 +3775,13 @@ export {
   type TailscaleSecureAccessTaskResult,
   type TailscaleSecureAccessTaskSpec,
   type TailscaleSecureAccessTaskTarget,
-} from './systemTasks/index.js';
+} from './system/tasks/index.js';
 
 export {
   SYSTEM_TASK_PROMPT_KINDS_V1,
   SystemTaskPromptKindSchema,
   type SystemTaskPromptKind,
-} from './systemTasks/promptKindCatalog.js';
+} from './system/tasks/promptKindCatalog.js';
 
 export {
   buildSshTarget,
@@ -3220,7 +3792,7 @@ export {
 export {
   LlmTaskRunnerConfigV1Schema,
   type LlmTaskRunnerConfigV1,
-} from './llmTasks/llmTaskRunnerConfigV1.js';
+} from './llm/tasks/llmTaskRunnerConfigV1.js';
 
 export {
   ReviewFindingSchema,
@@ -3395,7 +3967,7 @@ export {
 export {
   HappierMetaEnvelopeSchema,
   type HappierMetaEnvelope,
-} from './structuredMessages/HappierMetaEnvelope.js';
+} from './messages/structured/HappierMetaEnvelope.js';
 
 export {
   ReviewFindingsV1Schema,
@@ -3405,7 +3977,7 @@ export {
   type ReviewFindingsV1,
   type ReviewTriageStatus,
   type ReviewTriageOverlay,
-} from './structuredMessages/reviewFindingsV1.js';
+} from './messages/structured/reviewFindingsV1.js';
 
 export {
   ReviewFindingsV2Schema,
@@ -3413,24 +3985,24 @@ export {
   parseReviewFindingsV2,
   type ReviewFindingsV2,
   type ReviewPublicationOverlay,
-} from './structuredMessages/reviewFindingsV2.js';
+} from './messages/structured/reviewFindingsV2.js';
 
 export {
   ReviewFollowUpV1Schema,
   parseReviewFollowUpV1,
   type ReviewFollowUpV1,
-} from './structuredMessages/reviewFollowUpV1.js';
+} from './messages/structured/reviewFollowUpV1.js';
 
 export {
   ReviewPublishRequestV1Schema,
   parseReviewPublishRequestV1,
   type ReviewPublishRequestV1,
-} from './structuredMessages/reviewPublishRequestV1.js';
+} from './messages/structured/reviewPublishRequestV1.js';
 
 export {
   ExecutionRunStructuredRunRefSchema,
   type ExecutionRunStructuredRunRef,
-} from './structuredMessages/executionRunStructuredRunRef.js';
+} from './messages/structured/executionRunStructuredRunRef.js';
 
 export {
   PlanOutputV1Schema,
@@ -3438,35 +4010,35 @@ export {
   type PlanOutputV1,
   type PlanOutputSectionV1,
   type PlanOutputMilestoneV1,
-} from './structuredMessages/planOutputV1.js';
+} from './messages/structured/planOutputV1.js';
 
 export {
   DelegateOutputV1Schema,
   parseDelegateOutputV1,
   type DelegateOutputV1,
   type DelegateDeliverableV1,
-} from './structuredMessages/delegateOutputV1.js';
+} from './messages/structured/delegateOutputV1.js';
 
 export {
   VoiceAgentTurnV1Schema,
   type VoiceAgentTurnV1,
-} from './structuredMessages/voiceAgentTurnV1.js';
+} from './messages/structured/voiceAgentTurnV1.js';
 export {
   deriveVoiceAgentTurnLocalId,
   deriveVoiceAgentTurnProvisionalLocalId,
   readVoiceAgentTurnPayloadFromMeta,
   readVoiceAgentTurnProvisionalLocalId,
-} from './structuredMessages/voiceAgentTurnLocalId.js';
+} from './messages/structured/voiceAgentTurnLocalId.js';
 
 export {
   SessionSynopsisV1Schema,
   type SessionSynopsisV1,
-} from './structuredMessages/sessionSynopsisV1.js';
+} from './messages/structured/sessionSynopsisV1.js';
 
 export {
   SessionSummaryShardV1Schema,
   type SessionSummaryShardV1,
-} from './structuredMessages/sessionSummaryShardV1.js';
+} from './messages/structured/sessionSummaryShardV1.js';
 
 export {
   ParticipantRecipientV1Schema,
@@ -3474,19 +4046,19 @@ export {
   parseParticipantMessageV1,
   type ParticipantRecipientV1,
   type ParticipantMessageV1,
-} from './structuredMessages/participantMessageV1.js';
+} from './messages/structured/participantMessageV1.js';
 
 export {
   SubagentLaunchV1Schema,
   parseSubagentLaunchV1,
   type SubagentLaunchV1,
-} from './structuredMessages/subagentLaunchV1.js';
+} from './messages/structured/subagentLaunchV1.js';
 
 export {
   SubagentCommandV1Schema,
   parseSubagentCommandV1,
   type SubagentCommandV1,
-} from './structuredMessages/subagentCommandV1.js';
+} from './messages/structured/subagentCommandV1.js';
 
 export {
   MemoryCitationV1Schema,
@@ -3598,14 +4170,14 @@ export {
   PromptFoldersV1Schema,
   type PromptFolderEntryV1,
   type PromptFoldersV1,
-} from './promptLibrary/promptFoldersV1.js';
+} from './prompts/library/promptFoldersV1.js';
 
 export {
   PromptDocArtifactHeaderV1Schema,
   PromptDocBodyV1Schema,
   type PromptDocArtifactHeaderV1,
   type PromptDocBodyV1,
-} from './promptLibrary/promptDocV2.js';
+} from './prompts/library/promptDocV2.js';
 
 export {
   PROMPT_BUNDLE_SCHEMA_LIMITS_V1,
@@ -3617,12 +4189,12 @@ export {
   type PromptBundleEntryV1,
   type PromptBundleSchemaIdV1,
   type PromptBundleValidationResult,
-} from './promptLibrary/promptBundleSchemas.js';
+} from './prompts/library/promptBundleSchemas.js';
 
 export {
   computePromptBundleDigestV1,
   computePromptDocDigestV1,
-} from './promptLibrary/promptLibraryDigests.js';
+} from './prompts/library/promptLibraryDigests.js';
 
 export {
   PromptExternalLinkEntryV1Schema,
@@ -3631,7 +4203,7 @@ export {
   type PromptExternalLinkEntryV1,
   type PromptExternalLinkSyncModeV1,
   type PromptExternalLinksV1,
-} from './promptLibrary/promptExternalLinksV1.js';
+} from './prompts/library/promptExternalLinksV1.js';
 
 export {
   PromptAssetBundleRecordV1Schema,
@@ -3681,7 +4253,7 @@ export {
   type PromptAssetWriteDocRequest,
   type PromptAssetWriteRequest,
   type PromptAssetWriteBundleRequest,
-} from './promptLibrary/promptAssetsV1.js';
+} from './prompts/library/promptAssetsV1.js';
 export {
   PromptRegistryAdapterDescriptorV1Schema,
   PromptRegistryConfiguredSourceV1Schema,
@@ -3719,7 +4291,7 @@ export {
   type PromptRegistryScanSourceResponseV1,
   type PromptRegistrySourceDescriptorV1,
   type PromptRegistrySourcesV1,
-} from './promptLibrary/promptRegistriesV1.js';
+} from './prompts/library/promptRegistriesV1.js';
 export {
   MarketplaceSourceOriginV1Schema,
   MarketplaceSourceRegistryV1Schema,
@@ -3743,7 +4315,7 @@ export {
 export {
   PromptPlacementV1Schema,
   type PromptPlacementV1,
-} from './promptLibrary/promptPlacementV1.js';
+} from './prompts/library/promptPlacementV1.js';
 
 export {
   PromptArtifactKindV1Schema,
@@ -3752,7 +4324,7 @@ export {
   type PromptArtifactKindV1,
   type PromptArtifactRefV1,
   type PromptDocArtifactRefV1,
-} from './promptLibrary/promptArtifactRefsV1.js';
+} from './prompts/library/promptArtifactRefsV1.js';
 
 export {
   PromptStackEditPolicyV1Schema,
@@ -3763,7 +4335,7 @@ export {
   type PromptStackEntryV1,
   type PromptStackRefV1,
   type PromptStacksV1,
-} from './promptLibrary/promptStacksV1.js';
+} from './prompts/library/promptStacksV1.js';
 
 export {
   PromptInvocationAvailabilityV1Schema,
@@ -3778,7 +4350,7 @@ export {
   type PromptInvocationTargetV1,
   type PromptInvocationsV1,
   type PromptInvocationTokenV1,
-} from './promptLibrary/promptInvocationsV1.js';
+} from './prompts/library/promptInvocationsV1.js';
 
 // System prompt assembly (shared between UI + CLI)
 export {
@@ -3838,7 +4410,7 @@ export {
   MEMORY_RECALL_GUIDANCE_REQUIRED_ACTION_IDS,
   type MemoryRecallGuidanceSurface,
 } from './prompts/isMemoryRecallGuidanceSupported.js';
-export { resolvePromptStackSystemAppendBlocksV1 } from './promptLibrary/resolvePromptStackSystemAppendBlocksV1.js';
+export { resolvePromptStackSystemAppendBlocksV1 } from './prompts/library/resolvePromptStackSystemAppendBlocksV1.js';
 
 export * from './actions/index.js';
 
@@ -3874,16 +4446,40 @@ export {
 // Happier server feature discovery + social contracts
 export {
   BUG_REPORT_DEFAULT_ACCEPTED_ARTIFACT_KINDS,
+  BrowserAutomationActionKindCapabilitiesSchema,
+  BrowserAutomationCapabilitiesSchema,
+  BrowserAutomationEvalCapabilitiesSchema,
+  BrowserAutomationFidelityCapabilitiesSchema,
+  BrowserAutomationInjectedPageCapabilitiesSchema,
+  BrowserAutomationTimelineCapabilitiesSchema,
   BrowserCapabilitiesSchema,
+  BrowserContextCapabilitiesSchema,
+  BrowserContextScreenshotCapabilitiesSchema,
+  BrowserContextTextCapabilitiesSchema,
+  BrowserDiagnosticsCapabilitiesSchema,
+  BrowserDiagnosticsRetentionCapabilitiesSchema,
   BrowserInternalCapabilitiesSchema,
+  BrowserRecordingCapabilitiesSchema,
   BrowserSidecarCapabilitiesSchema,
   BrowserViewTargetCapabilitiesSchema,
+  DEFAULT_BROWSER_AUTOMATION_CAPABILITIES,
+  DEFAULT_BROWSER_AUTOMATION_EVAL_CAPABILITIES,
+  DEFAULT_BROWSER_AUTOMATION_INJECTED_PAGE_CAPABILITIES,
+  DEFAULT_BROWSER_AUTOMATION_TIMELINE_CAPABILITIES,
   BugReportsCapabilitiesSchema,
   DEFAULT_BROWSER_CAPABILITIES,
+  DEFAULT_BROWSER_CONTEXT_CAPABILITIES,
+  DEFAULT_BROWSER_CONTEXT_SCREENSHOT_CAPABILITIES,
+  DEFAULT_BROWSER_CONTEXT_TEXT_CAPABILITIES,
+  DEFAULT_BROWSER_DIAGNOSTICS_CAPABILITIES,
+  DEFAULT_BROWSER_DIAGNOSTICS_RETENTION_CAPABILITIES,
   DEFAULT_BROWSER_INTERNAL_CAPABILITIES,
+  DEFAULT_BROWSER_RECORDING_CAPABILITIES,
   DEFAULT_BROWSER_SIDECAR_CAPABILITIES,
   DEFAULT_BROWSER_VIEW_TARGET_CAPABILITIES,
   DEFAULT_BUG_REPORTS_CAPABILITIES,
+  DEFAULT_DEVICE_CAPABILITIES,
+  DEFAULT_DEVICE_SIMULATOR_PREVIEW_CAPABILITIES,
   DEFAULT_LOCAL_SERVICE_CAPABILITIES,
   DEFAULT_LOCAL_SERVICE_PREVIEW_CAPABILITIES,
   DEFAULT_LOCAL_SERVICE_PREVIEW_MAX_REQUEST_BODY_BYTES,
@@ -3917,8 +4513,32 @@ export {
   DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_PREFERRED_ENCODING,
   DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_SUPPORTED_ENCODINGS,
   DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES,
+  DEFAULT_PEER_MEDIATION_CAPABILITIES,
+  DEFAULT_PEER_MEDIATION_OBSERVABILITY_CAPABILITIES,
   DEFAULT_PETS_CAPABILITIES,
   DEFAULT_PETS_PACKAGE_LIMITS_CAPABILITIES,
+  DEFAULT_SHARING_CAPABILITIES,
+  DEFAULT_SHARING_PENDING_QUEUE_V2_CAPABILITIES,
+  DEFAULT_LOCAL_SERVICE_ACTION_CAPABILITIES,
+  DEFAULT_LOCAL_SERVICE_ACTION_GRACEFUL_TIMEOUT_MS,
+  DEFAULT_LOCAL_SERVICE_ACTION_VERIFICATION_TIMEOUT_MS,
+  DEFAULT_LOCAL_SERVICE_INVENTORY_CAPABILITIES,
+  DEFAULT_LOCAL_SERVICE_INVENTORY_REFRESH_INTERVAL_MS,
+  DEFAULT_LOCAL_SERVICE_INVENTORY_STALE_AFTER_MS,
+  DEFAULT_LOCAL_SERVICE_LAUNCHER_CAPABILITIES,
+  DEFAULT_LOCAL_SERVICE_LAUNCHER_RECENT_HISTORY_MAX_ENTRIES,
+  DEFAULT_LOCAL_SERVICE_LAUNCHER_SCRIPT_DISCOVERY_MAX_DEPTH,
+  DEFAULT_LOCAL_SERVICE_LAUNCHER_SCRIPT_DISCOVERY_MAX_SCRIPTS,
+  DEFAULT_LOCAL_SERVICE_MANAGED_CAPABILITIES,
+  DEFAULT_LOCAL_SERVICE_MANAGED_MAX_SERVICES_PER_OWNER,
+  DEFAULT_LOCAL_SERVICE_MANAGED_PORT_RANGE_END,
+  DEFAULT_LOCAL_SERVICE_MANAGED_PORT_RANGE_START,
+  DEFAULT_LOCAL_SERVICE_PAGE_TITLE_CAPABILITIES,
+  DEFAULT_LOCAL_SERVICE_PAGE_TITLE_CONCURRENCY,
+  DEFAULT_LOCAL_SERVICE_PAGE_TITLE_FAILURE_TTL_MS,
+  DEFAULT_LOCAL_SERVICE_PAGE_TITLE_MAX_BODY_BYTES,
+  DEFAULT_LOCAL_SERVICE_PAGE_TITLE_SUCCESS_TTL_MS,
+  DEFAULT_LOCAL_SERVICE_PAGE_TITLE_TIMEOUT_MS,
   DEFAULT_SERVER_IDENTITY_CAPABILITIES,
   DEFAULT_SESSION_CAPABILITIES,
   DEFAULT_SESSION_MESSAGES_CAPABILITIES,
@@ -3926,7 +4546,14 @@ export {
   FeatureGateSchema,
   FeatureGatesSchema,
   FeaturesResponseSchema,
+  DeviceCapabilitiesSchema,
+  DeviceSimulatorPreviewCapabilitiesSchema,
+  LocalServiceActionCapabilitiesSchema,
   LocalServiceCapabilitiesSchema,
+  LocalServiceInventoryCapabilitiesSchema,
+  LocalServiceLauncherCapabilitiesSchema,
+  LocalServiceManagedCapabilitiesSchema,
+  LocalServicePageTitleCapabilitiesSchema,
   LocalServicePreviewCapabilitiesSchema,
   LocalServicePublicCapabilitiesSchema,
   MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES_ENV_KEY,
@@ -3949,6 +4576,8 @@ export {
   PetsPackageLimitsCapabilitiesSchema,
   SERVER_IDENTITY_ID_PATTERN,
   ServerIdentityCapabilitiesSchema,
+  SharingCapabilitiesSchema,
+  SharingPendingQueueV2CapabilitiesSchema,
   SessionCapabilitiesSchema,
   SessionMessagesCapabilitiesSchema,
   coerceBugReportsCapabilitiesFromFeaturesPayload,
@@ -3961,15 +4590,34 @@ export {
   normalizeMachineTunnelSupportedEncodings,
   readMachineTransferServerRoutedMaxBytes,
   type BugReportsCapabilities,
+  type BrowserAutomationActionKindCapabilities,
+  type BrowserAutomationCapabilities,
+  type BrowserAutomationEvalCapabilities,
+  type BrowserAutomationFidelityCapabilities,
+  type BrowserAutomationInjectedPageCapabilities,
+  type BrowserAutomationTimelineCapabilities,
   type BrowserCapabilities,
+  type BrowserContextCapabilities,
+  type BrowserContextScreenshotCapabilities,
+  type BrowserContextTextCapabilities,
+  type BrowserDiagnosticsCapabilities,
+  type BrowserDiagnosticsRetentionCapabilities,
   type BrowserInternalCapabilities,
+  type BrowserRecordingCapabilities,
   type BrowserSidecarCapabilities,
   type BrowserViewTargetCapabilities,
   type Capabilities,
+  type DeviceCapabilities,
+  type DeviceSimulatorPreviewCapabilities,
   type FeatureGate,
   type FeatureGates,
   type FeaturesResponse,
+  type LocalServiceActionCapabilities,
   type LocalServiceCapabilities,
+  type LocalServiceInventoryCapabilities,
+  type LocalServiceLauncherCapabilities,
+  type LocalServiceManagedCapabilities,
+  type LocalServicePageTitleCapabilities,
   type LocalServicePreviewCapabilities,
   type LocalServicePublicCapabilities,
   type MachineLiveStreamCapabilities,
@@ -3985,6 +4633,8 @@ export {
   type PetsCapabilities,
   type PetsPackageLimitsCapabilities,
   type ServerIdentityCapabilities,
+  type SharingCapabilities,
+  type SharingPendingQueueV2Capabilities,
   type SessionCapabilities,
   type SessionMessagesCapabilities,
 } from './features.js';
@@ -4111,12 +4761,16 @@ export {
   ForegroundBehaviorSchema,
   DEFAULT_ATTENTION_DELIVERY_POLICY_V1,
   DEFAULT_PEER_MEDIATION_PREFERENCES_V1,
+  DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
   NotificationsSettingsV1Schema,
+  SessionAgentSpawnPolicyV1Schema,
   DEFAULT_ACTIONS_SETTINGS_V1,
   DEFAULT_SESSION_PENDING_QUEUE_DRAIN_MODE,
+  DEFAULT_SESSION_PENDING_QUEUE_DELIVERY_TIMING,
   DEFAULT_USAGE_LIMIT_RECOVERY_SETTINGS_V1,
   DEFAULT_NOTIFICATIONS_SETTINGS_V1,
   SESSION_PENDING_QUEUE_DRAIN_MODES,
+  SESSION_PENDING_QUEUE_DELIVERY_TIMINGS,
   accountSettingsParse,
   deriveAttentionDeliveryPolicyFromLegacySettings,
   getNotificationsSettingsV1FromAccountSettings,
@@ -4128,6 +4782,7 @@ export {
   type AccountSettingsV2UpdateRequest,
   type AccountSettingsV2UpdateResponse,
   type AttentionDeliveryDecision,
+  type SessionPendingQueueDeliveryTiming,
   type SessionPendingQueueDrainMode,
   type UsageLimitRecoverySettingsV1,
   type AttentionDeliveryPolicyV1,
@@ -4137,6 +4792,7 @@ export {
   type ForegroundBehavior,
   type NotificationsSettingsV1,
   type ResolveAttentionDeliveryPolicyDecisionParams,
+  type SessionAgentSpawnPolicyV1,
 } from './account/settings/index.js';
 
 export * from './machines/peer/mediation/index.js';
@@ -4188,6 +4844,7 @@ export {
   normalizeBugReportReproductionSteps,
   pushBugReportArtifact,
   redactBugReportSensitiveText,
+  registerSensitiveDiagnosticValues,
   resolveBugReportIssueTargetWithDefaults,
   resolveBugReportServerDiagnosticsLines,
   sanitizeBugReportArtifactFileSegment,
@@ -4198,6 +4855,7 @@ export {
   searchBugReportSimilarIssues,
   submitBugReportToService,
   trimBugReportTextToMaxBytes,
+  type SensitiveDiagnosticValuesLease,
   type BugReportArtifactPayload,
   type BugReportDeploymentType,
   type BugReportEnvironmentPayload,
@@ -4211,7 +4869,7 @@ export {
   type BugReportMachineStackContextLike,
   type BugReportServiceSubmitInput,
   type BugReportSeverity,
-} from './bugReports.js';
+} from './bugs/reports/index.js';
 
 export {
   type BugReportMachineDiagnosticsSnapshot,
@@ -4229,6 +4887,8 @@ export {
 export {
   AIBackendProfileSchema,
   DEFAULT_BUILT_IN_BACKEND_PROFILES,
+  PROVIDER_MIGRATION_SOURCE_PROFILE_IDS,
+  resolveVisibleBuiltInAiLaunchProfilesV1,
   EnvVarRequirementSchema,
   EnvironmentVariableSchema,
   SavedSecretSchema,
@@ -4240,11 +4900,24 @@ export {
   getSecretSatisfaction,
   isProfileCompatibleWithBackendTarget,
   isProfileCompatibleWithAgent,
+  isLaunchProfileV2,
+  readAiLaunchProfileCollection,
+  isHistoricalBuiltInAiLaunchProfileIdV1,
+  shouldPreserveLegacyAiLaunchProfileBindingV1,
   resolveBackendProfile,
+  LaunchProfileV2Schema,
+  LEGACY_AI_LAUNCH_RESERVED_ENV_NAMES_V1,
+  validateLaunchProfileV2ReservedEnvironment,
   type AIBackendProfile,
+  type BuiltInAiLaunchProfileEvidenceV1,
+  type AiLaunchProfile,
+  type AiLaunchProfileCollectionEntry,
+  type AiLaunchProfileCollectionReadResult,
+  type AiLaunchProfileReadDiagnostic,
   type BackendProfileRefCandidate,
   type EnvVarRequirement,
   type EnvironmentVariable,
+  type LaunchProfileV2,
   type ResolveBackendProfileResult,
   type SavedSecret,
   type SecretSatisfactionItem,

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+const LIVE_STREAM_LARGE_BASE64_LENGTH = 16 * 1024 * 1024;
+const LIVE_STREAM_LARGE_DECODED_LENGTH = (LIVE_STREAM_LARGE_BASE64_LENGTH / 4) * 3;
+
 describe('Machine live-stream codec negotiation V1', () => {
   it('chooses the mandatory image baseline when H.264 is unavailable', async () => {
     const mod = await import('./codecsV1').catch((error: unknown) => ({ importError: error }));
@@ -44,6 +47,56 @@ describe('Machine live-stream codec negotiation V1', () => {
       ok: false,
       reasonCode: 'codec_not_negotiated',
     });
+  });
+
+  it('validates canonical codec payloads at 16 MiB without overflowing the regex stack', async () => {
+    const mod = await import('./codecsV1').catch((error: unknown) => ({ importError: error }));
+
+    expect(mod).toHaveProperty('MachineLiveStreamPayloadV2Schema');
+    if (!('MachineLiveStreamPayloadV2Schema' in mod)) return;
+
+    const payloadBase64 = 'A'.repeat(LIVE_STREAM_LARGE_BASE64_LENGTH);
+
+    let parsed: ReturnType<typeof mod.MachineLiveStreamPayloadV2Schema.safeParse> | undefined;
+    expect(() => {
+      parsed = mod.MachineLiveStreamPayloadV2Schema.safeParse({
+        v: 1,
+        streamId: 'stream_1',
+        sequence: 1,
+        timestampMs: 1_000,
+        codecId: 'image.mjpeg',
+        payloadKind: 'mjpeg_frame',
+        payloadEncoding: 'binary_base64',
+        payloadBase64,
+        payloadSizeBytes: LIVE_STREAM_LARGE_DECODED_LENGTH,
+      });
+    }).not.toThrow();
+    expect(parsed?.success).toBe(true);
+  });
+
+  it('requires canonical padded base64 for codec payloads', async () => {
+    const mod = await import('./codecsV1').catch((error: unknown) => ({ importError: error }));
+
+    expect(mod).toHaveProperty('MachineLiveStreamPayloadV2Schema');
+    if (!('MachineLiveStreamPayloadV2Schema' in mod)) return;
+
+    const payload = {
+      v: 1,
+      streamId: 'stream_1',
+      sequence: 1,
+      timestampMs: 1_000,
+      codecId: 'image.mjpeg',
+      payloadKind: 'mjpeg_frame',
+      payloadEncoding: 'binary_base64',
+      payloadBase64: 'AQID',
+      payloadSizeBytes: 3,
+    } as const;
+
+    expect(mod.MachineLiveStreamPayloadV2Schema.safeParse(payload).success).toBe(true);
+    expect(mod.MachineLiveStreamPayloadV2Schema.safeParse({
+      ...payload,
+      payloadBase64: 'AQI',
+    }).success).toBe(false);
   });
 
   it('documents the length-prefixed AVCC envelope tags used by viewers', async () => {

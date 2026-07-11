@@ -31,6 +31,36 @@ describe('Machine live-stream control sideband V1', () => {
     });
   });
 
+  it('denies input control when a shared source has no active lease', async () => {
+    const mod = await import('./controlV1').catch((error: unknown) => ({ importError: error }));
+
+    expect(mod).toHaveProperty('validateMachineLiveStreamControlLeaseV1');
+    if (!('validateMachineLiveStreamControlLeaseV1' in mod)) return;
+
+    const result = mod.validateMachineLiveStreamControlLeaseV1({
+      source: {
+        sourceId: 'source_1',
+        inputMode: 'shared',
+      },
+      control: {
+        v: 1,
+        streamId: 'stream_1',
+        sourceId: 'source_1',
+        eventId: 'event_1',
+        kind: 'tap',
+        x: 0.5,
+        y: 0.5,
+      },
+      activeLease: null,
+      nowMs: 1_000,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reasonCode: 'input_lease_required',
+    });
+  });
+
   it('allows capture controls without an input lease', async () => {
     const mod = await import('./controlV1').catch((error: unknown) => ({ importError: error }));
 

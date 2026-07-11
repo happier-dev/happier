@@ -191,4 +191,54 @@ describe('peer TCP tunnel relay protocol', () => {
       }],
     })).toEqual({ valid: false, reasonCode: 'bad_signature' });
   });
+
+  it('accepts daemon voice STT as a distinct signed relay authorization flow kind', async () => {
+    const mod = await loadTunnelRelayModule();
+
+    const parsed = mod?.PeerTcpTunnelRelayEnvelopeV1Schema.safeParse({
+      v: 1,
+      scopeUserId: 'user_1',
+      sender: { kind: 'user' },
+      recipient: { kind: 'machine', machineId: 'machine_1' },
+      frame: {
+        v: 1,
+        kind: 'open',
+        open: {
+          v: 1,
+          kind: 'open',
+          tunnelId: 'voice-stt:machine_1:request_1',
+          targetMachineId: 'machine_1',
+          routeKind: 'server_relay',
+          destination: { host: '127.0.0.1', port: 3000 },
+          relayAuthorization: {
+            payload: {
+              v: 1,
+              grantId: 'relay_grant_voice_1',
+              accountId: 'user_1',
+              targetMachineId: 'machine_1',
+              flowKind: 'daemon_voice_stt',
+              routeKind: 'server_relay',
+              tunnelId: 'voice-stt:machine_1:request_1',
+              destination: { host: '127.0.0.1', port: 3000 },
+              capProfileId: 'machine_live_stream_relay_caps_v1',
+              maxFrameBytes: 32_000,
+              maxIdleMs: 30_000,
+              maxDurationMs: 60_000,
+              maxTotalBytes: 128_000,
+              iat: 1_000,
+              exp: 61_000,
+              aud: 'happier-tcp-tunnel-relay-authorization',
+            },
+            signature: {
+              keyId: 'relay_key_1',
+              alg: 'Ed25519',
+              valueBase64Url: 'AbCdEf012_-',
+            },
+          },
+        },
+      },
+    });
+
+    expect(parsed?.success).toBe(true);
+  });
 });

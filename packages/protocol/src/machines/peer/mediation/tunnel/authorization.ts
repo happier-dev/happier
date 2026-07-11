@@ -11,6 +11,14 @@ const Base64UrlSchema = z.string().regex(/^[A-Za-z0-9_-]+$/);
 const PositiveIntSchema = z.number().int().positive();
 const NonNegativeIntSchema = z.number().int().nonnegative();
 
+export const PeerTcpTunnelRelayAuthorizationFlowKindV1Schema = z.enum([
+  'tcp_tunnel',
+  'daemon_voice_stt',
+]);
+export type PeerTcpTunnelRelayAuthorizationFlowKindV1 = z.infer<
+  typeof PeerTcpTunnelRelayAuthorizationFlowKindV1Schema
+>;
+
 export const PeerTcpTunnelRelayAuthorizationDestinationV1Schema = z.object({
   host: z.string().trim().min(1),
   port: z.number().int().min(1).max(65_535),
@@ -25,7 +33,7 @@ export const PeerTcpTunnelRelayAuthorizationPayloadV1Schema = z
     grantId: z.string().min(1),
     accountId: z.string().min(1),
     targetMachineId: z.string().min(1),
-    flowKind: z.literal('tcp_tunnel'),
+    flowKind: PeerTcpTunnelRelayAuthorizationFlowKindV1Schema,
     routeKind: z.literal('server_relay'),
     tunnelId: z.string().min(1),
     destination: PeerTcpTunnelRelayAuthorizationDestinationV1Schema,

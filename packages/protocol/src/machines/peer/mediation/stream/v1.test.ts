@@ -4,8 +4,10 @@ import {
   MACHINE_LIVE_STREAM_SOCKET_EVENT,
   MachineLiveStreamControlV1Schema,
   MachineLiveStreamFrameV1Schema,
+  MachineLiveStreamRelayAuthorizationPayloadV1Schema,
   MachineLiveStreamRelayEnvelopeV1Schema,
   MachineLiveStreamStartRequestV1Schema,
+  createMachineLiveStreamRelayAuthorizationSigningInputV1,
 } from './v1';
 
 const baseStartRequest = {
@@ -66,6 +68,9 @@ const selfAssertedAuthorization = {
   expiresAtMs: 61_000,
 } as const;
 
+const LIVE_STREAM_LARGE_BASE64_LENGTH = 16 * 1024 * 1024;
+const LIVE_STREAM_LARGE_DECODED_LENGTH = (LIVE_STREAM_LARGE_BASE64_LENGTH / 4) * 3;
+
 describe('MachineLiveStreamV1 schemas', () => {
   it('requires positive live-stream caps on start requests', () => {
     const parsed = MachineLiveStreamStartRequestV1Schema.parse(baseStartRequest);
@@ -120,6 +125,74 @@ describe('MachineLiveStreamV1 schemas', () => {
     }).success).toBe(false);
   });
 
+  it('carries an optional viewer socketId end-to-end across the auth payload, start request, and signing input', () => {
+    // C1: the viewer (a per-tab user-scoped socket) is targeted by `viewerSocketId`.
+    // The field is optional so the machine→machine path is unchanged, but when present it
+    // MUST flow consistently through the signed authorization payload AND the start request,
+    // or the canonical-JSON signing input drifts and every start fails authorization-mismatch.
+    const viewerSocketId = 'viewer-socket-1';
+    const authorizationWithViewer = {
+      ...baseStartRequest.authorization,
+      payload: {
+        ...baseStartRequest.authorization.payload,
+        viewerSocketId,
+      },
+    };
+    const startWithViewer = {
+      ...baseStartRequest,
+      viewerSocketId,
+      authorization: authorizationWithViewer,
+    };
+
+    const parsed = MachineLiveStreamStartRequestV1Schema.parse(startWithViewer);
+    expect(parsed.viewerSocketId).toBe(viewerSocketId);
+    expect(parsed.authorization?.payload.viewerSocketId).toBe(viewerSocketId);
+
+    // The signed payload must embed the viewer id so the server cannot be tricked into
+    // re-targeting a stream at a different tab/socket than the one the grant was minted for.
+    const signingInput = createMachineLiveStreamRelayAuthorizationSigningInputV1(
+      authorizationWithViewer.payload,
+    );
+    expect(signingInput).toContain(viewerSocketId);
+    expect(MachineLiveStreamRelayAuthorizationPayloadV1Schema.parse(
+      authorizationWithViewer.payload,
+    ).viewerSocketId).toBe(viewerSocketId);
+
+    // A start request whose top-level viewerSocketId disagrees with the signed payload is rejected
+    // by the cross-field superRefine (mirrors the existing caps/stream-id binding checks).
+    expect(MachineLiveStreamStartRequestV1Schema.safeParse({
+      ...startWithViewer,
+      viewerSocketId: 'viewer-socket-other',
+    }).success).toBe(false);
+
+    // The base machine→machine path (no viewer socket) still parses identically.
+    expect(MachineLiveStreamStartRequestV1Schema.safeParse(baseStartRequest).success).toBe(true);
+  });
+
+  it('routes relay envelopes to a viewer socket when present', () => {
+    const parsed = MachineLiveStreamRelayEnvelopeV1Schema.parse({
+      v: 1,
+      sourceMachineId: 'machine_source',
+      targetMachineId: 'machine_target',
+      viewerSocketId: 'viewer-socket-1',
+      message: {
+        kind: 'frame',
+        frame: {
+          v: 1,
+          streamId: 'stream_1',
+          sequence: 1,
+          timestampMs: 1_000,
+          payloadKind: 'metadata',
+          payloadEncoding: 'binary_base64',
+          payloadBase64: 'e30=',
+          payloadSizeBytes: 2,
+        },
+      },
+    });
+
+    expect(parsed.viewerSocketId).toBe('viewer-socket-1');
+  });
+
   it('accepts ack controls with explicit receive credit', () => {
     const parsed = MachineLiveStreamControlV1Schema.parse({
       v: 1,
@@ -162,6 +235,57 @@ describe('MachineLiveStreamV1 schemas', () => {
       ...validFrame,
       payloadBase64: Buffer.from(new Uint8Array(64)).toString('base64'),
       payloadSizeBytes: 1,
+    }).success).toBe(false);
+  });
+
+  it('validates canonical live-stream frame payloads at 16 MiB without overflowing the regex stack', () => {
+    const payloadBase64 = 'A'.repeat(LIVE_STREAM_LARGE_BASE64_LENGTH);
+
+    let parsed: ReturnType<typeof MachineLiveStreamFrameV1Schema.safeParse> | undefined;
+    expect(() => {
+      parsed = MachineLiveStreamFrameV1Schema.safeParse({
+        v: 1,
+        streamId: 'stream_1',
+        sequence: 1,
+        timestampMs: 1_000,
+        payloadKind: 'image_keyframe',
+        payloadEncoding: 'binary_base64',
+        payloadBase64,
+        payloadSizeBytes: LIVE_STREAM_LARGE_DECODED_LENGTH,
+      });
+    }).not.toThrow();
+    expect(parsed?.success).toBe(true);
+  });
+
+  it('requires canonical padded base64 for live-stream frame payload and AAD fields', () => {
+    const frame = {
+      v: 1,
+      streamId: 'stream_1',
+      sequence: 1,
+      timestampMs: 1_000,
+      payloadKind: 'image_keyframe',
+      payloadEncoding: 'binary_base64',
+      payloadBase64: 'AQID',
+      payloadSizeBytes: 3,
+    } as const;
+
+    expect(MachineLiveStreamFrameV1Schema.safeParse({
+      ...frame,
+      encryption: {
+        alg: 'xchacha20poly1305',
+        aadBase64: 'AA==',
+      },
+    }).success).toBe(true);
+    expect(MachineLiveStreamFrameV1Schema.safeParse({
+      ...frame,
+      payloadBase64: 'AQI',
+    }).success).toBe(false);
+    expect(MachineLiveStreamFrameV1Schema.safeParse({
+      ...frame,
+      encryption: {
+        alg: 'xchacha20poly1305',
+        aadBase64: 'AA=A',
+      },
     }).success).toBe(false);
   });
 

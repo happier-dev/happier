@@ -6,7 +6,10 @@ import { PeerTcpTunnelFrameV1Schema } from './v1.js';
 export const PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT = 'peer:tunnel:v1' as const;
 
 export const PeerTcpTunnelRelayParticipantV1Schema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('user') }),
+  // Optional per-tab viewer socket id (C-BRIDGE / C1). When a user participant carries its
+  // socket id the relay bridge can deliver frames to that exact tab (`io.to(socketId)`) instead
+  // of broadcasting to the whole-user room. Omitted preserves the legacy shared-room delivery.
+  z.object({ kind: z.literal('user'), socketId: z.string().min(1).optional() }),
   z.object({ kind: z.literal('machine'), machineId: z.string().min(1) }),
 ]);
 export type PeerTcpTunnelRelayParticipantV1 = z.infer<typeof PeerTcpTunnelRelayParticipantV1Schema>;

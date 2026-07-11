@@ -1,10 +1,17 @@
 import { z } from 'zod';
 
+import { readCanonicalPaddedBase64DecodedLength } from '../../../../crypto/base64.js';
 import { getMachineLiveStreamPayloadDecodedByteLength } from './v1.js';
 
 const PositiveIntSchema = z.number().int().positive();
 const NonNegativeIntSchema = z.number().int().nonnegative();
-const Base64Schema = z.string().regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/);
+const Base64Schema = z.string().superRefine((value, context) => {
+  if (readCanonicalPaddedBase64DecodedLength(value) !== null) return;
+  context.addIssue({
+    code: z.ZodIssueCode.custom,
+    message: 'Invalid base64 payload',
+  });
+});
 
 export const MachineLiveStreamCodecIdV1Schema = z.enum([
   'image.frame.v1',

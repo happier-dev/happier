@@ -7,6 +7,9 @@ export const RPC_METHODS = {
   DAEMON_EXECUTION_RUNS_LIST: 'daemon.executionRuns.list',
   DAEMON_TERMINAL_ENSURE: 'daemon.terminal.ensure',
   DAEMON_TERMINAL_STREAM_READ: 'daemon.terminal.stream.read',
+  DAEMON_TERMINAL_STREAM_READ_BYTES: 'daemon.terminal.stream.readBytes',
+  DAEMON_TERMINAL_STREAM_ACK: 'daemon.terminal.stream.ack',
+  DAEMON_TERMINAL_STREAM_INPUT: 'daemon.terminal.stream.input',
   DAEMON_TERMINAL_INPUT: 'daemon.terminal.input',
   DAEMON_TERMINAL_RESIZE: 'daemon.terminal.resize',
   DAEMON_TERMINAL_CLOSE: 'daemon.terminal.close',
@@ -29,19 +32,108 @@ export const RPC_METHODS = {
   DAEMON_VOICE_INFERENCE_TTS_FINALIZE: 'daemon.voiceInference.tts.finalize',
   DAEMON_VOICE_INFERENCE_TTS_ABORT: 'daemon.voiceInference.tts.abort',
   DAEMON_VOICE_INFERENCE_TTS_CANCEL: 'daemon.voiceInference.tts.cancel',
+  DAEMON_VOICE_INFERENCE_TTS_STREAM_START: 'daemon.voiceInference.tts.stream.start',
+  DAEMON_VOICE_INFERENCE_TTS_STREAM_NEXT: 'daemon.voiceInference.tts.stream.next',
+  DAEMON_VOICE_INFERENCE_TTS_STREAM_ACK: 'daemon.voiceInference.tts.stream.ack',
+  DAEMON_VOICE_INFERENCE_TTS_STREAM_CANCEL: 'daemon.voiceInference.tts.stream.cancel',
+  DAEMON_VOICE_INFERENCE_TTS_STREAM_STATUS: 'daemon.voiceInference.tts.stream.status',
   DAEMON_VOICE_INFERENCE_STT_UPLOAD_INIT: 'daemon.voiceInference.stt.upload.init',
   DAEMON_VOICE_INFERENCE_STT_UPLOAD_CHUNK: 'daemon.voiceInference.stt.upload.chunk',
   DAEMON_VOICE_INFERENCE_STT_UPLOAD_FINALIZE: 'daemon.voiceInference.stt.upload.finalize',
   DAEMON_VOICE_INFERENCE_STT_UPLOAD_ABORT: 'daemon.voiceInference.stt.upload.abort',
   DAEMON_VOICE_INFERENCE_STT_TRANSCRIBE: 'daemon.voiceInference.stt.transcribe',
   DAEMON_VOICE_INFERENCE_STT_CANCEL: 'daemon.voiceInference.stt.cancel',
+  DAEMON_VOICE_INFERENCE_STT_STREAM_START: 'daemon.voiceInference.stt.stream.start',
+  DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK: 'daemon.voiceInference.stt.stream.chunk',
+  DAEMON_VOICE_INFERENCE_STT_STREAM_FINISH: 'daemon.voiceInference.stt.stream.finish',
+  DAEMON_VOICE_INFERENCE_STT_STREAM_CANCEL: 'daemon.voiceInference.stt.stream.cancel',
+  DAEMON_VOICE_INFERENCE_STT_STREAM_STATUS: 'daemon.voiceInference.stt.stream.status',
+  DAEMON_VOICE_CREDENTIAL_STATUS: 'daemon.voiceCredentials.status',
+  DAEMON_VOICE_CREDENTIAL_STORE: 'daemon.voiceCredentials.store',
+  DAEMON_VOICE_CREDENTIAL_DELETE: 'daemon.voiceCredentials.delete',
+  DAEMON_VOICE_CREDENTIAL_MINT_CLIENT_AUTH: 'daemon.voiceCredentials.mintClientAuth',
+  DAEMON_VOICE_CREDENTIAL_PROVIDER_CATALOG: 'daemon.voiceCredentials.providerCatalog',
+  DAEMON_VOICE_ELEVENLABS_PROVISION: 'daemon.voice.elevenlabs.provision',
+  DAEMON_VOICE_GOOGLE_TRANSCRIBE_UPLOAD_INIT: 'daemon.voice.google.transcribe.upload.init',
+  DAEMON_VOICE_GOOGLE_TRANSCRIBE_UPLOAD_CHUNK: 'daemon.voice.google.transcribe.upload.chunk',
+  DAEMON_VOICE_GOOGLE_TRANSCRIBE_UPLOAD_FINALIZE: 'daemon.voice.google.transcribe.upload.finalize',
+  DAEMON_VOICE_GOOGLE_TRANSCRIBE_UPLOAD_ABORT: 'daemon.voice.google.transcribe.upload.abort',
+  DAEMON_VOICE_GOOGLE_TRANSCRIBE: 'daemon.voice.google.transcribe',
+  DAEMON_VOICE_GOOGLE_SYNTHESIZE: 'daemon.voice.google.synthesize',
+  DAEMON_VOICE_GOOGLE_DOWNLOAD_CHUNK: 'daemon.voice.google.download.chunk',
+  DAEMON_VOICE_GOOGLE_DOWNLOAD_FINALIZE: 'daemon.voice.google.download.finalize',
+  DAEMON_VOICE_GOOGLE_DOWNLOAD_ABORT: 'daemon.voice.google.download.abort',
+  DAEMON_VOICE_OPENAI_COMPAT_CHAT: 'daemon.voiceOpenAiCompat.chat',
+  DAEMON_VOICE_OPENAI_COMPAT_MODELS_LIST: 'daemon.voiceOpenAiCompat.models.list',
+  DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE: 'daemon.voiceOpenAiCompat.transcribe',
+  DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_INIT: 'daemon.voiceOpenAiCompat.transcribe.upload.init',
+  DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_CHUNK: 'daemon.voiceOpenAiCompat.transcribe.upload.chunk',
+  DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_FINALIZE: 'daemon.voiceOpenAiCompat.transcribe.upload.finalize',
+  DAEMON_VOICE_OPENAI_COMPAT_TRANSCRIBE_UPLOAD_ABORT: 'daemon.voiceOpenAiCompat.transcribe.upload.abort',
+  DAEMON_VOICE_OPENAI_COMPAT_SYNTHESIZE: 'daemon.voiceOpenAiCompat.synthesize',
+  DAEMON_VOICE_OPENAI_COMPAT_DOWNLOAD_CHUNK: 'daemon.voiceOpenAiCompat.download.chunk',
+  DAEMON_VOICE_OPENAI_COMPAT_DOWNLOAD_FINALIZE: 'daemon.voiceOpenAiCompat.download.finalize',
+  DAEMON_VOICE_OPENAI_COMPAT_DOWNLOAD_ABORT: 'daemon.voiceOpenAiCompat.download.abort',
+  DAEMON_VOICE_OPENAI_COMPAT_REQUEST_CANCEL: 'daemon.voiceOpenAiCompat.request.cancel',
   DAEMON_MCP_SERVERS_TEST: 'daemon.mcpServers.test',
   DAEMON_MCP_SERVERS_DETECT: 'daemon.mcpServers.detect',
   DAEMON_MCP_SERVERS_PREVIEW: 'daemon.mcpServers.preview',
+  DAEMON_PROVIDERS_PROBE: 'daemon.providers.probe',
+  DAEMON_PROVIDERS_MODELS: 'daemon.providers.models',
+  DAEMON_PROVIDERS_MODEL_LOAD: 'daemon.providers.model.load',
+  DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE: 'daemon.providers.connections.describe',
+  DAEMON_PROVIDERS_CONNECTION_MUTATE: 'daemon.providers.connection.mutate',
+  DAEMON_PROVIDERS_MODEL_PROJECTION: 'daemon.providers.model.projection',
+  DAEMON_PROVIDERS_MODEL_SETTINGS_MUTATE: 'daemon.providers.model.settings.mutate',
+  DAEMON_PROVIDERS_BINDING_STATUS: 'daemon.providers.binding.status',
+  DAEMON_PROVIDERS_PROFILE_MIGRATION_PREVIEW: 'daemon.providers.profileMigration.preview',
+  DAEMON_PROVIDERS_PROFILE_MIGRATION_CONFIRM: 'daemon.providers.profileMigration.confirm',
+  DAEMON_PROVIDERS_PROFILE_MIGRATION_CONFLICT_CONFIRM: 'daemon.providers.profileMigration.conflict.confirm',
   DAEMON_EXTENSIONS_RELOAD: 'daemon.extensions.reload',
   DAEMON_EXTENSIONS_RELOAD_STATUS: 'daemon.extensions.reload.status',
   DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE:
     'daemon.extensions.contributionRegistryProjection.describe',
+  DAEMON_PLUGIN_SETTINGS_GET: 'daemon.plugins.settings.get',
+  DAEMON_PLUGIN_SETTINGS_SET: 'daemon.plugins.settings.set',
+  DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ: 'daemon.plugins.uiArtifacts.bytes.read',
+  DAEMON_PLUGIN_UI_REACT_NATIVE_CRASH_REPORT_SUBMIT: 'daemon.plugins.ui.reactNativeCrashReports.submit',
+  DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT: 'daemon.localServices.inventory.snapshot',
+  DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH: 'daemon.localServices.inventory.refresh',
+  DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT: 'daemon.localServices.launcher.snapshot',
+  DAEMON_LOCAL_SERVICES_LAUNCHER_START: 'daemon.localServices.launcher.start',
+  DAEMON_LOCAL_SERVICES_LAUNCHER_OPEN_PREVIEW: 'daemon.localServices.launcher.openPreview',
+  DAEMON_LOCAL_SERVICES_LAUNCHER_REGISTER_PREVIEW: 'daemon.localServices.launcher.registerPreview',
+  DAEMON_LOCAL_SERVICES_LAUNCHER_HISTORY_CLEAR: 'daemon.localServices.launcher.history.clear',
+  DAEMON_LOCAL_SERVICES_ACTIONS_EXECUTE: 'daemon.localServices.actions.execute',
+  DAEMON_LOCAL_SERVICES_MANAGED_SNAPSHOT: 'daemon.localServices.managed.snapshot',
+  DAEMON_LOCAL_SERVICES_PREVIEW_SNAPSHOT: 'daemon.localServices.preview.snapshot',
+  DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE: 'daemon.localServices.preview.openOrCreate',
+  DAEMON_LOCAL_SERVICES_PREVIEW_REVOKE: 'daemon.localServices.preview.revoke',
+  DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_STATUS: 'daemon.localServices.publicPreview.status',
+  DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_CREATE: 'daemon.localServices.publicPreview.create',
+  DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_REVOKE: 'daemon.localServices.publicPreview.revoke',
+  DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_COPY_URL: 'daemon.localServices.publicPreview.copyUrl',
+  DAEMON_BROWSER_CONTROL_DISPATCH: 'daemon.browser.control.dispatch',
+  DAEMON_BROWSER_CONTEXT_DISPATCH: 'daemon.browser.context.dispatch',
+  DAEMON_BROWSER_DIAGNOSTICS_SNAPSHOT: 'daemon.browser.diagnostics.snapshot',
+  DAEMON_BROWSER_RECORDING_START: 'daemon.browser.recording.start',
+  DAEMON_BROWSER_RECORDING_STOP: 'daemon.browser.recording.stop',
+  DAEMON_BROWSER_RECORDING_CANCEL: 'daemon.browser.recording.cancel',
+  DAEMON_BROWSER_RECORDING_STATUS: 'daemon.browser.recording.status',
+  DAEMON_BROWSER_RECORDING_LIST: 'daemon.browser.recording.list',
+  DAEMON_BROWSER_RECORDING_CLEANUP: 'daemon.browser.recording.cleanup',
+  // Reverse (daemon -> UI) native-view recording frame capture (W2C-BA-1). The spawned cli daemon
+  // cannot drive the desktop Wry WebView directly (separate OS process), so it asks the connected
+  // desktop UI to capture one reference-only frame over the existing daemon<->UI session RPC channel.
+  UI_BROWSER_RECORDING_CAPTURE_FRAME: 'ui.browser.recording.captureFrame',
+  DAEMON_SIMULATOR_PREVIEW_SNAPSHOT: 'daemon.devices.simulator.preview.snapshot',
+  DAEMON_SIMULATOR_PREVIEW_ACTION: 'daemon.devices.simulator.preview.action',
+  // Server-relayed live-stream start trigger (SIM-P0-1). The viewer cannot start a relay stream
+  // on its own user-scoped socket (the relay handler only accepts starts from the source machine
+  // socket), so the UI delivers the server-minted, Ed25519-signed startRequest to the capture
+  // daemon over the canonical machine-RPC channel; the daemon then emits the start on its own
+  // machine-scoped socket where the server verifies the signature and creates relay state.
+  DAEMON_LIVE_STREAM_RELAY_START: 'daemon.machines.liveStream.relay.start',
   // Preserve the established wire literals for mixed-version UI/daemon compatibility.
   DAEMON_TRANSFER_UPLOAD_INIT: 'daemon.bulkTransfer.upload.init',
   DAEMON_TRANSFER_UPLOAD_CHUNK: 'daemon.bulkTransfer.upload.chunk',
@@ -105,6 +197,11 @@ export const RPC_METHODS = {
   DAEMON_SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE: 'daemon.sessionUsageLimit.waitResume.enable',
   DAEMON_SESSION_USAGE_LIMIT_WAIT_RESUME_CANCEL: 'daemon.sessionUsageLimit.waitResume.cancel',
   DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW: 'daemon.sessionUsageLimit.checkNow',
+  DAEMON_SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT: 'daemon.sessionUsageLimit.consumeResetCredit',
+  DAEMON_SESSION_RUNNER_STATUS_GET: 'daemon.sessionRunner.status.get',
+  DAEMON_SESSION_RUNNER_RESTART: 'daemon.sessionRunner.restart',
+  DAEMON_SESSION_RUNNER_RESTART_ALL: 'daemon.sessionRunner.restartAll',
+  DAEMON_CONNECTED_SERVICE_QUOTA_RECOVERY_CREDIT_CONSUME: 'daemon.connectedServiceQuota.recoveryCredit.consume',
   DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH: 'daemon.sessionConnectedServiceAuth.switch',
   DAEMON_SESSION_VENDOR_PLUGIN_CATALOG_LIST: 'daemon.sessionVendorPluginCatalog.list',
   DAEMON_SESSION_SKILL_CATALOG_LIST: 'daemon.sessionSkillCatalog.list',
@@ -117,6 +214,21 @@ export const RPC_METHODS = {
   APPROVAL_REQUEST_GET: 'approval.request.get',
   APPROVAL_REQUEST_CREATE: 'approval.request.create',
   APPROVAL_REQUEST_DECIDE: 'approval.request.decide',
+  PLUGIN_PERMISSION_GRANTS_LIST: 'plugins.permissions.grants.list',
+  PLUGIN_PERMISSION_GRANTS_REQUEST: 'plugins.permissions.grants.request',
+  PLUGIN_PERMISSION_GRANTS_GRANT: 'plugins.permissions.grants.grant',
+  PLUGIN_PERMISSION_GRANTS_REVOKE: 'plugins.permissions.grants.revoke',
+  PLUGIN_PERMISSION_GRANTS_DISMISS_REQUEST: 'plugins.permissions.grants.dismissRequest',
+  REVIEW_COMMENTS_CREATE: 'reviews.comments.create',
+  REVIEW_COMMENTS_LIST: 'reviews.comments.list',
+  REVIEW_COMMENTS_GET: 'reviews.comments.get',
+  REVIEW_COMMENTS_TRANSITION: 'reviews.comments.transition',
+  REVIEW_COMMENTS_EDIT: 'reviews.comments.edit',
+  REVIEW_COMMENTS_REPLY: 'reviews.comments.reply',
+  REVIEW_COMMENTS_REDACT: 'reviews.comments.redact',
+  REVIEW_COMMENTS_SET_DISPOSITION: 'reviews.comments.setDisposition',
+  REVIEW_COMMENTS_ATTACH_EVIDENCE: 'reviews.comments.attachEvidence',
+  REVIEW_COMMENTS_BULK_TRANSITION: 'reviews.comments.bulkTransition',
   SESSIONS_SUBAGENTS_LIST: 'sessions.subagents.list',
   SESSIONS_SUBAGENTS_GET: 'sessions.subagents.get',
   SESSIONS_SUBAGENTS_WATCH: 'sessions.subagents.watch',
@@ -200,11 +312,14 @@ export const RPC_METHODS = {
   BUGREPORT_UPLOAD_ARTIFACT: 'bugreport.uploadArtifact',
 } as const;
 
+export * from './providers.js';
+
 export type RpcMethod = (typeof RPC_METHODS)[keyof typeof RPC_METHODS];
 
 export const RPC_ERROR_CODES = {
   METHOD_NOT_AVAILABLE: 'RPC_METHOD_NOT_AVAILABLE',
   METHOD_NOT_FOUND: 'RPC_METHOD_NOT_FOUND',
+  FORBIDDEN: 'RPC_FORBIDDEN',
 } as const;
 
 export type RpcErrorCode = (typeof RPC_ERROR_CODES)[keyof typeof RPC_ERROR_CODES];
@@ -212,6 +327,7 @@ export type RpcErrorCode = (typeof RPC_ERROR_CODES)[keyof typeof RPC_ERROR_CODES
 export const RPC_ERROR_MESSAGES = {
   METHOD_NOT_AVAILABLE: 'RPC method not available',
   METHOD_NOT_FOUND: 'Method not found',
+  FORBIDDEN: 'Forbidden',
 } as const;
 
 // Session-scoped RPC method names (used with `${sessionId}:${method}` over socket RPC).
@@ -222,9 +338,14 @@ export const SESSION_RPC_METHODS = {
   SESSION_GOAL_SET: 'session.goal.set',
   SESSION_GOAL_CLEAR: 'session.goal.clear',
   SESSION_CONNECTED_SERVICE_AUTH_INVALIDATE_TRANSPORTS: 'session.connectedServiceAuth.invalidateTransports',
+  SESSION_CONNECTED_SERVICE_AUTH_APPLY_GENERATION: 'session.connectedServiceAuth.applyGeneration',
+  SESSION_CONNECTED_SERVICE_AUTH_READ_RUNTIME_IDENTITY: 'session.connectedServiceAuth.readRuntimeIdentity',
+  SESSION_PENDING_QUEUE_MATERIALIZE_NEXT: 'session.pendingQueue.materializeNext',
   SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE: 'session.usageLimit.waitResume.enable',
   SESSION_USAGE_LIMIT_WAIT_RESUME_CANCEL: 'session.usageLimit.waitResume.cancel',
   SESSION_USAGE_LIMIT_CHECK_NOW: 'session.usageLimit.checkNow',
+  SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT: 'session.usageLimit.consumeResetCredit',
+  SESSION_TERMINAL_COMPOSER_CLEAR: 'session.terminalComposer.clear',
   SESSION_REVIEW_START_INLINE: 'session.review.startInline',
   SESSION_VENDOR_PLUGIN_CATALOG_LIST: 'session.vendorPluginCatalog.list',
   SESSION_SKILL_CATALOG_LIST: 'session.skillCatalog.list',
@@ -250,4 +371,48 @@ export function isRpcMethodNotFoundResult(value: unknown): value is { error: str
   const maybe = value as { error?: unknown; errorCode?: unknown };
   if (maybe.errorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND) return true;
   return maybe.error === RPC_ERROR_MESSAGES.METHOD_NOT_FOUND;
+}
+
+export const SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS = {
+  SESSION_WRITE: 'session.write',
+} as const;
+
+export type SocketRpcAuthorizationContextKind =
+  (typeof SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS)[keyof typeof SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS];
+
+export type SocketRpcSessionWriteAuthorizationContext = Readonly<{
+  kind: typeof SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE;
+  sessionId: string;
+}>;
+
+export type SocketRpcAuthorizationContext = SocketRpcSessionWriteAuthorizationContext;
+
+const SOCKET_RPC_AUTHORIZATION_SESSION_ID_MAX_LENGTH = 512;
+
+const SOCKET_RPC_SESSION_WRITE_AUTHORIZATION_METHODS = new Set<string>([
+  RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART,
+]);
+
+function resolveUnscopedSocketRpcMethod(method: string): string {
+  const separatorIndex = method.indexOf(':');
+  if (separatorIndex < 0) return method;
+  return method.slice(separatorIndex + 1);
+}
+
+export function resolveSocketRpcSessionWriteAuthorizationMethod(method: string): string | null {
+  const normalized = resolveUnscopedSocketRpcMethod(String(method ?? '').trim());
+  return SOCKET_RPC_SESSION_WRITE_AUTHORIZATION_METHODS.has(normalized) ? normalized : null;
+}
+
+export function parseSocketRpcAuthorizationContext(value: unknown): SocketRpcAuthorizationContext | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as { kind?: unknown; sessionId?: unknown };
+  if (candidate.kind !== SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE) return null;
+  if (typeof candidate.sessionId !== 'string') return null;
+  const sessionId = candidate.sessionId.trim();
+  if (!sessionId || sessionId.length > SOCKET_RPC_AUTHORIZATION_SESSION_ID_MAX_LENGTH) return null;
+  return {
+    kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
+    sessionId,
+  };
 }

@@ -123,13 +123,12 @@ describe('Peer TCP tunnel V2 encoding', () => {
 });
 
 describe('Peer TCP tunnel V2 substream protocol', () => {
-  it('accepts substream lifecycle frames with per-substream ids', () => {
+  it('accepts session-bound substream lifecycle frames with per-substream ids', () => {
     expect(PeerTcpTunnelSubstreamFrameV2Schema.parse({
       version: 2,
       kind: 'open',
       tunnelId: 'tun_1',
       substreamId: 'sub_1',
-      destination: { host: '127.0.0.1', port: 3000 },
     }).substreamId).toBe('sub_1');
     expect(PeerTcpTunnelSubstreamFrameV2Schema.parse({
       version: 2,
@@ -149,5 +148,15 @@ describe('Peer TCP tunnel V2 substream protocol', () => {
       halfClose: true,
       reasonCode: 'done',
     }).halfClose).toBe(true);
+  });
+
+  it('rejects per-substream destinations because the parent tunnel owns destination policy', () => {
+    expect(PeerTcpTunnelSubstreamFrameV2Schema.safeParse({
+      version: 2,
+      kind: 'open',
+      tunnelId: 'tun_1',
+      substreamId: 'sub_1',
+      destination: { host: '127.0.0.1', port: 3000 },
+    }).success).toBe(false);
   });
 });

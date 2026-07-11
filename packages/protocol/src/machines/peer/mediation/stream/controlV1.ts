@@ -5,6 +5,19 @@ const NonNegativeIntSchema = z.number().int().nonnegative();
 const NormalizedCoordinateSchema = z.number().min(0).max(1);
 
 export const MachineLiveStreamInputModeV1Schema = z.enum(['none', 'shared', 'exclusive']);
+export const MACHINE_LIVE_STREAM_INPUT_CONTROL_KINDS_V1 = [
+  'tap',
+  'long_press',
+  'swipe',
+  'drag',
+  'pinch',
+  'rotate',
+  'keyboard_text',
+  'keyboard_key',
+  'hardware_button',
+  'orientation',
+] as const;
+export const MachineLiveStreamInputControlKindV1Schema = z.enum(MACHINE_LIVE_STREAM_INPUT_CONTROL_KINDS_V1);
 
 export const MachineLiveStreamControlLeaseV1Schema = z
   .object({
@@ -116,22 +129,12 @@ export const MachineLiveStreamControlSourceV1Schema = z
   .passthrough();
 
 export type MachineLiveStreamInputModeV1 = z.infer<typeof MachineLiveStreamInputModeV1Schema>;
+export type MachineLiveStreamInputControlKindV1 = z.infer<typeof MachineLiveStreamInputControlKindV1Schema>;
 export type MachineLiveStreamControlLeaseV1 = z.infer<typeof MachineLiveStreamControlLeaseV1Schema>;
 export type MachineLiveStreamControlSidebandV1 = z.infer<typeof MachineLiveStreamControlSidebandV1Schema>;
 export type MachineLiveStreamControlSourceV1 = z.infer<typeof MachineLiveStreamControlSourceV1Schema>;
 
-const INPUT_CONTROL_KINDS = new Set<MachineLiveStreamControlSidebandV1['kind']>([
-  'tap',
-  'long_press',
-  'swipe',
-  'drag',
-  'pinch',
-  'rotate',
-  'keyboard_text',
-  'keyboard_key',
-  'hardware_button',
-  'orientation',
-]);
+const INPUT_CONTROL_KINDS = new Set<MachineLiveStreamControlSidebandV1['kind']>(MACHINE_LIVE_STREAM_INPUT_CONTROL_KINDS_V1);
 
 export function machineLiveStreamControlRequiresInputLeaseV1(
   control: MachineLiveStreamControlSidebandV1,
@@ -165,7 +168,6 @@ export function validateMachineLiveStreamControlLeaseV1(input: Readonly<{
 
   if (!machineLiveStreamControlRequiresInputLeaseV1(control.data)) return { ok: true };
   if (source.data.inputMode === 'none') return { ok: false, reasonCode: 'input_not_supported' };
-  if (source.data.inputMode === 'shared') return { ok: true };
   if (!input.activeLease) return { ok: false, reasonCode: 'input_lease_required' };
 
   const lease = MachineLiveStreamControlLeaseV1Schema.safeParse(input.activeLease);

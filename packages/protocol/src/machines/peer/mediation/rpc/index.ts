@@ -19,15 +19,23 @@ export {
 } from './commandReceiptV1.js';
 export {
   MACHINE_RPC_ROUTE_POLICIES,
+  DAEMON_VOICE_AUDIO_RELAY_CAP_PROFILE_ID,
+  DAEMON_VOICE_STT_RELAY_TUNNEL_ID_PREFIX,
+  createDaemonVoiceSttRelayTunnelId,
   isMachineRpcDirectRoutePolicy,
+  isDaemonVoiceSttRelayTunnelId,
+  resolveMachineRpcRelayFallbackDecision,
   resolveMachineRpcRoutePolicy,
   validateMachineRpcGrantAllowedMethods,
   validateMachineRpcRoutePolicies,
+  type MachineRpcRelayFallbackDecision,
+  type MachineRpcRelayFallbackDeploymentKind,
   type MachineRpcGovernanceClassification,
   type MachineRpcMethod,
   type MachineRpcRouteClass,
   type MachineRpcRoutePolicyScopeV1,
   type MachineRpcRoutePolicyV1,
+  type MachineRpcRouteRelayFallbackPolicyV1,
   type MachineRpcRoutePolicyValidationResult,
   type MachineRpcServerRequiredReason,
 } from './routePolicyV1.js';

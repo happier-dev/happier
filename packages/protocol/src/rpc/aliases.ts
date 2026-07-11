@@ -1,4 +1,4 @@
-import { RPC_METHODS } from '../rpc.js';
+import { RPC_METHODS } from './index.js';
 
 export const DIRECT_SESSION_LEGACY_RPC_ALIAS_CLASSIFICATION = 'legacy_direct_session_rpc_alias';
 

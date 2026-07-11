@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { readCanonicalPaddedBase64DecodedLength } from '../../../../crypto/base64.js';
 import { createCanonicalJsonSigningInput } from '../directRouteGrantV1.js';
 import { MachineLiveStreamControlSidebandV1Schema } from './controlV1.js';
 
@@ -8,13 +9,17 @@ export const MACHINE_LIVE_STREAM_RELAY_AUTHORIZATION_AUDIENCE_V1 = 'happier-live
 
 const PositiveIntSchema = z.number().int().positive();
 const NonNegativeIntSchema = z.number().int().nonnegative();
-const Base64Schema = z.string().regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/);
+const Base64Schema = z.string().superRefine((value, context) => {
+  if (readCanonicalPaddedBase64DecodedLength(value) !== null) return;
+  context.addIssue({
+    code: z.ZodIssueCode.custom,
+    message: 'Invalid base64 payload',
+  });
+});
 const Base64UrlSchema = z.string().regex(/^[A-Za-z0-9_-]+$/);
 
 export function getMachineLiveStreamPayloadDecodedByteLength(payloadBase64: string): number {
-  if (payloadBase64.length === 0) return 0;
-  const paddingBytes = payloadBase64.endsWith('==') ? 2 : payloadBase64.endsWith('=') ? 1 : 0;
-  return Math.max(0, Math.floor((payloadBase64.length / 4) * 3) - paddingBytes);
+  return readCanonicalPaddedBase64DecodedLength(payloadBase64) ?? 0;
 }
 
 const MachineLiveStreamCapsV1Shape = {
@@ -51,6 +56,13 @@ export const MachineLiveStreamRelayAuthorizationPayloadV1Schema = z
     routeKind: z.literal('server_relay'),
     streamId: z.string().min(1),
     streamFamily: z.string().min(1),
+    // Optional per-tab viewer target (C1). When the watcher is a user-scoped browser
+    // socket rather than a peer machine, the grant is minted bound to that socket id so the
+    // server can deliver frames to the exact tab (`io.to(viewerSocketId)`) instead of a
+    // machine room the viewer never joins. Omitted for the legacy machine→machine path; it
+    // is part of the canonical-JSON signing input, so when present it must be identical at
+    // mint, start-request, and handler-verify time.
+    viewerSocketId: z.string().min(1).optional(),
     ...MachineLiveStreamCapsV1Shape,
     iat: NonNegativeIntSchema,
     exp: PositiveIntSchema,
@@ -94,6 +106,7 @@ export const MachineLiveStreamStartRequestV1Schema = z
     routeKind: MachineLiveStreamRouteKindV1Schema,
     sourceMachineId: z.string().min(1),
     targetMachineId: z.string().min(1),
+    viewerSocketId: z.string().min(1).optional(),
     ...MachineLiveStreamCapsV1Shape,
     authorization: MachineLiveStreamRelayAuthorizationV1Schema.optional(),
   })
@@ -128,6 +141,16 @@ export const MachineLiveStreamStartRequestV1Schema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['authorization', 'payload', key],
+        message: 'Live-stream relay authorization must match the start request',
+      });
+    }
+    // The viewer target is part of the signed grant; the start request must not re-point a
+    // grant minted for one tab at a different socket (C1). `undefined` on both sides is the
+    // legacy machine→machine path and matches.
+    if (request.viewerSocketId !== payload.viewerSocketId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['authorization', 'payload', 'viewerSocketId'],
         message: 'Live-stream relay authorization must match the start request',
       });
     }
@@ -246,6 +269,12 @@ export const MachineLiveStreamControlV1Schema = z.discriminatedUnion('kind', [
   BaseControlSchema.extend({
     kind: z.literal('ack'),
     nextSequence: PositiveIntSchema,
+    // Flow-control contract (L1): the daemon `framePump` starts with unbounded local send
+    // credit because the server relay is the bounded network window owner. A socket-precise
+    // viewer sends `ack` after delivered frames; the server validates the viewer socket id,
+    // replenishes its bounded relay window from these optional credit fields (or its configured
+    // defaults), drains queued frames, and forwards the ack to the daemon for diagnostics/local
+    // pump credit. A viewer path without a socket id must fail closed before relay open.
     windowFrames: NonNegativeIntSchema.optional(),
     windowBytes: NonNegativeIntSchema.optional(),
   }).passthrough(),
@@ -276,6 +305,10 @@ export const MachineLiveStreamRelayEnvelopeV1Schema = z
     v: z.literal(1),
     sourceMachineId: z.string().min(1),
     targetMachineId: z.string().min(1),
+    // Optional per-tab viewer target (C1). The source daemon echoes the `viewerSocketId` it
+    // received in the signed start so the relay can deliver frames/controls to the exact
+    // viewer socket. Omitted on the legacy machine→machine path.
+    viewerSocketId: z.string().min(1).optional(),
     message: z.discriminatedUnion('kind', [
       z.object({ kind: z.literal('start'), startRequest: MachineLiveStreamStartRequestV1Schema }).passthrough(),
       z.object({ kind: z.literal('start_response'), startResponse: MachineLiveStreamStartResponseV1Schema }).passthrough(),
