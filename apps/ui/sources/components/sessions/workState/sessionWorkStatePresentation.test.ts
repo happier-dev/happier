@@ -92,4 +92,34 @@ describe('sessionWorkStatePresentation', () => {
             updatedAt: 20,
         }, translate)).toBe('session.workState.badge.goalBudgetLimited:');
     });
+
+    // QA-CHIP-4: a cleared (cancelled) goal must NOT fall through to the active "Goal: <title>" label.
+    // It should produce no badge so a cleared goal disappears (mirrors happy showing only active goals).
+    it('returns no badge label for a cancelled (cleared) goal', () => {
+        expect(formatSessionWorkStateBadgeLabel({
+            id: 'goal:claude',
+            kind: 'goal',
+            origin: 'vendor',
+            status: 'cancelled',
+            title: 'Count grains of sand',
+            updatedAt: 30,
+        }, translate)).toBeNull();
+    });
+
+    it('yields no status badge presentation for a cancelled goal as the primary item', () => {
+        const presentation = (resolveSessionWorkStateStatusBadgePresentation as any)({
+            primaryItem: {
+                id: 'goal:claude',
+                kind: 'goal',
+                origin: 'vendor',
+                status: 'cancelled',
+                title: 'Count grains of sand',
+                updatedAt: 30,
+            },
+            activeStatusBadgeKey: null,
+            editableGoal: true,
+            translate,
+        });
+        expect(presentation).toBeNull();
+    });
 });

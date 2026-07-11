@@ -27,6 +27,10 @@ export type SessionWorkStateStatusBadgePresentation = Readonly<{
 export function formatSessionWorkStateBadgeLabel(item: SessionWorkStateItem | null, translate: Translate): string | null {
     if (!item) return null;
     if (item.kind === 'goal') {
+        // A cleared (cancelled) goal must not surface as the active "Goal: <title>" badge — it has
+        // been dismissed, so it yields no badge and the chrome disappears (mirrors happy showing only
+        // active goals). Without this a `/goal clear` left a stale active-looking badge (QA-CHIP-4).
+        if (item.status === 'cancelled') return null;
         if (item.status === 'paused') return translate('session.workState.badge.goalPaused');
         if (item.statusReason === 'budgetLimited') return translate('session.workState.badge.goalBudgetLimited');
         if (item.status === 'blocked') return translate('session.workState.badge.goalBlocked');
