@@ -13,10 +13,8 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 import { createScmBackendRegistry } from './registry';
 import { runScmRoute } from './rpc/dispatch';
-import {
-  createScmBackendCatalog,
-  type ScmBackendPluginRuntimeRegistry,
-} from './scmBackendCatalog';
+import type { ScmBackendPluginRuntimeRegistry } from './pluginBackends/runtimeRegistry';
+import { createScmBackendCatalog } from './scmBackendCatalog';
 
 function createPluginBackendCapabilities(): ScmBackendContribution['capabilities'] {
   const supported = { support: 'supported' } as const;
@@ -193,16 +191,12 @@ async function writeScmBackendPlugin(input: Readonly<{
       displayName: 'Acme SCM Backend',
       description: 'SCM backend bridge regression fixture',
       engines: { happier: '^0.2.0' },
-      runtime: {
-        apiVersion: 1,
-        capabilities: ['scmBackends'],
+      uses: ['scmBackends'],
+      activationEvents: [`onScmProvider:${input.backendDefinition.id}`],
+      entrypoints: {
+        main: './daemon.mjs',
       },
-      capabilities: { permissions: [] },
-      targets: {
-        daemon: {
-          entry: './daemon.mjs',
-        },
-      },
+      permissions: { required: [], optional: [] },
       contributes: {
         scmBackends: [input.backendDefinition],
       },

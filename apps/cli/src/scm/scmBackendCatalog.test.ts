@@ -5,6 +5,7 @@ import {
   createScmBackendCatalog,
   defaultScmBackendRegistry,
   resolveDefaultScmBackendRegistry,
+  resolveScmRuntimePluginIds,
 } from './scmBackendCatalog';
 
 describe('scmBackendCatalog', () => {
@@ -40,6 +41,30 @@ describe('scmBackendCatalog', () => {
     const resolvedRegistry = await resolveDefaultScmBackendRegistry();
 
     expect(resolvedRegistry.listBackends().map((backend) => backend.id)).toEqual(['git', 'sapling']);
+  });
+
+  it('limits SCM runtime activation to plugins that own SCM backend contributions', () => {
+    const pluginIds = resolveScmRuntimePluginIds({
+      activationTargets: [
+        { pluginId: 'happier.agent.codex' },
+        { pluginId: 'happier.scm.backend.git' },
+        { pluginId: 'happier.scm.backend.sapling' },
+        { pluginId: 'happier.scm.hosting.github' },
+      ],
+      scmBackends: [
+        { pluginId: 'happier.scm.backend.git' },
+        { pluginId: 'happier.scm.backend.sapling' },
+      ],
+      scmHostingProviders: [
+        { pluginId: 'happier.scm.hosting.github' },
+      ],
+    });
+
+    expect(pluginIds).toEqual([
+      'happier.scm.backend.git',
+      'happier.scm.backend.sapling',
+      'happier.scm.hosting.github',
+    ]);
   });
 
   it('routes static support through provider-owned grouped capability declarations', async () => {

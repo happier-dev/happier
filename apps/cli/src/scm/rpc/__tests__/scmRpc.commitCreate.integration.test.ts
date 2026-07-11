@@ -178,6 +178,32 @@ describe('git RPC handlers', () => {
         expect(git(workspace, ['diff', '--cached', '--name-only'])).toBe('b.txt');
     });
 
+    it('creates path-scoped root commit for an untracked file and synchronizes the live index', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-git-rpc-'));
+        git(workspace, ['init']);
+        git(workspace, ['config', 'user.email', 'test@example.com']);
+        git(workspace, ['config', 'user.name', 'Test User']);
+        writeFileSync(join(workspace, 'root.txt'), 'root\n');
+
+        const { call } = createTestRpcManager({ workingDirectory: workspace });
+        const response = await call<any, { cwd?: string; message: string; scope: { kind: 'paths'; include: string[] } }>(
+            RPC_METHODS.SCM_COMMIT_CREATE,
+            {
+                cwd: '.',
+                message: 'root path-scoped commit',
+                scope: {
+                    kind: 'paths',
+                    include: ['root.txt'],
+                },
+            },
+        );
+
+        expect(response.success).toBe(true);
+        expect(git(workspace, ['show', '--pretty=', '--name-only', 'HEAD'])).toBe('root.txt');
+        expect(git(workspace, ['status', '--porcelain=v2'])).toBe('');
+        expect(git(workspace, ['diff', '--cached', '--name-only'])).toBe('');
+    });
+
     it('supports patch-based commit requests for virtual line selection', async () => {
         const workspace = mkdtempSync(join(tmpdir(), 'happier-git-rpc-'));
         git(workspace, ['init']);

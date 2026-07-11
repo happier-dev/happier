@@ -14,7 +14,7 @@ import type {
     ScmWorkspaceIntegrationPortableWorkspacePathClassification as PluginPortableWorkspacePathClassification,
 } from '@happier-dev/plugin-sdk';
 import { runWithScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk';
-import { runWithScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
+import { runWithScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm/backend';
 
 import type { ScmBackend } from '../types';
 import { resolveScmBackendCapabilities } from '../capabilities/resolveScmBackendCapabilities';

@@ -2,67 +2,11 @@ import { createScmBackendCatalog as createBuiltInScmBackendCatalog } from './pro
 import { createScmBackendRegistry, type ScmBackendRegistry } from './registry';
 import type { ScmBackend } from './types';
 import {
-    createRegisteredScmBackendRegistry,
-    type RegisteredScmBackendActivation,
-    type RegisteredScmBackendDefinition,
-} from './pluginBackends/registeredScmBackendRegistry';
-import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import type { ResolvedScmBackendContribution } from '@/plugins/projection/registry/types';
-import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
-import { createHostScmHostingProviderRuntimeServices } from './hostingProviders/runtimeServices';
-
-export type ScmBackendPluginRuntimeRegistry = Readonly<{
-    contributes: Readonly<{
-        scmBackends?: readonly ResolvedScmBackendContribution[];
-        scmHostingProviders?: ResolvedExecutablePluginRuntimeRegistry['contributes']['scmHostingProviders'];
-        connectedAccountDescriptors?: ResolvedExecutablePluginRuntimeRegistry['contributes']['connectedAccountDescriptors'];
-    }>;
-    scmHostingProvidersById?: ResolvedExecutablePluginRuntimeRegistry['scmHostingProvidersById'];
-    scmBackendsById?: ResolvedExecutablePluginRuntimeRegistry['scmBackendsById'];
-    scmBackendRegistrations?: ResolvedExecutablePluginRuntimeRegistry['scmBackendRegistrations'];
-}>;
-
-export function createPluginScmBackendsFromRuntimeRegistry(
-    runtimeRegistry: ScmBackendPluginRuntimeRegistry,
-): readonly ScmBackend[] {
-    return createPluginScmBackendRegistryFromRuntimeRegistry(runtimeRegistry).backends;
-}
-
-export function createPluginScmBackendRegistryFromRuntimeRegistry(
-    runtimeRegistry: ScmBackendPluginRuntimeRegistry,
-): Readonly<{
-    backends: readonly ScmBackend[];
-    diagnostics: readonly PluginCompatibilityDiagnostic[];
-    diagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
-}> {
-    const definitions: RegisteredScmBackendDefinition[] = (runtimeRegistry.contributes.scmBackends ?? [])
-        .flatMap((entry) => {
-            if (!entry.pluginId) {
-                return [];
-            }
-            return [{
-                pluginId: entry.pluginId,
-                contributionId: entry.definition.id,
-                definition: entry.definition,
-            }];
-        });
-    const activationEntries = runtimeRegistry.scmBackendRegistrations
-        ?? [...(runtimeRegistry.scmBackendsById ?? new Map()).values()];
-    const registrations: RegisteredScmBackendActivation[] = activationEntries
-        .map((entry) => ({
-            pluginId: entry.pluginId,
-            registration: entry.registration,
-        }));
-
-    return createRegisteredScmBackendRegistry({
-        definitions,
-        registrations,
-        hostingProviderRuntimeServices: createHostScmHostingProviderRuntimeServices({
-            contributes: runtimeRegistry.contributes,
-            scmHostingProvidersById: runtimeRegistry.scmHostingProvidersById ?? new Map(),
-        }),
-    });
-}
+    activateScmProviderRuntimeEvents,
+    createPluginScmBackendsFromRuntimeRegistry,
+    type ScmBackendPluginRuntimeRegistry,
+} from './pluginBackends/runtimeRegistry';
+import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 
 export function createScmBackendCatalogWithPlugins(input?: Readonly<{
     pluginBackends?: readonly ScmBackend[];
@@ -83,15 +27,62 @@ export { createScmBackendCatalogWithPlugins as createScmBackendCatalog };
 
 export const defaultScmBackendRegistry: ScmBackendRegistry = createScmBackendRegistry(createScmBackendCatalogWithPlugins());
 
+export function resolveScmRuntimePluginIds(contributes: Readonly<{
+    activationTargets?: readonly Readonly<{ pluginId: string }>[];
+    scmBackends?: readonly Readonly<{ pluginId?: string }>[];
+    scmHostingProviders?: readonly Readonly<{ pluginId?: string }>[];
+}>): readonly string[] {
+    const activationTargetPluginIds = new Set((contributes.activationTargets ?? []).map((target) => target.pluginId));
+    const pluginIds = new Set<string>();
+
+    for (const contribution of [
+        ...(contributes.scmBackends ?? []),
+        ...(contributes.scmHostingProviders ?? []),
+    ]) {
+        if (contribution.pluginId && activationTargetPluginIds.has(contribution.pluginId)) {
+            pluginIds.add(contribution.pluginId);
+        }
+    }
+
+    return Object.freeze([...pluginIds].sort());
+}
+
 export async function resolveDefaultScmBackendRegistry(input?: Readonly<{
     happyHomeDir?: string;
     pluginRuntimeRegistry?: ScmBackendPluginRuntimeRegistry;
 }>): Promise<ScmBackendRegistry> {
-    const pluginRuntimeRegistry = input?.pluginRuntimeRegistry
-        ?? await import('@/plugins/runtime/resolveExecutablePluginRuntimeRegistry')
-            .then(({ resolveExecutablePluginRuntimeRegistry }) => resolveExecutablePluginRuntimeRegistry({
-                happyHomeDir: input?.happyHomeDir,
+    if (input?.pluginRuntimeRegistry) {
+        await activateScmProviderRuntimeEvents(input.pluginRuntimeRegistry);
+        return createScmBackendRegistry(createScmBackendCatalogWithPlugins({
+            pluginRuntimeRegistry: input.pluginRuntimeRegistry,
+        }));
+    }
+
+    if (!input?.happyHomeDir) {
+        const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
+        try {
+            await activateScmProviderRuntimeEvents(lease.registry);
+            return createScmBackendRegistry(createScmBackendCatalogWithPlugins({
+                pluginRuntimeRegistry: lease.registry,
             }));
+        } finally {
+            await lease.release();
+        }
+    }
+
+    const pluginRuntimeRegistry = await (async () => {
+        const { resolveMergedContributionRegistry } = await import('@/plugins/projection/registry/createResolvedContributionRegistry');
+        const { resolveExecutablePluginRuntimeRegistry } = await import('@/plugins/runtime/resolveExecutablePluginRuntimeRegistry');
+        const contributes = await resolveMergedContributionRegistry({
+            happyHomeDir: input?.happyHomeDir,
+        });
+
+        return await resolveExecutablePluginRuntimeRegistry({
+            happyHomeDir: input?.happyHomeDir,
+            contributes,
+            pluginIds: resolveScmRuntimePluginIds(contributes),
+        });
+    })();
 
     return createScmBackendRegistry(createScmBackendCatalogWithPlugins({
         pluginRuntimeRegistry,

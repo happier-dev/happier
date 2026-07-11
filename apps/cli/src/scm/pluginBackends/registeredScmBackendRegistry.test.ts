@@ -12,7 +12,7 @@ import type {
     ScmBackendRuntimeHandlerInput,
     ScmBackendRuntimeRegistration,
 } from '@happier-dev/plugin-sdk';
-import { readCurrentScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
+import { readCurrentScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm/backend';
 
 import { createRegisteredScmBackendRegistry } from './registeredScmBackendRegistry';
 import type { ScmBackend } from '../types';

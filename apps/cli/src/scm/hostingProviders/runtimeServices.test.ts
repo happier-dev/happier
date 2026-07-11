@@ -9,15 +9,13 @@ import { materializeGithubScmHostingToken } from '@happier-dev/plugins-scm-githu
 
 import type { Credentials } from '@/persistence';
 
-const { mockApiCreate, mockReadCredentials } = vi.hoisted(() => ({
-  mockApiCreate: vi.fn(),
+const { mockCreateConnectedServiceCredentialApi, mockReadCredentials } = vi.hoisted(() => ({
+  mockCreateConnectedServiceCredentialApi: vi.fn(),
   mockReadCredentials: vi.fn(),
 }));
 
-vi.mock('@/api/api', () => ({
-  ApiClient: {
-    create: mockApiCreate,
-  },
+vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
+  createConnectedServiceCredentialApi: mockCreateConnectedServiceCredentialApi,
 }));
 
 vi.mock('@/persistence', () => ({
@@ -29,7 +27,7 @@ import { createHostScmHostingProviderRuntimeServices } from './runtimeServices';
 type RuntimeServicesInput = Parameters<typeof createHostScmHostingProviderRuntimeServices>[0];
 
 beforeEach(() => {
-  mockApiCreate.mockReset();
+  mockCreateConnectedServiceCredentialApi.mockReset();
   mockReadCredentials.mockReset();
 });
 
@@ -108,7 +106,7 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
       })),
     };
     mockReadCredentials.mockResolvedValue(credentials);
-    mockApiCreate.mockResolvedValue(api);
+    mockCreateConnectedServiceCredentialApi.mockReturnValue(api);
 
     const services = createHostScmHostingProviderRuntimeServices(createRuntimeInput());
 
@@ -132,7 +130,7 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
     });
 
     expect(mockReadCredentials).toHaveBeenCalledTimes(1);
-    expect(mockApiCreate).toHaveBeenCalledTimes(1);
+    expect(mockCreateConnectedServiceCredentialApi).toHaveBeenCalledTimes(1);
     expect(api.listConnectedServiceProfiles).toHaveBeenCalledTimes(1);
     expect(api.getConnectedServiceCredentialSealed).toHaveBeenCalledTimes(1);
   });
@@ -157,7 +155,7 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
       })),
     };
     mockReadCredentials.mockResolvedValue(credentials);
-    mockApiCreate.mockResolvedValue(api);
+    mockCreateConnectedServiceCredentialApi.mockReturnValue(api);
 
     const services = createHostScmHostingProviderRuntimeServices(createRuntimeInput());
 
@@ -180,7 +178,7 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
 
     await expect(Promise.all([first, second])).resolves.toHaveLength(2);
     expect(mockReadCredentials).toHaveBeenCalledTimes(1);
-    expect(mockApiCreate).toHaveBeenCalledTimes(1);
+    expect(mockCreateConnectedServiceCredentialApi).toHaveBeenCalledTimes(1);
     expect(api.listConnectedServiceProfiles).toHaveBeenCalledTimes(1);
     expect(api.getConnectedServiceCredentialSealed).toHaveBeenCalledTimes(1);
   });

@@ -17,7 +17,10 @@ import {
     type ScmHostingProviderRuntimeBinding,
 } from './registry';
 
-import { ApiClient } from '@/api/api';
+import {
+    createConnectedServiceCredentialApi,
+    type ConnectedServiceCredentialApi,
+} from '@/api/client/connectedServiceCredentialApi';
 import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
 import { getAzDepStatus } from '@/capabilities/deps/az';
 import { getGhDepStatus } from '@/capabilities/deps/gh';
@@ -52,19 +55,7 @@ type ScmHostingProviderRuntimeBasicAuthMaterializationRequest = Parameters<
 >[0];
 
 type ConnectedServicesCredentialApi = Pick<
-    Readonly<{
-        getConnectedServiceCredentialPlain(input: Readonly<{
-            serviceId: ConnectedServiceId;
-            profileId: string;
-        }>): Promise<Readonly<{ content: Readonly<{ v?: unknown }> }> | null>;
-        getConnectedServiceCredentialSealed(input: Readonly<{
-            serviceId: ConnectedServiceId;
-            profileId: string;
-        }>): Promise<Readonly<{ sealed: Readonly<{ ciphertext: string }> }> | null>;
-        listConnectedServiceProfiles(input: Readonly<{
-            serviceId: ConnectedServiceId;
-        }>): Promise<Readonly<{ profiles: readonly Readonly<{ profileId: string }>[] }> | null>;
-    }>,
+    ConnectedServiceCredentialApi,
     'getConnectedServiceCredentialPlain' | 'getConnectedServiceCredentialSealed' | 'listConnectedServiceProfiles'
 >;
 
@@ -181,7 +172,7 @@ async function readConnectedServiceCredentialRecords(input: Readonly<{
 
     const credentials = await readCredentials().catch(() => null);
     if (!credentials) return [];
-    const api = await ApiClient.create(credentials);
+    const api = createConnectedServiceCredentialApi(credentials);
     const records: ConnectedServiceCredentialRecordV1[] = [];
     for (const profileId of await listProfileIds({
         api,
