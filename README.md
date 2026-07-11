@@ -369,7 +369,7 @@ Arguments:
 ## Documentation
 
 - [Getting started](https://docs.happier.dev/getting-started/onboarding)
-- [Installing Claude Code, Codex, OpenCode and other providers CLIs](https://docs.happier.dev/providers)
+- [Installing Claude Code, Codex, OpenCode, and other Agent CLIs](https://docs.happier.dev/providers)
 - [Installing and using the CLI](https://docs.happier.dev/clients/cli)
 - [What is the daemon and how to install it?](https://docs.happier.dev/clients/daemon)
 - [Happier Voice](https://docs.happier.dev/features/voice)

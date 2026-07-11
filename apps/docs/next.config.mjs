@@ -9,6 +9,11 @@ const repoRoot = path.resolve(__dirname, '../..');
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
+  // The build script runs the repository-owned native TypeScript 7 gate first.
+  // Do not let Next run a second, version-dependent embedded compiler afterward.
+  typescript: {
+    ignoreBuildErrors: true,
+  },
   turbopack: {
     root: repoRoot,
   },
