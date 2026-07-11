@@ -1,52 +1,54 @@
 ---
-title: Providers
-description: How Happier integrates with local AI provider CLIs (like Claude Code).
+title: Agents
+description: How Happier runs executable coding Agents such as Claude Code and Codex.
 ---
 
-Happier can run different “providers” (agent backends) depending on which tool you want to use.
+Happier can run different **Agents** depending on which coding tool you want to use. These pages retain their existing `/docs/providers/...` URLs for link compatibility, but the product and SDK call the executable tools Agents.
 
-Some providers also support Happier connected services. When they do, you can connect subscriptions / API keys once in Settings and then choose those profiles from the new-session auth picker instead of relying only on the provider's native login state.
+**Providers** now means model sources such as OpenRouter, DeepSeek, Ollama, and LM Studio. Configure those under **Settings → Providers**, then choose their models for compatible Agents.
 
-Some providers also support [session handoff](/docs/features/session-handoff), which lets you move the same Happier session between machines without forking it.
+Some Agents also support Happier connected services. When they do, you can connect subscriptions or Agent-native credentials once in Settings instead of relying only on the Agent's machine-local login state.
 
-Most providers are first-class built-ins such as Claude, Codex, Gemini, or Kiro.
+Some Agents also support [session handoff](/docs/features/session-handoff), which lets you move the same Happier session between machines without forking it.
 
-Happier also ships a generic **Custom ACP** provider family for any CLI that speaks the Agent Client Protocol (ACP). With Custom ACP, you define selectable **ACP backends**, and those backends then appear as normal backend choices across the app.
+Most Agents are first-class built-ins such as Claude, Codex, Gemini, or Kiro.
+
+Happier also ships a generic **Custom ACP** Agent family for any CLI that speaks the Agent Client Protocol (ACP). With Custom ACP, you define selectable ACP backends, and those backends then appear as Agent choices across the app.
 
 See:
 
 - [ACP backends](/docs/features/acp-backends)
 - [Model and engine selection](/docs/features/model-and-engine-selection)
-- [Provider authentication](/docs/features/provider-authentication)
+- [Agent authentication](/docs/features/provider-authentication)
 
-## Provider settings in the app
+## Agent settings in the app
 
-Provider-specific settings live with each provider (not hardcoded in the core Settings screen).
+Agent-specific settings live with each Agent plugin rather than being hardcoded in the core Settings screen.
 
 In the app, open:
 
 1. **Settings**
-2. **AI provider settings**
-3. Pick a provider (for example, **Claude (remote)**)
+2. **Agents**
+3. Pick an Agent (for example, **Claude**)
 
-Each provider page can show two different auth surfaces:
+Each Agent page can show two different auth surfaces:
 
-- **Authentication** — the native login state of the provider CLI on the selected machine
-- **Connected service** — the Happier-managed credential family that provider can consume, when supported
+- **Authentication** — the native login state of the Agent CLI on the selected machine
+- **Connected service** — the Happier-managed account family that the Agent can consume, when supported
 
-For the shared user guide to provider CLI auth, see [Provider authentication](/docs/features/provider-authentication).
+For the shared user guide to Agent CLI auth, see [Agent authentication](/docs/features/provider-authentication). The route is retained for link compatibility.
 
-## Installing provider CLIs
+## Installing Agent CLIs
 
-Happier does **not** bundle provider CLIs today. You install them yourself and Happier detects them on your machine.
+Happier does **not** bundle every Agent CLI. You install supported tools and Happier detects them on your machine.
 
 You have a few options:
 
-- **In the app**: each provider settings page shows detection status and can run a best-effort installer against the selected machine (see “CLI & Connection” on the provider page).
-- **With hstack** (recommended when available): `hstack providers install <provider>` wraps supported installers and can be scripted with `--json`.
-- **Manually**: follow each provider’s official docs and ensure the binary is on `PATH` (or configure `HAPPIER_<PROVIDER>_PATH`).
+- **In the app**: each Agent settings page shows detection status and can run a best-effort installer against the selected machine (see **CLI & Connection**).
+- **With hstack** (recommended when available): use its Agent-install command for supported tools and script it with `--json`.
+- **Manually**: follow the Agent's official docs and ensure the binary is on `PATH` (or configure the documented Happier path override).
 
-See the provider-specific pages for installation and troubleshooting.
+See the Agent-specific pages below for installation and troubleshooting.
 
 <Cards>
   <Card title="Claude" href="/docs/providers/claude" />

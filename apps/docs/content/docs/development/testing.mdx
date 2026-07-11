@@ -165,15 +165,15 @@ Notes:
 
 ### 5) Providers
 
-Provider contract/baseline suites in `packages/tests` (real provider CLIs).
+Agent contract/baseline suites in `packages/tests` (real Agent CLIs; runner names retain historical compatibility vocabulary).
 
 **Root commands:**
 ```bash
-yarn test:providers
-yarn test:providers:all:smoke
-yarn test:providers:claude:extended
-yarn test:providers:codex:smoke
-yarn test:providers:opencode:extended
+yarn test:agents
+yarn test:agents:all:smoke
+yarn test:agents:claude:extended
+yarn test:agents:codex:smoke
+yarn test:agents:opencode:extended
 ```
 
 ### 6) Stress
@@ -228,6 +228,10 @@ These lanes are intentionally not exposed as canonical root scripts:
 ### 8) Typecheck
 
 TypeScript typechecking for the main runtime packages (UI/CLI/server).
+
+Happier uses the native TypeScript 7 compiler for first-party typecheck and package-build lanes. The `typescript` package remains on 5.9 for AST-based tools and integrations that still require its programmatic API.
+
+Compiler selection is centralized in `scripts/workspaces/resolveTypeScriptCliInvocation.mjs`. Repository scripts and `yarn tsc ...` delegate to that owner rather than a package-manager bin shim, so dependency hoisting cannot silently select the TypeScript 5 API package. Direct `tsc`, `npx tsc`, and `typescript/bin/tsc` invocations are unsupported.
 
 **Root command:**
 ```bash
@@ -287,7 +291,7 @@ yarn test:db-contract:docker
 - Core fast: `yarn workspace @happier-dev/tests test:core:fast`
 - Core slow: `yarn workspace @happier-dev/tests test:core:slow`
 - UI WSREPL Lima matrix (macOS/Linux host): `yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima -- happier-wsrepl-qa`
-- Providers: `yarn workspace @happier-dev/tests test:providers`
+- Providers: `yarn workspace @happier-dev/tests test:agents`
 - Stress: `yarn workspace @happier-dev/tests test:stress`
 
 ## Env-gated integration suites
@@ -302,7 +306,7 @@ CI sets these for relevant jobs. Local runs can set them manually when you need 
 
 ### Unit (`yarn test`)
 - Requires: Node + Yarn only.
-- Should not require tmux, Docker, provider CLIs, or API keys.
+- Should not require tmux, Docker, Agent CLIs, or API keys.
 
 ### Integration (`yarn test:integration`)
 - UI integration:
@@ -333,33 +337,36 @@ CI sets these for relevant jobs. Local runs can set them manually when you need 
   - `yarn test:e2e:core:slow` before handoff for orchestration-heavy changes.
   - `yarn test:e2e` for the full core gate.
 
-### Provider suites (`yarn test:providers`, `yarn test:providers:*`)
-- `yarn test:providers` by itself runs provider-suite checks with provider execution disabled by default (`HAPPIER_E2E_PROVIDERS` unset), so it does not require provider CLIs or API keys.
-- `yarn test:providers:all:smoke` / `yarn test:providers:claude:extended` (and similar wrappers) enable real provider execution and then require provider CLIs/binaries for selected providers.
+### Agent runtime suites (`yarn test:agents`, `yarn test:agents:*`)
+
+These runner commands and their `HAPPIER_E2E_PROVIDERS` variables retain the historical `providers` vocabulary for compatibility. They exercise executable Agents such as Claude and Codex; first-class model Providers are covered by their protocol/CLI/UI owner tests and `.feat.providers.` integration/E2E lanes.
+
+- `yarn test:agents` by itself runs Agent contract checks with Agent execution disabled by default (`HAPPIER_E2E_PROVIDERS` unset), so it does not require Agent CLIs or API keys.
+- `yarn test:agents:all:smoke` / `yarn test:agents:claude:extended` (and similar wrappers) enable real Agent execution and then require CLIs/binaries for selected Agents.
 - Direct workspace command (advanced): `yarn workspace @happier-dev/tests providers:run <preset> <lane>`.
-- Auth mode is provider-spec driven:
-  - `host` mode: uses existing local provider CLI login/session (can run without API keys).
-  - `env` mode: requires provider keys/secrets declared by provider spec.
+- Auth mode is Agent-spec driven:
+  - `host` mode: uses the existing local Agent CLI login/session (can run without API keys).
+  - `env` mode: requires keys/secrets declared by the Agent test spec.
 - Practical guidance:
-  - `smoke`: minimal scenario tier, but still real provider execution when run via `test:providers:*` wrappers or `providers:run`.
+  - `smoke`: minimal scenario tier, but still real Agent execution when run via `test:agents:*` wrappers or the compatibility-named `providers:run` command.
   - `extended`: broader scenario tier with more scenarios; in CI this typically runs with env-key/secrets overlays.
 
 #### Real Claude Agent Teams probe (opt-in)
 
 Happier includes a small opt-in probe that runs your locally installed `claude` CLI to discover the exact Agent Teams tool names and capture representative payload shapes:
 
-- Test file: `packages/tests/suites/providers/claude.agentTeams.toolNames.realProbe.test.ts`
+- Test file: `packages/tests/suites/agents/claude.agentTeams.toolNames.realProbe.test.ts`
 
 Run it locally (requires Claude Code installed and already authenticated on the host):
 
 ```bash
-HAPPIER_TEST_REAL_CLAUDE=1 yarn -s workspace @happier-dev/tests test:providers claude.agentTeams.toolNames.realProbe.test.ts
+HAPPIER_TEST_REAL_CLAUDE=1 yarn -s workspace @happier-dev/tests test:agents claude.agentTeams.toolNames.realProbe.test.ts
 ```
 
 Extended signal (spawns teammates and sends messages; may take longer):
 
 ```bash
-HAPPIER_TEST_REAL_CLAUDE=1 HAPPIER_TEST_REAL_CLAUDE_FULL=1 yarn -s workspace @happier-dev/tests test:providers claude.agentTeams.toolNames.realProbe.test.ts
+HAPPIER_TEST_REAL_CLAUDE=1 HAPPIER_TEST_REAL_CLAUDE_FULL=1 yarn -s workspace @happier-dev/tests test:agents claude.agentTeams.toolNames.realProbe.test.ts
 ```
 
 ### Stress (`yarn test:stress`)

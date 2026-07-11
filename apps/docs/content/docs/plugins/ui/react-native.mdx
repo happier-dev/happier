@@ -3,15 +3,61 @@ title: React Native UI
 description: Contribute React Native plugin UI when the host surface supports it.
 ---
 
-React Native plugin UI surfaces use runtime mode `reactNative` and are packaged as portable artifact bundles for supported host platforms.
+React Native plugin UI surfaces use runtime mode `reactNative` and are packaged as portable artifact bundles for supported host platforms. The same `renderSurface` source renders on native (Re.Pack) and on web (Vite + react-native-web federation).
 
-## Bundle shape
+## Scaffold
 
-React Native UI artifacts should be emitted under the canonical plugin UI artifact tree with platform-specific bundle files.
+`happier plugins scaffold <dir> --id <id> --name <name> --ui reactNative` emits a ready-to-build surface:
+
+```text
+my-plugin/
+  src/ui/renderSurface.tsx   # the surface component (named export `renderSurface`)
+  vite.config.mjs            # wired react-native-web Vite build (outDir = preset.output.root)
+  pluginUiBuild.mjs          # happier-plugin-build-ui config (managed bundler runner)
+  package.json               # pinned build deps + `build:ui` script
+```
+
+## Build
+
+Install dependencies, then run the generated build script:
+
+```bash
+npm install
+npm run build:ui   # -> happier-plugin-build-ui --project-root .
+```
+
+This produces the canonical artifact tree, including the digested manifest:
+
+```text
+dist/happier-plugin-ui/
+  ui-artifacts.json
+  react-native-web/main-native/entry.mjs
+```
+
+## Build dependency version matrix
+
+The scaffold pins a compatible set. Pinning `@vitejs/plugin-react@^5` with `vite@^7` avoids the `ERESOLVE` trap where `@vitejs/plugin-react@6` peer-requires `vite@8` while the SDK preset targets `vite@7`.
+
+| Dependency | Version | Kind |
+| --- | --- | --- |
+| `react` | `19.2.0` | dependency |
+| `react-dom` | `19.2.0` | dependency |
+| `react-native` | `0.83.4` | dependency |
+| `react-native-web` | `^0.21.2` | dependency |
+| `vite` | `^7.0.0` | devDependency |
+| `@vitejs/plugin-react` | `^5.0.0` | devDependency |
+
+## Vite config shape
+
+The `vite.config.mjs` the scaffold emits derives outputs from the SDK preset so authors never need host-repo access:
+
+- `defineReactNativeWebViteBuildPreset(...)` owns `build.outDir` (`preset.output.root`) and the `react-native` → `react-native-web` alias.
+- `createReactNativeWebVitePlugins()` intercepts the host-runtime externals (`react`, `react-native-web`, the host API client) so the built bundle never inlines them.
+- `@vitejs/plugin-react` runs in **classic** JSX mode (`react({ jsxRuntime: 'classic' })`) so the JSX transform routes through the externalized `react` specifier. The automatic runtime's `react/jsx-runtime` import is not externalized and would inline React, breaking host singleton sharing — keep classic mode and `import * as React from 'react'`.
 
 ## Compatibility
 
-The contribution should declare the host UI API version and React/React Native compatibility expected by the bundle.
+The contribution declares the host UI API version and React/React Native compatibility expected by the bundle. Keep the scaffold's manifest `compatibility` block aligned with the installed dependency versions above.
 
 ## Boundary
 

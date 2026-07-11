@@ -1,6 +1,6 @@
 # Agents catalog (CLI + app + `@happier-dev/agents`)
 
-This doc explains how the **Agents catalog** works end-to-end in Happier, and how to add a new agent/provider.
+This doc explains how the **Agents catalog** works end-to-end in Happier and how to add a new executable Agent. Model sources such as OpenRouter, Ollama, and DeepSeek are **Providers** and are documented separately in [Providers](./providers.md).
 
 The goal is that both surfaces:
 - stay **catalog-driven** (no screen-level `if (agentId === ...)`),
@@ -63,35 +63,35 @@ What belongs here:
 Example:
 - `packages/protocol/src/spawnSession.ts` defines `SpawnSessionErrorCode` + `SpawnSessionResult`.
 
-### 3) CLI agent catalog: `apps/cli/src/backends/catalog.ts`
+### 3) CLI agent catalog: `apps/cli/src/agent/catalog/**`
 
-This is the CLI’s explicit assembly of backends into a deterministic map:
-- `export const AGENTS: Record<CatalogAgentId, AgentCatalogEntry> = { ... }`
-- helper resolvers such as `resolveCatalogAgentId(...)`
+This is the CLI’s deterministic projection of Agent plugin contributions into catalog entries:
+- `apps/cli/src/agent/catalog/registry.ts` exposes `AGENTS` from the resolved contribution registry
+- helper resolvers such as `resolveCatalogAgentId(...)` live under `apps/cli/src/agent/catalog/**`
 
-True provider-specific backend folders live under:
-- `apps/cli/src/backends/<agentId>/**`
+First-party Agent-specific runtime leaves live under:
+- `packages/plugins/<agentId>/src/agent/**`
 
 Generic ACP runtime/catalog machinery lives under:
 - `apps/cli/src/agent/acp/**`
 - `apps/cli/src/agent/acp/catalog/**`
 
 That split is intentional:
-- `apps/cli/src/backends/**` is for provider-owned implementations
-- `apps/cli/src/agent/acp/**` is for provider-agnostic ACP plumbing
+- `packages/plugins/<agentId>/src/agent/**` is for Agent-owned implementations
+- `apps/cli/src/agent/acp/**` is for Agent-agnostic ACP plumbing
 - built-in generic ACP agents such as Kiro are declared in `@happier-dev/agents` and consumed by the generic ACP layer
+- `apps/cli/src/backends/**` is retired host-backend residue and must not be recreated
 
-### 4) App agents catalog: `apps/ui/sources/agents/catalog.ts`
+### 4) App agents catalog: `apps/ui/sources/agents/catalog/catalog.ts`
 
 This is the app’s single public surface for screens:
-- screens import only from `apps/ui/sources/agents/catalog.ts`
+- screens import from the `@/agents/catalog` entrypoint backed by `apps/ui/sources/agents/catalog/**`
 - it composes:
-  - **core registry** (`registryCore.ts`) for identity + app config
-  - **UI registry** (`registryUi.ts`) for assets/visuals (lazy loaded for Node-safe tests)
-  - **behavior registry** (`registryUiBehavior.ts`) for provider-specific hooks
+  - **core registry** (`registry/registryCore.ts`) for identity + app config
+  - **UI registry** (`registry/registryUi.ts`) for assets/visuals (lazy loaded for Node-safe tests)
+  - **behavior registry** (`registry/registryUiBehavior.ts`) for Agent-specific hooks projected from plugin descriptors
 
-Provider code lives under:
-- `apps/ui/sources/agents/providers/<agentId>/**`
+First-party Agent UI definitions live with their plugin under `packages/plugins/<agentId>/src/ui/**`. Generated descriptor projections under `apps/ui/sources/agents/registry/generatedBundledPluginEntries*.ts` feed the host registries; do not recreate the retired `apps/ui/sources/agents/providers/**` tree.
 
 ---
 
@@ -99,16 +99,16 @@ Provider code lives under:
 
 There are three layers inside `apps/ui/sources/agents/`:
 
-1) **Core registry** (`registryCore.ts`)
+1) **Core registry** (`registry/registryCore.ts`)
    - identity + app-facing config (translations, settings gating, permissions, connected service UX, resume config, etc.)
    - consumes canonical ids from `@happier-dev/agents`
 
-2) **UI registry** (`registryUi.ts`)
+2) **UI registry** (`registry/registryUi.ts`)
    - app-only visuals (icons, tints, avatar overlay sizing, glyphs)
-   - imported lazily by `catalog.ts` so Node-side tests can import `@/agents/catalog` without loading native assets
+   - imported lazily by the catalog entrypoint so Node-side tests can import `@/agents/catalog` without loading native assets
 
-3) **Behavior registry** (`registryUiBehavior.ts`)
-   - provider-specific hooks for:
+3) **Behavior registry** (`registry/registryUiBehavior.ts`)
+   - Agent-specific hooks for:
      - experimental resume switches,
      - runtime resume gating/prefetch,
      - preflight checks/prefetch + issues,
@@ -145,7 +145,7 @@ Instead:
 
 ---
 
-## Adding a new agent/provider (end-to-end)
+## Adding a new Agent (end-to-end)
 
 ### Step 0 — pick the id contract (critical)
 
@@ -171,10 +171,10 @@ Add/update:
 - `resume.vendorResumeIdField` (optional)
 - `cloudConnect` (optional)
 
-### Step 2 — choose between provider-specific backend code and generic ACP
+### Step 2 — choose between Agent-specific plugin runtime code and generic ACP
 
-If the agent needs provider-specific behavior, create:
-- `apps/cli/src/backends/myagent/`
+If the Agent needs executable behavior beyond the generic ACP path, create:
+- `packages/plugins/myagent/src/agent/`
 
 Common files (as needed):
 - `cli/command.ts` (subcommand handler)
@@ -184,7 +184,7 @@ Common files (as needed):
 - `acp/backend.ts` (ACP backend, if applicable)
 - `cloud/connect.ts` (cloud connect, if applicable)
 
-If the built-in agent is generic ACP-backed, do not add a bespoke backend folder just to shell out to ACP.
+If the built-in agent is generic ACP-backed, do not add a bespoke plugin runtime leaf just to shell out to ACP.
 
 Instead:
 - add its built-in metadata in `@happier-dev/agents`
@@ -196,56 +196,50 @@ They live in:
 - account settings `acpCatalogSettingsV1`
 - CLI generic ACP catalog loaders under `apps/cli/src/agent/acp/catalog/configured/**`
 
-Tool normalization (if the agent emits tools):
-- Ensure the CLI normalizes provider tool calls/results into canonical V2 tool shapes (so the app can render them).
+Tool normalization (if the Agent emits tools):
+- Ensure the CLI normalizes Agent tool calls/results into canonical V2 tool shapes (so the app can render them).
 - See: `docs/tool-normalization.md` (V2 schemas + normalization entrypoints + trace/fixtures workflow).
 
-### Step 3 — export one catalog entry and wire it into the CLI catalog
+### Step 3 — export plugin contributions and let the CLI catalog project them
 
-For provider-specific agents, create:
-- `apps/cli/src/backends/myagent/index.ts`
+For Agent-specific runtimes, export a contribution from the plugin package, typically from:
+- `packages/plugins/myagent/src/agent/definition.ts`
+- `packages/plugins/myagent/src/agent/contributions/runtime.ts` when runtime hooks are needed
 
 Pattern:
 
 ```ts
-import { AGENTS_CORE } from '@happier-dev/agents';
-import type { AgentCatalogEntry } from '../types';
-
-export const agent = {
-  id: AGENTS_CORE.myagent.id,
-  cliSubcommand: AGENTS_CORE.myagent.cliSubcommand,
-  vendorResumeSupport: AGENTS_CORE.myagent.resume.vendorResume,
-  getCliCommandHandler: async () => (await import('./cli/command')).handleMyAgentCliCommand,
-  getCliDetect: async () => (await import('./cli/detect')).cliDetect,
-  // other hooks as needed...
-} satisfies AgentCatalogEntry;
+export const AGENT_DEFINITION = Object.freeze({
+  id: 'myagent',
+  core: {
+    id: 'myagent',
+    cliSubcommand: 'myagent',
+    detectKey: 'myagent',
+    resume: { vendorResume: 'unsupported', vendorResumeIdField: null },
+    // other shared Agent facts...
+  },
+  runtimeContributions: {
+    agentCatalogEntry: {
+      importName: 'MYAGENT_AGENT_RUNTIME_CONTRIBUTION',
+      source: './agent/contributions/runtime',
+    },
+  },
+});
 ```
 
-Then edit:
-- `apps/cli/src/backends/catalog.ts`
+The CLI catalog reads generated/resolved plugin contributions through
+`apps/cli/src/agent/catalog/registry.ts`; do not add filesystem-scanned or side-effect
+registration paths.
 
-Add:
+### Step 4 — add plugin-owned UI descriptors
 
-```ts
-import { agent as myagent } from '@/backends/myagent';
+Keep Agent UI facts with the plugin:
 
-export const AGENTS = {
-  // ...
-  myagent,
-};
-```
+- `packages/plugins/<agentId>/src/ui/descriptor.ts` for serializable UI metadata;
+- `packages/plugins/<agentId>/src/ui/uiBehavior.ts` only for behavior that cannot be expressed declaratively;
+- `packages/plugins/<agentId>/src/ui/settings/**` for Agent-owned settings descriptors/components when needed.
 
-### Step 4 — add the app provider folder + registries
-
-Create provider modules:
-- `apps/ui/sources/agents/providers/<agentId>/core.ts`
-- `apps/ui/sources/agents/providers/<agentId>/ui.ts`
-- `apps/ui/sources/agents/providers/<agentId>/uiBehavior.ts` (optional; only if you need overrides)
-
-Wire them into registries:
-- add `*_CORE` to `apps/ui/sources/agents/registryCore.ts`
-- add `*_UI` to `apps/ui/sources/agents/registryUi.ts`
-- add `*_UI_BEHAVIOR_OVERRIDE` to `apps/ui/sources/agents/registryUiBehavior.ts` (only if you have overrides)
+Run the bundled-plugin projection generator so the descriptor is represented in `apps/ui/sources/agents/registry/generatedBundledPluginEntries*.ts`. Host registries consume generated projections; do not hand-maintain an Agent-specific branch in a generic screen.
 
 ### Step 5 — update `@happier-dev/protocol` only when the boundary truly changes
 
@@ -278,11 +272,11 @@ If you’re running this repo via happy-stacks, prefer:
 
 ## Node-safe imports (tests)
 
-Some tests import `apps/ui/sources/agents/catalog.ts` in a Node environment. Avoid importing native/icon modules from code that executes during those imports.
+Some tests import the app agents catalog in a Node environment. Avoid importing native/icon modules from code that executes during those imports.
 
 Patterns we use:
-- `catalog.ts` lazy-loads `registryUi.ts` via `require('./registryUi')` to avoid loading image files in Node.
-- if a provider behavior needs a React Native component (e.g. action chips), lazy-require it inside the hook.
+- the catalog entrypoint lazy-loads `registry/registryUi.ts` to avoid loading image files in Node.
+- if an Agent behavior needs a React Native component (for example action chips), lazy-load it inside the hook.
 
 ---
 
@@ -290,5 +284,5 @@ Patterns we use:
 
 - Don’t “auto-discover” backends by scanning the filesystem. We want deterministic bundling and explicit reviewable changes.
 - Don’t do side-effect self-registration (“import this file and it registers itself”). It makes ordering brittle and behavior hard to audit.
-- Don’t hardcode agent-specific logic in generic screens; add a typed hook in the provider’s `uiBehavior.ts` instead.
-- Don’t import native assets from code that must run in Node tests (keep assets in `registryUi.ts` and lazy-load).
+- Don’t hardcode Agent-specific logic in generic screens; add a typed hook in the Agent plugin's `uiBehavior.ts` instead.
+- Don’t import native assets from code that must run in Node tests (keep assets in `registry/registryUi.ts` and lazy-load).

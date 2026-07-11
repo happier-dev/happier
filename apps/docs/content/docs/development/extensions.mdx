@@ -85,7 +85,7 @@ The manifest-first runtime model is:
 
 - `.happier-plugin/plugin.json` declares identity, capabilities, permissions, and projected contributions.
 - `activate(api)` binds executable handlers and disposables for manifest-declared ids.
-- invoked handlers and backend engines receive `PluginContextV1` for host runtime capabilities.
-- backend engines expose `BackendEngineV1`, including optional `runtimeCore`, facets, and backend surfaces.
+- invoked handlers and Agent runtimes receive `PluginContextV1` for host runtime capabilities.
+- Agent runtimes expose `AgentRuntimeV1` through `RegisterAgentRuntimeV1`, including optional `runtimeCore`, facets, and Agent surfaces.
 
 Older extension terminology and activation-time static provider/backend registration examples are not the recommended public authoring path.

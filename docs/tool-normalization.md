@@ -71,7 +71,7 @@ Codex local-control is intentionally different from Claude local-control:
 
 - Claude local-control reconstructs tool events **in the app** from transcript text.
 - Codex local-control reconstructs tool events **in the CLI** from Codex rollout JSONL and then emits them through the
-  normal `sendCodexMessage(...)` pathway, so **V2 tool normalization + renderers apply**.
+  normal `sendProviderMessage({ body })` pathway, so **V2 tool normalization + renderers apply**.
 
 Codex rollout source directory:
 
@@ -80,7 +80,7 @@ Codex rollout source directory:
 
 Mapping Codex rollout tool names to canonical tools:
 
-- `apps/cli/src/backends/codex/rollout/projection/rolloutToolNameMapping.ts`
+- `packages/plugins/codex/src/agent/rollout/projection/**`
   - Keeps a conservative allowlist of observed non-MCP tool names (drift detection via unit tests).
   - Canonicalizes known tools (`exec_command` → `Bash`, `apply_patch` → `Patch`).
   - Treats `mcp__*` tools as pass-through (they’re already handled by the V2 normalizers/renderers).

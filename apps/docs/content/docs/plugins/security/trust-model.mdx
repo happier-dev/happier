@@ -13,6 +13,14 @@ Common source classes include local path plugins, local archives, remote archive
 
 Local trusted sources can execute after validation. Prompt or untrusted sources must go through an install/trust flow before daemon code is imported.
 
+A `--dev` install grants `trustPolicy:'local_trusted'` only when the plugin directory is inside the workspace root of the install invocation; otherwise the plugin stays `prompt` and its daemon code will not load. Approve a pending local plugin explicitly with:
+
+```bash
+happier plugins trust <pluginId>
+```
+
+This flips the installed plugin's stored `trustPolicy` to `local_trusted` (the same trust signal a local install records) and clears the pending `plugin_trust_approval_required` diagnostic. Until it is approved, `happier plugins call <actionId>` on that plugin fails with a `plugin_trust_approval_required` error naming the plugin and the exact `happier plugins trust` command to run.
+
 ## Reload safety
 
 Reload builds a new runtime registry generation. If activation fails and a previous working generation exists, the host can keep the last known good runtime registry.

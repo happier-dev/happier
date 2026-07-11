@@ -122,21 +122,21 @@ If you already saved the machine as a Remote host, you can pick it from the wiza
 
 When you enter a new SSH target inline, the wizard shows a **Save this host** toggle inside the SSH form itself. That lets you decide before submitting whether the host should be saved as a reusable Remote host.
 
-## Provider setup (optional)
+## Agent setup (optional)
 
-After a machine is set up, the wizard can guide provider setup. The underlying CLI surface is:
-
-```bash
-happier providers setup
-```
-
-You can also pass a provider list when you already know what you want:
+After a machine is set up, the wizard can guide agent setup. The underlying CLI surface is:
 
 ```bash
-happier providers setup --providers codex,claude
+happier agents setup
 ```
 
-When you choose providers in the wizard, it can prefill the CLI command with the selected providers for you.
+You can also pass an agent list when you already know what you want:
+
+```bash
+happier agents setup --providers codex,claude
+```
+
+When you choose agents in the wizard, it can prefill the CLI command with the selected agents for you.
 
 If remote-host persistence is disabled by your server/build policy, the wizard still supports one-time SSH setup. It simply won’t offer long-term saving for the host.
 

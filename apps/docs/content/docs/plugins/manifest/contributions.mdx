@@ -24,6 +24,7 @@ description: Contribution families that a plugin can declare for projection and 
 | UI artifacts | Hosted web, embedded web, or React Native UI surfaces | built artifact tree |
 | request interceptors | Policy over plugin-authored fetch calls | `api.registerRequestInterceptor` |
 | `managedDependencies` | Host-managed tool/runtime dependencies | dependency installer/validator |
+| `voiceModelPacks` | Immutable STT/TTS model and voice assets for host-owned engines | none; declarative data only |
 
 The exact availability of a family depends on the current Happier version and the plugin's declared `uses[]` families.
 
@@ -38,3 +39,11 @@ Registration methods bind executable handlers to manifest-declared ids. Invalid,
 ## Dynamic runtime state is not a contribution
 
 Agent-native commands, model lists, active account state, transcript lines, runtime status, and native session ids are runtime state. They should flow through runtime services, events, facets, or agent runtime surfaces, not become static manifest contributions.
+
+## Voice model packs
+
+`contributes.voiceModelPacks` is a versioned declarative asset contract. A V1 row declares a plugin-local id, the daemon and/or native-device execution hosts, the built-in runtime family and ABI it requires, compatible host/platform/architecture facts, immutable file SHA-256 digests and byte counts, provenance, and license metadata. The host combines the local id with the installed plugin id; plugins must not construct filesystem paths or attempt to override built-in/default packs.
+
+The host independently checks installed-plugin trust and source digest, signature/authenticity evidence, enablement and revocation, scoped `network` grants, license acceptance, resource limits, runtime compatibility, redirects/DNS destinations, and downloaded bytes. A manifest cannot grant itself any of those facts. Required and final download origins must remain within the plugin's existing scoped network authority; model-license acceptance is a separate user decision when the declared license requires it.
+
+This family can add data for an inference family already compiled into Happier. It cannot register a voice provider, connection factory, protocol parser, transcript mapper, credential callback, native module, daemon worker, codec, server adapter, UI callback, or executable inference engine. Use the existing generic `contributes.settings` for plugin-local host-rendered settings and the existing documented voice hook ids for lifecycle/transcript observation; there is no `voiceSettings` family or voice registration callback.

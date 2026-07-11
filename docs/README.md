@@ -4,17 +4,27 @@ This folder documents how Happier works internally, with a focus on protocol, ba
 
 ## Index
 - protocol.md: Wire protocol (WebSocket), payload formats, sequencing, and concurrency rules.
+- pending-delivery.md: Durable pending-delivery vocabulary, ownership, compatibility, and receipt boundaries.
 - api.md: HTTP endpoints and authentication flows.
-- encryption.md: Encryption boundaries and on-wire encoding.
+- encryption.md: Encryption boundaries, on-wire encoding, and session storage modes.
+- feature-gating.md: Canonical feature catalog, payload, policy, and gate-consumption contracts.
+- testing.md: Repository test lanes, placement rules, and e2e conventions.
+- binary-runtime.md: Binary-safe runtime rules and bundled internal workspace packaging.
 - backend-architecture.md: Internal backend structure, data flow, and key subsystems.
 - deployment.md: How to deploy the backend and required infrastructure.
 - cli-architecture.md: CLI and daemon architecture and how they interact with the server.
-- codex-feature-matrix.md: Low-level Codex implementation matrix and unified-architecture migration notes.
-- claude-feature-matrix.md: Low-level Claude implementation matrix and unified-architecture migration notes.
-- opencode-feature-matrix.md: Low-level OpenCode implementation matrix and unified-architecture migration notes.
-- pi-feature-matrix.md: Low-level PI implementation matrix and unified-architecture migration notes.
-- acp-provider-feature-matrix.md: Low-level ACP-provider matrix and catalog migration notes.
+- ios-simulator-helper.md: iOS simulator helper architecture, trust chain, and the private-framework App Store / TOS posture.
 - issue-triage.md: How the GitHub issue triage workflows are wired to maintainer tooling.
+
+### Archived architecture snapshots
+
+The following pre-runtime-unification matrices are retained only as historical migration context. They intentionally describe removed paths and the former use of “provider” for executable Agents; do not use them as current source maps or implementation guidance. Use `agents-catalog.md` for executable Agents and `providers.md` for model Providers.
+
+- codex-feature-matrix.md: Archived Codex implementation/migration snapshot.
+- claude-feature-matrix.md: Archived Claude implementation/migration snapshot.
+- opencode-feature-matrix.md: Archived OpenCode implementation/migration snapshot.
+- pi-feature-matrix.md: Archived PI implementation/migration snapshot.
+- acp-provider-feature-matrix.md: Archived ACP Agent catalogization snapshot (historical filename).
 
 ## Conventions
 - Paths and field names reflect the current implementation in `apps/server`.

@@ -542,6 +542,38 @@ graph TB
 - Timestamps remain plain numbers (epoch ms) and are not encrypted by the server.
 - Non-encrypted identifiers (ids, tags, versions) are always plain strings/numbers.
 
+## Session storage modes
+
+Sessions can store transcript content in encrypted-at-rest or plaintext-at-rest mode. This is a storage mode, not a transport-security or authentication mode.
+
+Canonical concepts:
+
+- **Server storage policy:** `required_e2ee | optional | plaintext_only`, surfaced through `/v1/features`.
+- **Account encryption mode:** `e2ee | plain`, used as the default for new sessions.
+- **Session encryption mode:** `e2ee | plain`, fixed at session creation so a transcript does not mix modes.
+- **Content envelope:**
+  - encrypted content: `{ t: 'encrypted', c: string }`
+  - plaintext content: `{ t: 'plain', v: unknown }`
+
+Write paths must enforce mode/content-kind compatibility:
+
+- `e2ee` sessions accept encrypted content only.
+- `plain` sessions accept plain content only.
+
+Clients must parse the envelope and branch explicitly. Do not guess that content is encrypted.
+
+Sharing rules:
+
+- Plain sessions can share without `encryptedDataKey` because access is server-managed.
+- E2EE sessions and public shares require a valid encrypted data-key envelope.
+
+Feature gates:
+
+- `encryption.plaintextStorage`
+- `encryption.accountOptOut`
+
+Do not gate plaintext behavior on raw env vars or `capabilities` fields.
+
 ## Implementation references
 - Client crypto: `apps/cli/src/api/encryption.ts`
 - Session message format: `apps/cli/src/api/types.ts`

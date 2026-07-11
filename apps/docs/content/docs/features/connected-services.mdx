@@ -1,22 +1,23 @@
 ---
 title: Connected services
-description: Link provider subscriptions and API keys to Happier, reuse them across supported backends, and monitor quota snapshots where available.
+description: Link account/subscription credentials to Happier, reuse them across supported Agents, and monitor quota snapshots where available.
 ---
 
-Connected services let you store provider credentials once in Happier and then reuse them across supported backends and sessions.
+Connected services let you store supported account/subscription credentials once in Happier and reuse them across compatible Agents and sessions.
 
-They are different from **provider authentication** in provider settings:
+They are different from **Agent authentication** and first-class **Provider connections**:
 
-- **Connected services** are stored in Happier and can be reused across compatible backends
-- **Provider authentication** reflects the native login state of a provider CLI on one specific machine
+- **Connected services** are account/subscription credentials stored in Happier and reusable across compatible Agents;
+- **Agent authentication** reflects the native login state of an Agent CLI on one machine;
+- **Provider connections** configure model-source endpoints, catalogs, and API-key bindings under **Settings → Providers**.
 
-See [Provider authentication](/docs/features/provider-authentication).
+See [Agent authentication](/docs/features/provider-authentication) and [Provider integrations](/docs/advanced/provider-integrations).
 
 They exist so you can:
 
 - connect subscriptions and API keys without manually re-entering them for every backend
 - keep credentials encrypted in Happier Cloud and decrypt them only on the client / daemon
-- choose per-service auth at session start instead of relying only on each backend's native auth
+- choose per-service auth at session start instead of relying only on each Agent's native auth
 - monitor usage / quota snapshots for supported services
 - make multi-machine workflows easier when the target machine should reuse the same Happier-managed credential
 
@@ -31,7 +32,7 @@ Happier models different credential types as distinct connected services:
 - `gemini`: Gemini OAuth auth
 - `github`: GitHub token auth for source-control workflows, in builds that expose GitHub connected accounts
 
-This split is intentional. Subscription auth and API-key auth have different provider behavior, billing paths, and backend materialization requirements, so Happier does not merge them into a single generic "Claude" or "OpenAI" credential type.
+This split is intentional. Subscription auth and API-key auth have different account behavior, billing paths, and Agent materialization requirements, so Happier does not merge them into a single generic "Claude" or "OpenAI" credential type. A model Provider connection may bind an appropriate Saved Secret independently; it is not automatically a connected-service account.
 
 GitHub is different from the agent/backend credentials above. When enabled, it is used by source-control features such as GitHub repository publishing and GitHub pull request operations.
 
@@ -128,11 +129,11 @@ GitLab is not currently documented as a connected service in Happier. GitLab mer
 
 Happier does not use embedded OAuth capture on web. Web falls back to paste-based flows because a browser app cannot reliably auto-capture provider redirects to `localhost`.
 
-## Backend compatibility
+## Agent compatibility
 
-Connected services are not global "works everywhere" credentials. Each backend declares which service ids and credential kinds it can consume.
+Connected services are not global “works everywhere” credentials. Each Agent declares which service ids and credential kinds it can consume.
 
-| Backend | Supported connected services |
+| Agent | Supported connected services |
 | --- | --- |
 | Claude | `claude-subscription` (setup-token or OAuth), `anthropic` (API key) |
 | Codex | `openai-codex` (OAuth), `openai` (API key) |
@@ -195,7 +196,7 @@ Why:
 
 - the credential is stored in Happier, not only in one machine-local provider login
 - compatible backends can materialize that credential again on another machine
-- you can hand off the same Happier session and continue without depending only on native provider CLI auth on the destination
+- you can hand off the same Happier session and continue without depending only on native Agent CLI auth on the destination
 
 This is especially useful for:
 
@@ -208,7 +209,7 @@ Connected services do not replace every native provider login flow. Some provide
 See:
 
 - [Session handoff](/docs/features/session-handoff)
-- [Provider authentication](/docs/features/provider-authentication)
+- [Agent authentication](/docs/features/provider-authentication)
 
 ## Profiles, defaults, and labels
 

@@ -30,18 +30,18 @@ If the background service is not running or the machine is unreachable, the embe
 
 Full guide: [Embedded terminal](/docs/features/embedded-terminal).
 
-## Provider authentication support
+## Agent authentication and Provider support
 
-Provider login flows in provider settings also depend on the background service because Happier runs the real provider CLI on the target machine.
+Agent login flows in Agent settings depend on the background service because Happier runs the real Agent CLI on the target machine. Provider probing, local discovery, and scoped credential materialization also happen in the background service rather than the browser.
 
 That is what allows Happier to:
 
-- launch provider login commands on the selected machine
-- stream the provider’s terminal output back into the app
+- launch Agent login commands on the selected machine
+- stream the Agent's terminal output back into the app
 - detect URLs printed during login flows
 - refresh machine-local auth state after the login flow exits
 
-Full guide: [Provider authentication](/docs/features/provider-authentication).
+Full guides: [Agent authentication](/docs/features/provider-authentication) and [Provider integrations](/docs/advanced/provider-integrations).
 
 ## Local memory search support
 

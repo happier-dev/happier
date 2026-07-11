@@ -43,7 +43,7 @@ graph TB
 - **API client:** `src/api` handles HTTP + Socket.IO, encryption, and RPC.
 - **Daemon:** `src/daemon` runs in the background, spawns sessions, and maintains machine state.
 - **Persistence/config:** `src/persistence.ts` + `src/configuration.ts` manage local state in `~/.happy`.
-- **Agents:** `src/claude`, `src/codex`, `src/gemini` provide provider-specific runners.
+- **Agents:** `src/agent/catalog` projects agent commands from bundled plugin contributions; agent-specific runtime code lives behind catalog entries instead of top-level `src/<agent>` trees.
 
 ## CLI entry flow
 
@@ -54,7 +54,7 @@ flowchart TD
     Parse --> Doctor{doctor?}
     Parse --> Auth{auth?}
     Parse --> Connect{connect?}
-    Parse --> Agent{codex/gemini?}
+    Parse --> Agent{agent command?}
     Parse --> Default{default}
 
     Doctor --> RunDoctor[Run diagnostics]
@@ -72,7 +72,7 @@ flowchart TD
 ```
 
 `src/index.ts` is the CLI router. It:
-- Parses subcommands (`doctor`, `auth`, `connect`, `codex`, `gemini`, and default run flows).
+- Parses subcommands (`doctor`, `auth`, `connect`, plugin-projected agent commands, and default run flows).
 - Ensures auth and machine setup when needed (`authAndSetupMachineIfNeeded`).
 - Starts the daemon or runs an agent directly based on subcommand/context.
 

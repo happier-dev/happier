@@ -35,30 +35,30 @@ When handoff succeeds:
 - session metadata stays attached to that same session
 - the new machine becomes the active owner
 
-For supported providers, the provider runtime state also moves with the session so the target machine can continue the same work instead of starting a brand-new conversation.
+For supported Agents, the Agent runtime state also moves with the session so the target machine can continue the same work instead of starting a brand-new conversation.
 
 ## What handoff does not do
 
 Session handoff does not automatically:
 
-- log a provider CLI into the target machine
+- log an Agent CLI into the target machine
 - merge or overwrite the target workspace unless you explicitly enable workspace transfer
-- make unsupported providers suddenly resumable across machines
+- make unsupported Agents suddenly resumable across machines
 
-If the target side cannot satisfy the provider/runtime requirements, the handoff cannot complete.
+If the target side cannot satisfy the Agent/runtime and exact Provider-connection requirements, the handoff cannot complete.
 
-## Supported providers
+## Supported Agents
 
-Session handoff is provider-dependent.
+Session handoff is Agent-dependent.
 
 Current status:
 
-| Provider | Status | Notes |
+| Agent | Status | Notes |
 | --- | --- | --- |
 | Claude | Supported | Works with supported Claude session state transfer. |
 | OpenCode | Supported | Works with OpenCode session import/export flows. |
 | Codex | Experimental | Available, but less stable than Claude/OpenCode. |
-| Other providers | Unsupported | The handoff action is hidden or unavailable. |
+| Other Agents | Unsupported | The handoff action is hidden or unavailable. |
 
 ## Session types
 
@@ -88,7 +88,7 @@ You can choose:
 - Keep direct
 - Convert to Happier
 
-Use Keep direct when you want the target machine to keep following the provider-backed session.
+Use Keep direct when you want the target machine to keep following the Agent-native session.
 
 Use Convert to Happier when you want to move out of the machine-bound direct model and let Happier own the session going forward.
 
@@ -177,20 +177,21 @@ Related guide:
 
 - [Connected services](/docs/features/connected-services)
 
-## Provider authentication and handoff
+## Agent authentication and handoff
 
-Machine-local provider authentication still matters.
+Machine-local Agent authentication still matters.
 
-If a provider/backend relies on the native provider CLI login state, the target machine must be ready too.
+If an Agent relies on its native CLI login state, the target machine must be ready too. A local/private Provider connection also needs an endpoint-bound grant on the target machine.
 
 So the mental model is:
 
-- Connected services help when the backend can materialize auth from Happier-managed credentials
-- Provider authentication still matters for machine-local provider CLI workflows
+- Connected services help when the Agent can materialize auth from Happier-managed credentials;
+- Agent authentication still matters for machine-local Agent CLI workflows;
+- Provider connections are re-resolved exactly and never silently replaced during handoff.
 
 Related guide:
 
-- [Provider authentication](/docs/features/provider-authentication)
+- [Agent authentication](/docs/features/provider-authentication)
 
 ## What you see during handoff
 
@@ -243,7 +244,7 @@ Usually one of these is true:
 
 - the machine is offline
 - the machine is the current owner
-- the provider/backend does not support handoff for this session
+- the Agent does not support handoff for this session
 
 ### Workspace transfer is disabled
 
@@ -265,6 +266,6 @@ The action can be unavailable when:
 - [Happier and direct sessions](./direct-sessions)
 - [Session settings](./session-settings)
 - [Connected services](./connected-services)
-- [Provider authentication](./provider-authentication)
+- [Agent authentication](./provider-authentication)
 - [Attach to a running session](./attach-to-session)
 - [Session forking & replay](./session-forking)

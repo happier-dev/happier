@@ -1,103 +1,75 @@
 ---
 title: Provider Integrations
-description: Use third-party routers, switchers, and plugins with Happier (Claude Code + OpenCode).
+description: Connect third-party model routers and compatible model APIs to Happier Agents.
 ---
 
-Happier runs **provider CLIs** (for example: **Claude Code** and **OpenCode**) as subprocesses, then syncs transcripts/state to your Happier server so you can continue from other devices.
+Happier runs **Agents** such as Claude Code, Codex, and OpenCode. A **Provider** is a model source that an Agent can use, such as OpenRouter, DeepSeek, a company gateway, Ollama, or LM Studio.
 
-Most third-party “integration” projects fall into two buckets:
+Configure model routing under **Settings → Providers**. Profiles remain optional launch presets and are not the owner of provider endpoints, API keys, or model catalogs.
 
-1) **Environment-based**: they set env vars like `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`.
-2) **Config-file based**: they write config files that the provider CLI reads (for example `~/.claude/settings.json`).
+For MCP servers, including detected Agent-native MCP configuration and per-session selection, see [MCP servers](/docs/features/mcp-servers).
 
-To use them with Happier, the only requirement is: **those settings must be visible to the provider CLI process that Happier spawns**.
+## Connect a third-party model API
 
-This matters both for normal provider sessions and for the **Authentication** section inside each provider settings page, because Happier reads the same machine-local provider auth state from the CLI environment, local files, or provider-native status commands.
+If the service is a built-in Provider:
 
-For user-facing MCP management inside Happier itself, including Happier-managed MCP servers, detected provider-native MCP configs, preview, JSON import, and per-session MCP selection, see:
+1. Open **Settings → Providers**.
+2. Select the Provider and add a connection. You may add more than one connection for separate accounts or deployments.
+3. Add the requested API key through Saved Secrets.
+4. Test the connection on the machine that will run the Agent.
+5. Start a session and choose a model from that Provider's section of the model picker.
 
-- [MCP servers](/docs/features/mcp-servers)
+For an unlisted service, choose **Add custom provider** and select the compatibility contract the service actually implements. Enter its base URL, add an API key if required, and fetch or manually add its model ids.
 
-## How env vars reach the provider process
+The model appears only for Agents whose protocol and required capabilities are compatible. An unverified pairing may be shown as **Experimental** and require explicit confirmation; an incompatible pairing is not selectable.
 
-### Terminal-started sessions
+## Local routers and model servers
 
-If you start a session from your terminal, Happier inherits your shell environment and passes it through to the provider process.
+Local endpoints are scoped to the target machine. Happier may detect a running process, but it confirms availability by probing the Provider's model API before showing it as connected.
 
-This means “activation” commands like `eval "$(…)"` (that only export env vars) work well: run the activation, then run `happier`.
+For a local router such as Claude Code Router:
 
-### UI / remotely-started sessions (daemon)
+1. Install and start the router on the machine that runs the Happier daemon.
+2. Open **Settings → Providers → Add custom provider**.
+3. Choose the router's documented API compatibility and enter its loopback URL.
+4. Add its token through Saved Secrets if it requires one.
+5. Enable the connection for that specific machine and test it.
 
-When you start sessions remotely (from the app), there is no interactive shell. The reliable way to provide env vars is:
+The per-machine confirmation is deliberate. `localhost` and private-network addresses can identify a different service on every machine, so Happier does not send credentials to them from another machine without an endpoint-bound machine grant.
 
-- **Settings → Profiles**: create/select a profile and set the env vars there.
+If a supported local Provider such as Ollama or LM Studio is discovered, it appears under **On this machine**. Enabling it uses the same connection and machine-grant path as a manually configured local endpoint.
 
-Those profile env vars are passed to the provider CLI when the daemon spawns the process.
+## Environment switchers
 
-For the full profile guide, see [Features → Profiles](/docs/features/profiles).
+Tools such as shell-based Claude endpoint switchers commonly print `ANTHROPIC_BASE_URL` and token exports or launch `claude` themselves. Those exports may still affect a Happier process started from the same terminal, but they are not the durable configuration path for remotely started sessions.
 
-## Claude Code Router (`claude-code-router`)
+Use a Provider connection instead:
 
-Claude Code Router runs a local server and makes Claude Code talk to it by setting `ANTHROPIC_BASE_URL` and a token.
+- the endpoint is typed and validated;
+- the key stays in Saved Secrets;
+- model discovery and compatibility are visible before launch;
+- the exact connection is persisted with the session;
+- child-process configuration is scoped to that Agent session rather than mutating the daemon environment.
 
-Recommended usage with Happier:
+Do not use wrapper commands that launch an Agent directly (for example a router's `... code` command) when you need Happier session syncing. Start the Agent through Happier and select the configured Provider model.
 
-1) Install + configure `claude-code-router`.
-2) Start the router service (`ccr start`).
-3) Configure env vars for Claude Code:
-   - Terminal flow: run the router’s activation command (for example `eval "$(ccr activate)"`), then start Happier (`happier`).
-   - Remote/UI flow: create a **Claude** profile and set:
-     - `ANTHROPIC_BASE_URL` → your router URL (for example `http://127.0.0.1:3456`)
-     - `ANTHROPIC_AUTH_TOKEN` → the router API key/token (if configured)
+## Agent-native config-file integrations
 
-Avoid `ccr code …` for Happier usage: it launches Claude Code directly, which bypasses Happier’s session syncing.
+Some integrations install plugins or write configuration files that an Agent reads directly. For example, an OpenCode plugin may modify files in OpenCode's configuration directory.
 
-## Claude Code Switch (`claude-code-switch`)
+These are Agent-local customizations rather than Happier Provider connections. They work when:
 
-`claude-code-switch` provides:
+- the Agent and integration are installed on the target machine;
+- the same machine-local configuration is visible to the Agent process Happier starts;
+- the integration does not bypass Happier by launching a separate Agent process.
 
-- `ccm`: prints `export …` statements so you can switch providers *in the current shell*.
-- `ccc`: switches *and then execs `claude`* (a convenience launcher).
-- Optional persistence modes that write config files under `~/.claude/…` and/or `.claude/…` in a project.
+If the integration changes where models come from and exposes a compatible model API, prefer a first-class Provider connection so Happier can validate credentials, catalog models, preserve exact selection identity, and apply machine safety rules.
 
-Recommended usage with Happier:
+## Troubleshooting
 
-### Terminal flow (env-based)
-
-1) Install `claude-code-switch` and configure API keys (`ccm config`).
-2) Switch providers in your shell (example):
-   - `eval "$(ccm glm global)"`
-3) Start Happier normally:
-   - `happier`
-
-Do **not** use `ccc …` with Happier. `ccc` launches `claude` directly (bypassing Happier). You want Happier to be the process that spawns `claude`, with the switched env vars already set.
-
-### Remote/UI flow (Profiles)
-
-Create a **Claude** profile (Settings → Profiles) and set the same values that `ccm` would export, for example:
-
-- `ANTHROPIC_BASE_URL`
-- `ANTHROPIC_AUTH_TOKEN`
-- (optional) `ANTHROPIC_MODEL` / `ANTHROPIC_SMALL_FAST_MODEL`
-
-Then select that profile when you start a session from the app.
-
-### Persistence modes (advanced)
-
-If you prefer `claude-code-switch` to write `~/.claude/settings.json` (user-level) or `.claude/settings.local.json` (project-level), those can also work with Happier because the provider CLI will read those files when it starts.
-
-If you see provider settings “not sticking”, the simplest fix is to switch back to the env/profile approach above (it’s explicit and easy to debug).
-
-## Oh My OpenCode (`oh-my-opencode`)
-
-`oh-my-opencode` is primarily an **OpenCode plugin/config installer**. Happier runs OpenCode via ACP (`opencode acp`), so the general rule is:
-
-- If `opencode` uses the plugin when you run it directly, it should behave the same when Happier runs it.
-
-Recommended usage with Happier:
-
-1) Install OpenCode.
-2) Install/configure `oh-my-opencode` (it typically updates your OpenCode config under `~/.config/opencode/…`).
-3) Start an OpenCode session in Happier (OpenCode mode).
-
-For remote/UI sessions, ensure **OpenCode and the plugin are installed on the target machine** (the machine running the daemon).
+- **Provider is missing from the picker:** verify it is enabled on the target machine and that the selected Agent is compatible.
+- **Needs API key:** bind a Saved Secret on the Provider connection; do not put a bearer token in the URL.
+- **Local Provider is unreachable:** confirm the service is running and its server API is enabled, then test the connection again.
+- **Machine confirmation required:** the endpoint is loopback/private or resolved to private space; enable the exact endpoint on that machine.
+- **Model disappeared:** refresh the catalog or add the model id manually. Existing favorites and sessions retain a visible stale reference rather than silently switching models.
+- **Provider was deleted:** choose another connection or recreate it. Happier never falls back silently to an Agent's native provider.
