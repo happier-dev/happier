@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { AgentRuntimeDescriptorV1Schema } from '../sessionMetadata/agentRuntimeDescriptorV1.js';
 import { CODEX_BACKEND_MODES } from '../providers/codex/backendMode.js';
 import { AgentProviderIdV1Schema } from '../providers/agentProviderIdsV1.js';
+import { SessionMessageRoleSchema } from '../sessionMessages/sessionMessageRole.js';
 
 export const DirectSessionsProviderIdSchema = AgentProviderIdV1Schema;
 export type DirectSessionsProviderId = z.infer<typeof DirectSessionsProviderIdSchema>;
@@ -271,6 +272,7 @@ export const DirectTranscriptRawMessageV1Schema = z
     id: z.string().min(1),
     createdAtMs: z.number().int().min(0),
     localId: z.string().min(1).nullable().optional(),
+    messageRole: SessionMessageRoleSchema.nullable().optional(),
     raw: z.object({}).passthrough(),
   })
   .passthrough();

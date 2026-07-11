@@ -83,6 +83,24 @@ describe('normalizeRawMessage messageRole metadata', () => {
         expect(hasSyntheticNoResponseMeta(normalized?.meta)).toBe(true);
     });
 
+    it('filters non-renderable direct transcript rows using producer role metadata', () => {
+        const normalized = normalizeDirectTranscriptMessages([{
+            id: 'direct-api-error',
+            localId: 'claude-jsonl:main:assistant:assistant-api-error',
+            createdAtMs: 1_700,
+            messageRole: 'event',
+            raw: {
+                role: 'agent',
+                content: {
+                    type: 'output',
+                    data: { type: 'assistant', uuid: 'assistant-api-error', isApiErrorMessage: true },
+                },
+            },
+        }]);
+
+        expect(normalized).toEqual([]);
+    });
+
     it('preserves Claude tool calls stored as event-role output rows', () => {
         const normalized = normalizeRawMessage(
             'msg-tool-call',

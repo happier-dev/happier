@@ -10,6 +10,7 @@ export function normalizeDirectTranscriptMessages(items: ReadonlyArray<DirectTra
             typeof item.localId === 'string' ? item.localId : null,
             item.createdAtMs,
             item.raw,
+            { messageRole: item.messageRole ?? undefined },
         );
         if (normalized) out.push(normalized);
     }
