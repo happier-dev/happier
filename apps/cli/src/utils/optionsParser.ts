@@ -77,11 +77,29 @@ export function formatOptionsXml(options: string[]): string {
  * @returns The text with the options block rendered as a numbered list
  */
 export function formatTextWithOptionsForTerminal(text: string): string {
-  const { text: textWithoutOptions, options } = parseOptionsFromText(text);
-  if (options.length === 0) {
+  const blockRegex = /<options>\s*([\s\S]*?)\s*<\/options>/gi;
+  if (!blockRegex.test(text)) {
     return text;
   }
-  const numberedList = options.map((option, index) => `  ${index + 1}. ${option}`).join('\n');
-  const optionsBlock = `Options:\n${numberedList}`;
-  return textWithoutOptions.length > 0 ? `${textWithoutOptions}\n\n${optionsBlock}` : optionsBlock;
+  blockRegex.lastIndex = 0;
+  // Replace EVERY complete options block in place (a message may contain more than
+  // one), keeping surrounding prose in its original position. Incomplete blocks
+  // (opening tag without closing tag, e.g. mid-stream) pass through untouched.
+  const formatted = text.replace(blockRegex, (_match, inner: string) => {
+    const optionRegex = /<option>(.*?)<\/option>/gi;
+    const options: string[] = [];
+    let optionMatch: RegExpExecArray | null;
+    while ((optionMatch = optionRegex.exec(inner)) !== null) {
+      const optionText = optionMatch[1].trim();
+      if (optionText) {
+        options.push(optionText);
+      }
+    }
+    if (options.length === 0) {
+      return '';
+    }
+    const numberedList = options.map((option, index) => `  ${index + 1}. ${option}`).join('\n');
+    return `Options:\n${numberedList}`;
+  });
+  return formatted.replace(/\n{3,}/g, '\n\n').trim();
 }

@@ -74,8 +74,28 @@ describe('formatTextWithOptionsForTerminal', () => {
         expect(formatTextWithOptionsForTerminal(input)).toBe(input);
     });
 
+    it('formats every options block when a message contains more than one', () => {
+        const text = 'First question:\n<options>\n<option>A</option>\n<option>B</option>\n</options>\nSecond question:\n<options>\n<option>C</option>\n</options>';
+        const result = formatTextWithOptionsForTerminal(text);
+        expect(result).not.toContain('<options>');
+        expect(result).toContain('  1. A');
+        expect(result).toContain('  2. B');
+        expect(result).toContain('First question:');
+        expect(result).toContain('Second question:');
+        expect(result.match(/Options:/g)?.length).toBe(2);
+        expect(result).toContain('  1. C');
+    });
+
+    it('drops empty options blocks entirely', () => {
+        const result = formatTextWithOptionsForTerminal('Before\n<options>\n</options>\nAfter');
+        expect(result).not.toContain('<options>');
+        expect(result).toContain('Before');
+        expect(result).toContain('After');
+    });
+
     it('returns text unchanged for an incomplete options block', () => {
         const input = 'Question?\n<options>\n<option>Yes</option>';
         expect(formatTextWithOptionsForTerminal(input)).toBe(input);
-    });
+    
+});
 });
