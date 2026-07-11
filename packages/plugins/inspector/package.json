@@ -1,0 +1,44 @@
+{
+  "name": "@happier-dev/plugins-inspector",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./manifest": {
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "package.json"
+  ],
+  "scripts": {
+    "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
+    "build": "node ../../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
+    "build:ui:web": "vite build",
+    "build:ui:ios": "happier-plugin-build-ui",
+    "test": "vitest run",
+    "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@happier-dev/plugin-sdk": "0.0.0"
+  },
+  "devDependencies": {
+    "@rspack/core": "2.1.3",
+    "@types/react": "19.2.0",
+    "react": "19.2.0",
+    "react-native": "0.83.4",
+    "react-native-web": "^0.21.0",
+    "typescript": "^5.9.2",
+    "vite": "7.3.1",
+    "vitest": "^3.2.4"
+  }
+}
