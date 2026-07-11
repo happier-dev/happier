@@ -1,4 +1,4 @@
-import type { ScmHostingProviderRef } from '@happier-dev/protocol';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm';
 import { describe, expect, it } from 'vitest';
 
 import { createGitlabCliAdapter } from './gitlabCliAdapter.js';

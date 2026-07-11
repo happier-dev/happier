@@ -2,15 +2,8 @@ import type {
   ScmHostingProviderRef,
   ScmPullRequestState,
   ScmPullRequestSummary,
-} from '@happier-dev/protocol';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function readString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
+} from '@happier-dev/plugin-sdk/scm';
+import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 function readPositiveInt(value: unknown): number | null {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;

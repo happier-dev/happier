@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { gitlabHostingProviderAdapter } from './adapter.js';
+import { createGitlabScmHostingProviderAdapter, gitlabHostingProviderAdapter } from './adapter.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 type DetectionResult = Readonly<{
@@ -32,10 +32,7 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
         trustPolicy: 'local_trusted',
         installPolicy: 'link',
       },
-      runtime: {
-        apiVersion: 1,
-        capabilities: ['scmHostingProviders'],
-      },
+      uses: ['scmHostingProviders'],
       contributes: {
         scmHostingProviders: [
           {
@@ -44,20 +41,12 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
             displayName: 'GitLab',
             baseUrl: 'https://gitlab.com',
             remoteHostMatchers: {
-              exactHosts: expect.arrayContaining(['gitlab.com', 'gitlab.company.com', 'code.internal.test']),
+              exactHosts: ['gitlab.com'],
             },
             urlSafety: {
               allowedSchemes: ['https:'],
-              allowedBaseUrls: expect.arrayContaining([
-                'https://gitlab.com',
-                'https://gitlab.company.com',
-                'https://code.internal.test',
-              ]),
-              allowedOrigins: expect.arrayContaining([
-                'https://gitlab.com',
-                'https://gitlab.company.com',
-                'https://code.internal.test',
-              ]),
+              allowedBaseUrls: ['https://gitlab.com'],
+              allowedOrigins: ['https://gitlab.com'],
             },
             capabilities: expect.objectContaining({
               compareUrl: true,
@@ -75,10 +64,26 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
         ],
       },
     });
+    const [provider] = PLUGIN_MANIFEST.contributes.scmHostingProviders;
+    const shippedValues = [
+      ...(provider.remoteHostMatchers?.exactHosts ?? []),
+      ...(provider.urlSafety?.allowedBaseUrls ?? []),
+      ...(provider.urlSafety?.allowedOrigins ?? []),
+    ];
+    expect(shippedValues).not.toContain('gitlab.company.com');
+    expect(shippedValues).not.toContain('code.internal.test');
+    expect(shippedValues).not.toContain('https://gitlab.company.com');
+    expect(shippedValues).not.toContain('https://code.internal.test');
+    for (const value of shippedValues) {
+      expect(value).not.toMatch(/(?:^|[.:/])(?:[^/]*\.test|[^/]*\.company\.com)(?:$|[/:])/);
+    }
   });
 
-  it('detects GitLab remotes and preserves multi-segment group paths', async () => {
+  it('detects bundled GitLab remotes and supports enterprise hosts through test-local options', async () => {
     const adapter = gitlabHostingProviderAdapter as Adapter;
+    const enterpriseAdapter = createGitlabScmHostingProviderAdapter({
+      exactHosts: ['gitlab.company.com', 'code.internal.test'],
+    }) as Adapter;
 
     expect(adapter.detectRemote({
       remoteName: 'origin',
@@ -90,7 +95,7 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
       nameWithOwner: 'happier-dev/mobile/app',
       remoteName: 'origin',
     });
-    expect(adapter.detectRemote({
+    expect(enterpriseAdapter.detectRemote({
       remoteName: 'origin',
       remoteUrl: 'https://gitlab.company.com/platform/happier/app.git',
     })).toMatchObject({
@@ -98,7 +103,7 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
       baseUrl: 'https://gitlab.company.com',
       nameWithOwner: 'platform/happier/app',
     });
-    expect(adapter.detectRemote({
+    expect(enterpriseAdapter.detectRemote({
       remoteName: 'origin',
       remoteUrl: 'ssh://git@code.internal.test/platform/happier/app.git',
     })).toMatchObject({
@@ -123,6 +128,9 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
 
   it('builds encoded GitLab compare URLs without write or CLI behavior', async () => {
     const adapter = gitlabHostingProviderAdapter as Adapter & Record<string, unknown>;
+    const enterpriseAdapter = createGitlabScmHostingProviderAdapter({
+      exactHosts: ['code.internal.test'],
+    }) as Adapter;
     const provider = adapter.detectRemote({
       remoteName: 'origin',
       remoteUrl: 'git@gitlab.com:happier-dev/mobile/app.git',
@@ -136,7 +144,7 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
       base: 'release/2026',
       head: 'feature/pr-support',
     })).toBe('https://gitlab.com/happier-dev/mobile/app/-/compare/release%2F2026...feature%2Fpr-support');
-    expect(adapter.buildCompareUrl({
+    expect(enterpriseAdapter.buildCompareUrl({
       provider: {
         ...provider,
         baseUrl: 'https://code.internal.test/gitlab',

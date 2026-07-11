@@ -4,7 +4,7 @@ import {
   type ScmOperationErrorCode,
   type ScmPullRequestReference,
   type ScmPullRequestSummary,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/scm';
 import type {
   ScmHostingProviderPullRequestCreateInput,
   ScmHostingProviderPullRequestGetInput,

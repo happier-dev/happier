@@ -14,9 +14,10 @@ export const PLUGIN_MANIFEST = definePluginManifest({
     resolvedVersion: '0.0.0',
   },
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: ['scmHostingProviders'] },
-  targets: {},
-  capabilities: { permissions: [] },
+  activationEvents: ['onScmProvider:scm.gitlab'],
+  uses: ['scmHostingProviders'],
+  entrypoints: { main: './dist/index.js' },
+  permissions: { required: [], optional: [] },
   contributes: {
     scmHostingProviders: [
       {
@@ -25,12 +26,12 @@ export const PLUGIN_MANIFEST = definePluginManifest({
         displayName: 'GitLab',
         baseUrl: 'https://gitlab.com',
         remoteHostMatchers: {
-          exactHosts: ['gitlab.com', 'gitlab.company.com', 'code.internal.test'],
+          exactHosts: ['gitlab.com'],
         },
         urlSafety: {
           allowedSchemes: ['https:'],
-          allowedBaseUrls: ['https://gitlab.com', 'https://gitlab.company.com', 'https://code.internal.test'],
-          allowedOrigins: ['https://gitlab.com', 'https://gitlab.company.com', 'https://code.internal.test'],
+          allowedBaseUrls: ['https://gitlab.com'],
+          allowedOrigins: ['https://gitlab.com'],
         },
         capabilities: {
           compareUrl: true,
