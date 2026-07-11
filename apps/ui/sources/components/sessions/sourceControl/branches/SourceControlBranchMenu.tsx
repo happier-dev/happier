@@ -12,6 +12,8 @@ import { sessionScmBranchCheckout, sessionScmBranchCreate, sessionScmRepositoryR
 import { useSetting } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
 import { showSwitchBranchWithChangesDialog } from '@/components/workspaces/scm/branches/SwitchBranchWithChangesDialog';
 import { t } from '@/text';
 import { scmStatusSync } from '@/scm/scmStatusSync';
@@ -42,6 +44,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
     const snapshot = props.snapshot;
     const currentBranch = props.currentBranch;
     const machineTarget = readMachineTargetForSession(props.sessionId);
+    const targetServerId = usePreferredServerIdForSession(props.sessionId);
     const repoPath = machineTarget?.basePath ?? snapshot?.repo.rootPath ?? null;
 
     const branchSwitchSettingRaw = useSetting('scmUncommittedChangesStrategy');
@@ -67,14 +70,15 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
     const canLaunchWorktreeSession = snapshot?.repo.isRepo === true;
 
     const openNewSessionForDirectory = React.useCallback((directory: string) => {
-        const params = machineTarget?.machineId
-            ? { machineId: machineTarget.machineId, directory }
-            : { directory };
         router.push({
             pathname: '/new',
-            params,
+            params: buildNewSessionLaunchRouteParams({
+                directory,
+                machineId: machineTarget?.machineId ?? null,
+                targetServerId,
+            }),
         });
-    }, [machineTarget?.machineId, router]);
+    }, [machineTarget?.machineId, router, targetServerId]);
 
     const readCachedBranches = React.useCallback(() => {
         return repoScmBranchService.readCachedBranchesForSession({
@@ -248,6 +252,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
             machineId: machineTarget.machineId,
             path: machineTarget.basePath,
             baseRef: null,
+            ...(targetServerId ? { serverId: targetServerId } : {}),
         });
         if (!response.success) {
             Modal.alert(t('common.error'), response.error || t('files.branchMenu.worktrees.createFailed'));
@@ -260,7 +265,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
             worktreePath: response.worktreePath,
             sourceRootPath: response.sourceRootPath || machineTarget.basePath,
         }));
-    }, [canCreateWorktrees, closeMenu, currentBranch, machineTarget, openNewSessionForDirectory]);
+    }, [canCreateWorktrees, closeMenu, currentBranch, machineTarget, openNewSessionForDirectory, targetServerId]);
 
     const pruneWorktrees = React.useCallback(async () => {
         if (!canCreateWorktrees || !machineTarget) {
@@ -270,6 +275,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
         const response = await repoScmWorktreeService.pruneWorktreesForMachinePath({
             machineId: machineTarget.machineId,
             path: machineTarget.basePath,
+            ...(targetServerId ? { serverId: targetServerId } : {}),
         });
         if (!response.success) {
             Modal.alert(t('common.error'), response.stderr || t('files.branchMenu.worktrees.pruneFailed'));
@@ -278,7 +284,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
 
         closeMenu();
         await scmStatusSync.invalidateFromMutationAndAwait(props.sessionId);
-    }, [canCreateWorktrees, closeMenu, machineTarget, props.sessionId]);
+    }, [canCreateWorktrees, closeMenu, machineTarget, props.sessionId, targetServerId]);
 
     const removeWorktree = React.useCallback(async (worktreePath: string) => {
         if (!canCreateWorktrees || !machineTarget) {
@@ -302,6 +308,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
             machineId: machineTarget.machineId,
             path: machineTarget.basePath,
             worktreePath,
+            ...(targetServerId ? { serverId: targetServerId } : {}),
         });
         if (!response.success) {
             Modal.alert(t('common.error'), response.stderr || t('files.branchMenu.worktrees.removeFailed'));
@@ -310,7 +317,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
 
         closeMenu();
         await scmStatusSync.invalidateFromMutationAndAwait(props.sessionId);
-    }, [canCreateWorktrees, closeMenu, machineTarget, props.sessionId]);
+    }, [canCreateWorktrees, closeMenu, machineTarget, props.sessionId, targetServerId]);
 
     const directoryFallback = machineTarget?.basePath ?? snapshot?.repo.rootPath ?? '.';
 
@@ -328,6 +335,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
             setIncludeRemotes,
             setOpen,
             switchBranch,
+            targetServerId,
         });
     }, [
         closeMenu,
@@ -340,6 +348,7 @@ export function SourceControlBranchMenu(props: SourceControlBranchMenuProps): Re
         removeWorktree,
         router,
         switchBranch,
+        targetServerId,
     ]);
 
     return (

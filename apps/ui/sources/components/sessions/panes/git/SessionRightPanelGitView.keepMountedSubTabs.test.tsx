@@ -13,7 +13,6 @@ const setActiveGitSubTabSpy = vi.hoisted(() => vi.fn());
 const gitSubTabsBarSpy = vi.hoisted(() => vi.fn());
 const gitCommitTabContentSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native-reanimated', () => ({}));
 
 installSessionDetailsPanelCommonModuleMocks({
     reactNative: async () => {

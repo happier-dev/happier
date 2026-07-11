@@ -21,7 +21,6 @@ let activeGitSubTab: 'commit' | 'update' | 'history' = 'update';
 let scmSnapshotMock: any = null;
 let scmWriteEnabledMock = true;
 
-vi.mock('react-native-reanimated', () => ({}));
 
 installSessionDetailsPanelCommonModuleMocks({
     reactNative: async () => {

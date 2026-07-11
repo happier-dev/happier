@@ -28,7 +28,6 @@ let capturedRemotesProps: any = null;
 let capturedBranchProps: any = null;
 let capturedPublishProps: any = null;
 
-vi.mock('react-native-reanimated', () => ({}));
 
 installSessionDetailsPanelCommonModuleMocks({
     reactNative: async () => {

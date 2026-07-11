@@ -1,5 +1,7 @@
 import type { Router } from 'expo-router';
 
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
+
 export type SourceControlBranchMenuMachineTarget = Readonly<{
     machineId: string;
     basePath: string;
@@ -18,6 +20,7 @@ export async function handleSourceControlBranchMenuSelect(input: Readonly<{
     setIncludeRemotes: (value: boolean) => void;
     setOpen: (value: boolean) => void;
     switchBranch: (branchName: string) => Promise<void>;
+    targetServerId?: string | null;
 }>): Promise<void> {
     const { itemId } = input;
 
@@ -29,16 +32,12 @@ export async function handleSourceControlBranchMenuSelect(input: Readonly<{
         input.closeMenu();
         input.router.push({
             pathname: '/new',
-            params: input.machineTarget?.machineId
-                ? {
-                    machineId: input.machineTarget.machineId,
-                    directory: input.directoryFallback,
-                    worktree: 'new',
-                }
-                : {
-                    directory: input.directoryFallback,
-                    worktree: 'new',
-                },
+            params: buildNewSessionLaunchRouteParams({
+                directory: input.directoryFallback,
+                machineId: input.machineTarget?.machineId ?? null,
+                targetServerId: input.targetServerId,
+                worktree: 'new',
+            }),
         });
         return;
     }

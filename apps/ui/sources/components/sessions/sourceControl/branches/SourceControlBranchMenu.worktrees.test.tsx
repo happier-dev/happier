@@ -23,6 +23,7 @@ describe('SourceControlBranchMenu worktrees', () => {
     });
 
     it('surfaces sibling worktrees and opens a new session in the selected worktree', async () => {
+        sourceControlBranchMenuModuleState.preferredServerIdForSession = 'server-a';
         const { SourceControlBranchMenu } = await import('./SourceControlBranchMenu');
 
         const screen = await renderScreen(<SourceControlBranchMenu
@@ -63,11 +64,13 @@ describe('SourceControlBranchMenu worktrees', () => {
             params: {
                 machineId: undefined,
                 directory: '/repo/.worktrees/feature-auth',
+                spawnServerId: 'server-a',
             },
         });
     });
 
     it('creates a worktree session from the current branch through the shared repo worktree service', async () => {
+        sourceControlBranchMenuModuleState.preferredServerIdForSession = 'server-a';
         sourceControlBranchMenuModuleState.readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
         sourceControlBranchMenuModuleState.createWorktreeForMachinePathMock.mockResolvedValue({
             success: true,
@@ -110,12 +113,14 @@ describe('SourceControlBranchMenu worktrees', () => {
             machineId: 'machine-1',
             path: '/repo',
             baseRef: null,
+            serverId: 'server-a',
         });
         expect(sourceControlBranchMenuModuleState.routerPushSpy).toHaveBeenCalledWith({
             pathname: '/new',
             params: {
                 machineId: 'machine-1',
                 directory: '/repo/.dev/worktree/feature-auth',
+                spawnServerId: 'server-a',
             },
         });
     });
@@ -170,6 +175,7 @@ describe('SourceControlBranchMenu worktrees', () => {
     });
 
     it('prunes worktrees through the shared repo worktree service', async () => {
+        sourceControlBranchMenuModuleState.preferredServerIdForSession = 'server-a';
         sourceControlBranchMenuModuleState.readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
         sourceControlBranchMenuModuleState.pruneWorktreesForMachinePathMock.mockResolvedValue({ success: true });
 
@@ -207,10 +213,12 @@ describe('SourceControlBranchMenu worktrees', () => {
         expect(sourceControlBranchMenuModuleState.pruneWorktreesForMachinePathMock).toHaveBeenCalledWith({
             machineId: 'machine-1',
             path: '/repo',
+            serverId: 'server-a',
         });
     });
 
     it('routes create-from-another-branch into the new-session worktree picker flow', async () => {
+        sourceControlBranchMenuModuleState.preferredServerIdForSession = 'server-a';
         sourceControlBranchMenuModuleState.readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
 
         const { SourceControlBranchMenu } = await import('./SourceControlBranchMenu');
@@ -250,6 +258,7 @@ describe('SourceControlBranchMenu worktrees', () => {
                 machineId: 'machine-1',
                 directory: '/repo',
                 worktree: 'new',
+                spawnServerId: 'server-a',
             },
         });
     });
@@ -306,6 +315,7 @@ describe('SourceControlBranchMenu worktrees', () => {
     });
 
     it('removes a sibling worktree through the shared repo worktree service after confirmation', async () => {
+        sourceControlBranchMenuModuleState.preferredServerIdForSession = 'server-a';
         sourceControlBranchMenuModuleState.readMachineTargetForSessionMock.mockReturnValue({ machineId: 'machine-1', basePath: '/repo' });
         sourceControlBranchMenuModuleState.modalConfirmSpy.mockResolvedValue(true);
         sourceControlBranchMenuModuleState.removeWorktreeForMachinePathMock.mockResolvedValue({ success: true });
@@ -349,6 +359,7 @@ describe('SourceControlBranchMenu worktrees', () => {
             machineId: 'machine-1',
             path: '/repo',
             worktreePath: '/repo/.worktrees/feature-auth',
+            serverId: 'server-a',
         });
     });
 });

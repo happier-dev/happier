@@ -29,6 +29,7 @@ const sourceControlBranchMenuModuleState = vi.hoisted(() => ({
     publishBranchMock: vi.fn(async () => true),
     readCachedBranchesForSessionMock: vi.fn(),
     readMachineTargetForSessionMock: vi.fn(),
+    preferredServerIdForSession: null as string | null,
     removeWorktreeForMachinePathMock: vi.fn(),
     routerPushSpy: vi.fn(),
     sessionScmBranchCheckoutMock: vi.fn(),
@@ -63,6 +64,7 @@ export function resetSourceControlBranchMenuCommonModuleMockState() {
     sourceControlBranchMenuModuleState.readCachedBranchesForSessionMock.mockReturnValue([]);
     sourceControlBranchMenuModuleState.readMachineTargetForSessionMock.mockReset();
     sourceControlBranchMenuModuleState.readMachineTargetForSessionMock.mockReturnValue(null);
+    sourceControlBranchMenuModuleState.preferredServerIdForSession = null;
     sourceControlBranchMenuModuleState.removeWorktreeForMachinePathMock.mockReset();
     sourceControlBranchMenuModuleState.routerPushSpy.mockReset();
     sourceControlBranchMenuModuleState.sessionScmBranchCheckoutMock.mockReset();
@@ -236,6 +238,10 @@ export function installSourceControlBranchMenuCommonModuleMocks(
     vi.mock('@/sync/ops/sessionMachineTarget', () => ({
         readMachineTargetForSession: (sessionId: string) =>
             sourceControlBranchMenuModuleState.readMachineTargetForSessionMock(sessionId),
+    }));
+
+    vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
+        usePreferredServerIdForSession: () => sourceControlBranchMenuModuleState.preferredServerIdForSession,
     }));
 
     vi.mock('@/scm/scmStatusSync', () => ({

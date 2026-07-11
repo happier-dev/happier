@@ -12,7 +12,6 @@ const useSessionRealtimeScmTranscriptConsumerMock = vi.hoisted(() => vi.fn());
 const invalidateFromUserAndAwaitMock = vi.hoisted(() => vi.fn());
 const invalidateFromAutoRefreshAndAwaitMock = vi.hoisted(() => vi.fn());
 
-vi.mock('react-native-reanimated', () => ({}));
 
 installSessionDetailsPanelCommonModuleMocks({
     reactNative: async () => {
