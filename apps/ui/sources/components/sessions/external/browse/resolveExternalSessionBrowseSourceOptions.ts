@@ -1,4 +1,4 @@
-import type { AccountProfile, ExternalSessionsProviderId, ExternalSessionsSource } from '@happier-dev/protocol';
+import type { AccountProfile, ExternalSessionsAgentId, ExternalSessionsSource } from '@happier-dev/protocol';
 
 import { AGENT_IDS, getAgentBehavior, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import type { ExternalSessionBrowseLinkEnsureRequestExtras, ExternalSessionBrowseSourceOption } from '@/agents/registry/registryUiBehavior';
@@ -6,7 +6,7 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import { resolveCompatibleExternalSessionBrowseLinkSource } from './resolveCompatibleExternalSessionBrowseLinkSource';
 
 export function resolveExternalSessionBrowseSourceOptions(params: Readonly<{
-    providerId: ExternalSessionsProviderId;
+    providerId: ExternalSessionsAgentId;
     profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
     settings: Pick<Settings, 'connectedServicesProfileLabelByKey'>;
 }>): ExternalSessionBrowseSourceOption[] {
@@ -19,7 +19,7 @@ export function resolveExternalSessionBrowseSourceOptions(params: Readonly<{
     })];
 }
 
-export function listExternalSessionBrowseProviderIds(): ExternalSessionsProviderId[] {
+export function listExternalSessionBrowseProviderIds(): ExternalSessionsAgentId[] {
     return AGENT_IDS
         .filter((agentId) => (
             getAgentCore(agentId).sessionStorage.direct === true
@@ -30,11 +30,11 @@ export function listExternalSessionBrowseProviderIds(): ExternalSessionsProvider
             const orderB = getAgentBehavior(b).externalSessions?.browse?.order ?? Number.MAX_SAFE_INTEGER;
             if (orderA !== orderB) return orderA - orderB;
             return getAgentCore(a).displayNameKey.localeCompare(getAgentCore(b).displayNameKey);
-        }) as ExternalSessionsProviderId[];
+        }) as ExternalSessionsAgentId[];
 }
 
 export function resolveExternalSessionBrowseLinkEnsureRequestExtras(params: Readonly<{
-    providerId: ExternalSessionsProviderId;
+    providerId: ExternalSessionsAgentId;
     source: ExternalSessionsSource;
     candidate: Readonly<{ details?: Record<string, unknown> }>;
 }>): ExternalSessionBrowseLinkEnsureRequestExtras {
@@ -48,7 +48,7 @@ export function resolveExternalSessionBrowseLinkEnsureRequestExtras(params: Read
 }
 
 export function resolveExternalSessionBrowseCompatibleLinkSource(params: Readonly<{
-    providerId: ExternalSessionsProviderId;
+    providerId: ExternalSessionsAgentId;
     selectedSource: ExternalSessionsSource;
     candidateSource?: ExternalSessionsSource | null;
 }>): ExternalSessionsSource {

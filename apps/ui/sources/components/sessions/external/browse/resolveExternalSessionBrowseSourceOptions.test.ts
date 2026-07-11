@@ -100,7 +100,7 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
                     codexBackendMode: 'appServer',
                     agentRuntimeDescriptorV1: {
                         v: 1,
-                        providerId: 'codex',
+                        agentId: 'codex',
                         provider: {
                             backendMode: 'appServer',
                             providerSessionId: 'thread-1',
@@ -115,7 +115,7 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
         expect(readSessionMetadataRuntimeDescriptor({
             runtimeDescriptorV1: extras.runtimeDescriptorV1,
         }, 'codex')).toMatchObject({
-            providerId: 'codex',
+            agentId: 'codex',
             backendMode: 'appServer',
             providerSessionId: 'thread-1',
             home: 'user',

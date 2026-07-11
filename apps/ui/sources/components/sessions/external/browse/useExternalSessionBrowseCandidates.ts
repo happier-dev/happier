@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { ExternalSessionActivityV1, ExternalSessionsProviderId, ExternalSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionActivityV1, ExternalSessionsAgentId, ExternalSessionsSource } from '@happier-dev/protocol';
+import { isRpcMethodNotAvailableError } from '@happier-dev/protocol/rpcErrors';
 
 import { machineExternalSessionsCandidatesList } from '@/sync/ops/machineExternalSessions';
 import { t } from '@/text';
@@ -15,6 +16,35 @@ export type ExternalSessionBrowseCandidate = Readonly<{
 const CANDIDATES_PAGE_LIMIT = 50;
 
 type CandidateApplyMode = 'replace' | 'append' | 'merge';
+
+function isMethodUnavailableMessage(message: string): boolean {
+    const normalized = message.trim().toLowerCase();
+    return normalized === 'rpc method not available' || normalized === 'method not found';
+}
+
+function isMachineRpcTimeoutError(error: unknown): boolean {
+    return Boolean(
+        error
+        && typeof error === 'object'
+        && (error as { code?: unknown }).code === 'MACHINE_RPC_TIMEOUT',
+    );
+}
+
+function resolveExternalSessionBrowseErrorMessage(error: unknown): string {
+    if (isRpcMethodNotAvailableError(error)) {
+        return t('newSession.daemonRpcUnavailableBody');
+    }
+    if (isMachineRpcTimeoutError(error)) {
+        return t('newSession.daemonRpcUnavailableBody');
+    }
+    if (typeof error === 'string' && isMethodUnavailableMessage(error)) {
+        return t('newSession.daemonRpcUnavailableBody');
+    }
+    if (error instanceof Error && isMethodUnavailableMessage(error.message)) {
+        return t('newSession.daemonRpcUnavailableBody');
+    }
+    return error instanceof Error ? error.message : t('externalSessions.browseFailedToLoad');
+}
 
 function hasCandidateTitle(candidate: ExternalSessionBrowseCandidate): boolean {
     return typeof candidate.title === 'string' && candidate.title.trim().length > 0;
@@ -67,7 +97,7 @@ function mergeExternalSessionBrowseCandidates(
 export function useExternalSessionBrowseCandidates(params: Readonly<{
     machineId: string | null;
     serverId?: string | null;
-    providerId: ExternalSessionsProviderId | null;
+    providerId: ExternalSessionsAgentId | null;
     source: ExternalSessionsSource | null;
     searchTerm?: string;
 }>) {
@@ -112,7 +142,7 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
         const requestCandidates = async (searchMode?: 'fast' | 'full') => {
             const request = {
                 machineId,
-                providerId,
+                agentId: providerId,
                 source,
                 limit: CANDIDATES_PAGE_LIMIT,
                 ...(normalizedSearchTerm ? { searchTerm: normalizedSearchTerm } : {}),
@@ -128,7 +158,7 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 if (mode === 'merge') {
                     return false;
                 }
-                setError(result.error);
+                setError(resolveExternalSessionBrowseErrorMessage(result.error));
                 if (!append) {
                     setCandidates([]);
                     setNextCursor(null);
@@ -186,9 +216,8 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
             if (loadGenerationRef.current !== currentGeneration) {
                 return;
             }
-            const message = loadError instanceof Error ? loadError.message : t('externalSessions.browseFailedToLoad');
             setLoadedScopeKey(currentScopeKey);
-            setError(message);
+            setError(resolveExternalSessionBrowseErrorMessage(loadError));
             if (!append) {
                 setCandidates([]);
                 setNextCursor(null);

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { ScrollView } from 'react-native';
-import type { ExternalSessionsProviderId, ExternalSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsAgentId, ExternalSessionsSource } from '@happier-dev/protocol';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -29,7 +29,7 @@ import {
 import { ExternalSessionBrowseCandidatesList } from './ExternalSessionBrowseCandidatesList';
 import { useExternalSessionBrowseCandidates, type ExternalSessionBrowseCandidate } from './useExternalSessionBrowseCandidates';
 
-type ExternalSessionBrowseProviderId = ExternalSessionsProviderId;
+type ExternalSessionBrowseProviderId = ExternalSessionsAgentId;
 type AppTheme = Theme;
 
 const EXTERNAL_SESSION_BROWSE_SEARCH_DEBOUNCE_MS = 250;
@@ -37,7 +37,7 @@ const EXTERNAL_SESSION_BROWSE_SEARCH_DEBOUNCE_MS = 250;
 export type ExternalSessionsBrowseScopeLock = Readonly<{
     machineId: string;
     serverId?: string | null;
-    providerId: ExternalSessionsProviderId;
+    providerId: ExternalSessionsAgentId;
     source: ExternalSessionsSource;
 }>;
 
@@ -248,7 +248,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
             });
             const request = {
                 machineId: effectiveSelectedMachineId,
-                providerId: selectedProviderId,
+                agentId: selectedProviderId,
                 remoteSessionId: candidate.remoteSessionId,
                 ...(candidate.title ? { titleHint: candidate.title } : {}),
                 ...(readExternalSessionBrowseCandidatePath(candidate.details) ? { directoryHint: readExternalSessionBrowseCandidatePath(candidate.details)! } : {}),

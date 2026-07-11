@@ -1,4 +1,4 @@
-import type { AccountProfile, ExternalSessionsProviderId, ExternalSessionsSource } from '@happier-dev/protocol';
+import type { AccountProfile, ExternalSessionsAgentId, ExternalSessionsSource } from '@happier-dev/protocol';
 
 import { getAgentBehavior, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import type { Settings } from '@/sync/domains/settings/settings';
@@ -11,7 +11,7 @@ export function canBrowseExternalSessions(agentId: AgentId): boolean {
 }
 
 export function resolveExternalSessionBrowseLockedSource(params: Readonly<{
-    providerId: ExternalSessionsProviderId;
+    providerId: ExternalSessionsAgentId;
     agentOptionState?: Record<string, unknown> | null;
     profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
     settings: Pick<Settings, 'connectedServicesProfileLabelByKey'>;

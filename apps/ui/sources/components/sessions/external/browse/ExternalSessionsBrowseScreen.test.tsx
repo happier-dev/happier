@@ -196,7 +196,7 @@ describe('ExternalSessionsBrowseScreen', () => {
 
         expect(candidatesListSpy).toHaveBeenCalledWith({
             machineId: 'machine-1',
-            providerId: 'codex',
+            agentId: 'codex',
             source: { kind: 'codexHome', home: 'user' },
             limit: 50,
         });
@@ -311,13 +311,46 @@ describe('ExternalSessionsBrowseScreen', () => {
 
         expect(candidatesListSpy).toHaveBeenCalledWith({
             machineId: 'machine-active',
-            providerId: 'codex',
+            agentId: 'codex',
             source: { kind: 'codexHome', home: 'user' },
             limit: 50,
         });
 
         const machineDropdown = findDropdownMenuByTriggerTestId(screen, 'direct-session-machine-picker-trigger');
         expect(machineDropdown?.props?.selectedId).toBe('machine-active');
+    });
+
+    it('renders daemon-unavailable copy instead of raw unsupported RPC errors', async () => {
+        candidatesListSpy.mockRejectedValueOnce(
+            Object.assign(new Error('RPC method not available'), { rpcErrorCode: 'METHOD_NOT_AVAILABLE' }),
+        );
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+
+        await flushHookEffects();
+
+        const text = screen.getTextContent();
+        expect(text).toContain('newSession.daemonRpcUnavailableBody');
+        expect(text).not.toContain('RPC method not available');
+    });
+
+    it('renders daemon-unavailable copy instead of raw machine RPC timeout errors', async () => {
+        candidatesListSpy.mockRejectedValueOnce(
+            Object.assign(
+                new Error('Machine RPC timed out after 1ms while using scoped scope for daemon.externalSessions.candidates.list'),
+                { code: 'MACHINE_RPC_TIMEOUT' },
+            ),
+        );
+        const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
+
+        const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
+
+        await flushHookEffects();
+
+        const text = screen.getTextContent();
+        expect(text).toContain('newSession.daemonRpcUnavailableBody');
+        expect(text).not.toContain('Machine RPC timed out');
     });
 
     it('searches provider candidates through the daemon with the search field', async () => {
@@ -390,7 +423,7 @@ describe('ExternalSessionsBrowseScreen', () => {
 
         expect(candidatesListSpy).toHaveBeenNthCalledWith(2, {
             machineId: 'machine-1',
-            providerId: 'codex',
+            agentId: 'codex',
             source: { kind: 'codexHome', home: 'user' },
             limit: 50,
             searchTerm: 'codex-hidden-session-9',
@@ -398,7 +431,7 @@ describe('ExternalSessionsBrowseScreen', () => {
         });
         expect(candidatesListSpy).toHaveBeenNthCalledWith(3, {
             machineId: 'machine-1',
-            providerId: 'codex',
+            agentId: 'codex',
             source: { kind: 'codexHome', home: 'user' },
             limit: 50,
             searchTerm: 'codex-hidden-session-9',
@@ -450,15 +483,32 @@ describe('ExternalSessionsBrowseScreen', () => {
 
         await screen.pressByTestIdAsync('direct-session-candidate:codex-session-1');
 
-        expect(linkEnsureSpy).toHaveBeenCalledWith({
+        expect(linkEnsureSpy).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
-            providerId: 'codex',
+            agentId: 'codex',
             remoteSessionId: 'codex-session-1',
             titleHint: 'Existing Codex Session',
             directoryHint: '/tmp/worktree',
             codexBackendMode: 'appServer',
             source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
-        });
+            runtimeDescriptorV1: expect.objectContaining({
+                v: 1,
+                agentId: 'codex',
+                agent: expect.objectContaining({
+                    backendMode: 'appServer',
+                    home: 'user',
+                    homePath: '/tmp/custom-home',
+                    agentExtra: expect.objectContaining({
+                        owner: 'codex',
+                        runtimeHandle: expect.objectContaining({
+                            backendMode: 'appServer',
+                            home: 'user',
+                            homePath: '/tmp/custom-home',
+                        }),
+                    }),
+                }),
+            }),
+        }));
         expect(routerPushSpy).toHaveBeenCalledWith('/session/happy-session-1');
     });
 
@@ -507,7 +557,7 @@ describe('ExternalSessionsBrowseScreen', () => {
 
         expect(candidatesListSpy).toHaveBeenCalledWith({
             machineId: 'machine-1',
-            providerId: 'codex',
+            agentId: 'codex',
             source: { kind: 'codexHome', home: 'connectedService', connectedServiceId: 'openai-codex', connectedServiceProfileId: 'work' },
             limit: 50,
         });
@@ -517,15 +567,34 @@ describe('ExternalSessionsBrowseScreen', () => {
 
         await screen.pressByTestIdAsync('direct-session-candidate:codex-session-1');
 
-        expect(linkEnsureSpy).toHaveBeenCalledWith({
+        expect(linkEnsureSpy).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
-            providerId: 'codex',
+            agentId: 'codex',
             remoteSessionId: 'codex-session-1',
             titleHint: 'Existing Codex Session',
             directoryHint: '/tmp/worktree',
             codexBackendMode: 'appServer',
             source: expect.objectContaining({ kind: 'codexHome', home: 'connectedService', connectedServiceId: 'openai-codex', connectedServiceProfileId: 'work' } as any),
-        });
+            runtimeDescriptorV1: expect.objectContaining({
+                v: 1,
+                agentId: 'codex',
+                agent: expect.objectContaining({
+                    backendMode: 'appServer',
+                    home: 'connectedService',
+                    connectedServiceId: 'openai-codex',
+                    connectedServiceProfileId: 'work',
+                    agentExtra: expect.objectContaining({
+                        owner: 'codex',
+                        runtimeHandle: expect.objectContaining({
+                            backendMode: 'appServer',
+                            home: 'connectedService',
+                            connectedServiceId: 'openai-codex',
+                            connectedServiceProfileId: 'work',
+                        }),
+                    }),
+                }),
+            }),
+        }));
     });
 
     it('uses the candidate-provided ohMyPi agent dir when linking from the default source option', async () => {
@@ -553,7 +622,6 @@ describe('ExternalSessionsBrowseScreen', () => {
         const tree = screen.tree;
 
         await flushHookEffects();
-        candidatesListSpy.mockClear();
 
         const providerDropdown = findDropdownMenuByTriggerTestId(screen, 'direct-session-provider-picker-trigger');
         expect(providerDropdown).toBeTruthy();
@@ -589,7 +657,7 @@ describe('ExternalSessionsBrowseScreen', () => {
 
         expect(candidatesListSpy).toHaveBeenCalledWith({
             machineId: 'machine-1',
-            providerId: 'ohMyPi',
+            agentId: 'ohMyPi',
             source: { kind: 'ohMyPiAgentDir' },
             limit: 50,
         });
@@ -598,7 +666,7 @@ describe('ExternalSessionsBrowseScreen', () => {
 
         expect(linkEnsureSpy).toHaveBeenCalledWith({
             machineId: 'machine-1',
-            providerId: 'ohMyPi',
+            agentId: 'ohMyPi',
             remoteSessionId: 'omp-session-1',
             titleHint: 'Existing oh-my-pi Session',
             directoryHint: '/tmp/omp-worktree',
@@ -624,7 +692,7 @@ describe('ExternalSessionsBrowseScreen', () => {
 
         expect(candidatesListSpy).toHaveBeenLastCalledWith({
             machineId: 'machine-2',
-            providerId: 'codex',
+            agentId: 'codex',
             source: { kind: 'codexHome', home: 'user' },
             limit: 50,
         });
@@ -643,7 +711,7 @@ describe('ExternalSessionsBrowseScreen', () => {
         expect(rerenderedMachineDropdown!.props?.selectedId).toBe('machine-1');
         expect(candidatesListSpy).toHaveBeenCalledWith({
             machineId: 'machine-1',
-            providerId: 'codex',
+            agentId: 'codex',
             source: { kind: 'codexHome', home: 'user' },
             limit: 50,
         });
@@ -765,7 +833,7 @@ describe('ExternalSessionsBrowseScreen', () => {
 
         expect(candidatesListSpy).toHaveBeenCalledWith({
             machineId: 'machine-2',
-            providerId: 'codex',
+            agentId: 'codex',
             source: { kind: 'codexHome', home: 'user' },
             limit: 50,
         }, { serverId: 'server-1' });
