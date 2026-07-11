@@ -54,6 +54,38 @@ afterEach(() => {
 });
 
 describe('SessionMediaInlineImages', () => {
+    it('renders available video references as accessible file-opening media tiles', async () => {
+        const { SessionMediaInlineImages } = await import('./SessionMediaInlineImages');
+        const { t } = await import('@/text');
+        const onOpenPath = vi.fn();
+
+        const screen = await renderScreen(
+            <SessionMediaInlineImages
+                sessionId="s1"
+                media={[{
+                    id: 'recording-1',
+                    mediaKind: 'video',
+                    status: 'available',
+                    name: 'browser-recording.webm',
+                    path: '.happier/uploads/artifacts/session-1/message-1/browser-recording.webm',
+                    mimeType: 'video/webm',
+                    sizeBytes: 2048,
+                    category: 'tool-artifact',
+                    role: 'output',
+                } as any]}
+                onOpenPath={onOpenPath}
+            />,
+        );
+
+        const tile = screen.findByTestId('message-session-media-inline-video:.happier/uploads/artifacts/session-1/message-1/browser-recording.webm');
+
+        expect(tile?.props.accessibilityRole).toBe('button');
+        expect(tile?.props.accessibilityLabel).toBe(t('files.sessionMedia.toolArtifactVideoA11y', { name: 'browser-recording.webm' }));
+
+        screen.pressByTestId('message-session-media-inline-video:.happier/uploads/artifacts/session-1/message-1/browser-recording.webm');
+        expect(onOpenPath).toHaveBeenCalledWith('.happier/uploads/artifacts/session-1/message-1/browser-recording.webm');
+    });
+
     it('renders unavailable media failure rows with translated accessible state', async () => {
         const { SessionMediaInlineImages } = await import('./SessionMediaInlineImages');
         const { t } = await import('@/text');

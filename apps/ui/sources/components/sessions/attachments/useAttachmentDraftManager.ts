@@ -182,7 +182,10 @@ export function useAttachmentDraftManager(params: Readonly<{
         });
     }, [drafts, removeDraft, webPreviewUrlsVersion]);
 
-    return {
+    // Referential stability contract: memoized consumers (composer, transcript rows) receive
+    // this manager or its callbacks as props; a fresh object per render would re-render them
+    // on every parent commit.
+    return React.useMemo(() => ({
         filePickerRef,
         drafts,
         getDraftsSnapshot,
@@ -194,5 +197,15 @@ export function useAttachmentDraftManager(params: Readonly<{
         clearDrafts,
         replaceDrafts,
         applyDraftPatch,
-    };
+    }), [
+        addPickedAttachments,
+        addWebFiles,
+        agentInputAttachments,
+        applyDraftPatch,
+        clearDrafts,
+        drafts,
+        getDraftsSnapshot,
+        removeDraft,
+        replaceDrafts,
+    ]);
 }

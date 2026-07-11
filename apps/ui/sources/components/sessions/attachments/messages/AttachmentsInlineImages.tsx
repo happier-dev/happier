@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { SessionMediaInlineImages } from '@/components/sessions/media/SessionMediaInlineImages';
 import { resolveSessionMediaInlineRenderableImageMimeType } from '@/components/sessions/media/presentation';
-import type { SessionMediaInlineImageSummary } from '@/sync/domains/session/media/sessionMediaMessageMeta';
+import type { SessionMediaInlineMediaSummary } from '@/sync/domains/session/media/sessionMediaMessageMeta';
 
 export type InlineImageAttachmentSummary = Readonly<{
     name: string;
@@ -18,12 +18,13 @@ export const AttachmentsInlineImages = React.memo(function AttachmentsInlineImag
     onOpenPath: (path: string) => void;
 }>) {
     const media = React.useMemo(() => {
-        const result: SessionMediaInlineImageSummary[] = [];
+        const result: SessionMediaInlineMediaSummary[] = [];
         for (const attachment of props.attachments) {
             const mimeType = resolveSessionMediaInlineRenderableImageMimeType(attachment);
             if (!mimeType) continue;
             result.push({
                 id: attachment.sha256 ?? attachment.path,
+                mediaKind: 'image',
                 name: attachment.name,
                 path: attachment.path,
                 mimeType,
