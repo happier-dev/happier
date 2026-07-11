@@ -4,6 +4,7 @@ import type { DaemonTerminalStreamEventUrl } from '@happier-dev/protocol';
 
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import {
+    appendTerminalPreviewText,
     createEmptyTerminalSurfaceState,
     readTerminalSurfaceState,
     replaceTerminalSurfaceState,
@@ -17,6 +18,7 @@ export function useTerminalSurfaceState(params: Readonly<{
     cursorRef: React.MutableRefObject<number>;
     terminalRendererHandleRef: React.MutableRefObject<EmbeddedTerminalRendererHandle | null>;
     clearNonceRef: React.MutableRefObject<number>;
+    hydrateOnRender?: boolean;
 }>) {
     const initialSurfaceState = React.useMemo(
         () => readTerminalSurfaceState(params.terminalKey) ?? createEmptyTerminalSurfaceState(),
@@ -59,20 +61,33 @@ export function useTerminalSurfaceState(params: Readonly<{
 
     const writeTerminalOutput = React.useCallback((data: string) => {
         if (!data) {
-            return;
+            return true;
         }
         const renderer = params.terminalRef.current;
         if (renderer) {
             params.terminalRendererHandleRef.current = renderer;
-            renderer.write(data);
+            if (renderer.write(data) === false) {
+                return false;
+            }
         }
         updateSurfaceState((current) => ({
-            ...current,
+            ...appendTerminalPreviewText(current, data),
             terminalId: params.terminalIdRef.current,
             cursor: params.cursorRef.current,
-            output: current.output + data,
         }));
+        return true;
     }, [params.cursorRef, params.terminalIdRef, params.terminalRef, params.terminalRendererHandleRef, updateSurfaceState]);
+
+    const recordTerminalPreviewOutput = React.useCallback((data: string) => {
+        if (!data) {
+            return;
+        }
+        updateSurfaceState((current) => ({
+            ...appendTerminalPreviewText(current, data),
+            terminalId: params.terminalIdRef.current,
+            cursor: params.cursorRef.current,
+        }));
+    }, [params.cursorRef, params.terminalIdRef, updateSurfaceState]);
 
     const hydrateTerminalRendererIfNeeded = React.useCallback(() => {
         const renderer = params.terminalRef.current;
@@ -92,6 +107,9 @@ export function useTerminalSurfaceState(params: Readonly<{
     }, [params.terminalKey, params.terminalRef, params.terminalRendererHandleRef]);
 
     React.useEffect(() => {
+        if (params.hydrateOnRender === false) {
+            return;
+        }
         hydrateTerminalRendererIfNeeded();
     });
 
@@ -112,6 +130,7 @@ export function useTerminalSurfaceState(params: Readonly<{
         syncDetectedUrl,
         clearTerminalOutput,
         writeTerminalOutput,
+        recordTerminalPreviewOutput,
         hydrateTerminalRendererIfNeeded,
         setDetectedUrl,
     } as const;

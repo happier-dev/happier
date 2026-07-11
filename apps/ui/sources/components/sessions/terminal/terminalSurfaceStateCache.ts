@@ -1,5 +1,11 @@
 import type { DaemonTerminalStreamEventUrl } from '@happier-dev/protocol';
 
+import {
+    appendTerminalPreviewText as appendTerminalPreviewTextForStream,
+    createEmptyTerminalPreviewState,
+    TERMINAL_PREVIEW_MAX_OUTPUT_CHARS,
+} from '@/sync/domains/terminal/stream/replay';
+
 export type TerminalSurfaceState = Readonly<{
     terminalId: string | null;
     cursor: number;
@@ -8,17 +14,12 @@ export type TerminalSurfaceState = Readonly<{
 }>;
 
 const TERMINAL_SURFACE_CACHE_MAX_ENTRIES = 12;
-const TERMINAL_SURFACE_CACHE_MAX_OUTPUT_CHARS = 64_000;
+const TERMINAL_SURFACE_CACHE_MAX_OUTPUT_CHARS = TERMINAL_PREVIEW_MAX_OUTPUT_CHARS;
 
 const terminalSurfaceStateCache = new Map<string, TerminalSurfaceState>();
 
 export function createEmptyTerminalSurfaceState(): TerminalSurfaceState {
-    return {
-        terminalId: null,
-        cursor: 0,
-        output: '',
-        detectedUrl: null,
-    };
+    return createEmptyTerminalPreviewState();
 }
 
 export function readTerminalSurfaceState(terminalKey: string): TerminalSurfaceState | null {
@@ -66,4 +67,11 @@ function trimTerminalSurfaceOutput(output: string): string {
         return output;
     }
     return output.slice(output.length - TERMINAL_SURFACE_CACHE_MAX_OUTPUT_CHARS);
+}
+
+export function appendTerminalPreviewText(
+    state: TerminalSurfaceState,
+    text: string,
+): TerminalSurfaceState {
+    return appendTerminalPreviewTextForStream(state, text);
 }

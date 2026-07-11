@@ -4,8 +4,8 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { EmbeddedTerminalPane } from '@/components/terminal/embedded/EmbeddedTerminalPane.web';
-import { EmbeddedTerminalToolbarIconButton } from '@/components/terminal/embedded/EmbeddedTerminalToolbarIconButton';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -87,11 +87,15 @@ export const SessionEmbeddedTerminalPane = React.memo(function SessionEmbeddedTe
         return (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 {props.onOpenNewTerminalTab ? (
-                    <EmbeddedTerminalToolbarIconButton
+                    <IconButton
                         testID={testId('new-tab')}
+                        iconName="add-outline"
                         accessibilityLabel={t('terminalEmbedded.openNewTabA11y')}
+                        tooltip={t('terminalEmbedded.openNewTabA11y')}
+                        variant="plain"
+                        size={28}
+                        iconSize={18}
                         onPress={props.onOpenNewTerminalTab}
-                        icon="add-outline"
                     />
                 ) : null}
                 {showDockMenu ? (
@@ -140,6 +144,7 @@ export const SessionEmbeddedTerminalPane = React.memo(function SessionEmbeddedTe
                 terminalRef={terminalRendererRef}
                 onRequestClose={props.onRequestClose}
                 testIdPrefix={testIdPrefix}
+                nativeSurfaceKey={terminalKey}
                 toolbarActionsStart={toolbarActionsStart}
             />
         </View>
