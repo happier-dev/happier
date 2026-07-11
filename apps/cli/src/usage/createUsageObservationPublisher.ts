@@ -4,11 +4,11 @@ import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { normalizeBaseUrl } from '@/diagnostics/httpClient';
 import { isAuthenticationStatus, readHttpStatus } from '@/api/client/httpStatusError';
 
+import type { UsageObservation } from './usageObservation';
 import {
     buildLegacyUsageReportFromUsageObservation,
-    type UsageObservation,
     type UsageReportV1,
-} from './usageObservation';
+} from './legacy/legacyUsageTransport';
 import { buildUsageEventIngestRequest } from './buildUsageEventIngestRequest';
 
 type UsageObservationPublisherMode = 'unknown' | 'v2' | 'legacy';

@@ -1,33 +1,17 @@
-export type UsageObservationScope = 'turn_delta' | 'session_cumulative' | 'session_final';
+import {
+    SessionContextUsageSnapshotV1Schema,
+    type SessionContextUsageSnapshotV1,
+    type UsageObservationCost,
+    type UsageObservationScope,
+    type UsageObservationTokens,
+} from '@happier-dev/protocol';
+import type { RuntimeOutboundTranscriptUsageObservationV1 } from '@happier-dev/agents';
 
-export type UsageNumberMap = {
-    total: number;
-    [key: string]: number;
-};
-
-export type UsageBillingContext =
-    | 'api_usage'
-    | 'subscription_included'
-    | 'subscription_with_possible_overage'
-    | 'unknown';
-
-export type UsageCostSource =
-    | 'provider_reported'
-    | 'provider_reported_api_equivalent'
-    | 'pricing_estimate'
-    | 'invoice'
-    | 'none';
-
-export type UsageCostMap = {
-    total: number;
-    reportedUsd?: number;
-    estimatedUsd?: number;
-    invoiceUsd?: number;
-    billingContext?: UsageBillingContext;
-    costSource?: UsageCostSource;
-    currency?: string;
-    [key: string]: number | string | undefined;
-};
+export type { UsageObservationScope } from '@happier-dev/protocol';
+export type UsageNumberMap = UsageObservationTokens;
+export type UsageBillingContext = NonNullable<UsageObservationCost['billingContext']>;
+export type UsageCostSource = NonNullable<UsageObservationCost['costSource']>;
+export type UsageCostMap = UsageObservationCost;
 
 export type UsageObservation = {
     provider: string;
@@ -39,14 +23,10 @@ export type UsageObservation = {
     cost: UsageCostMap | null;
     contextUsedTokens: number | null;
     contextWindowTokens: number | null;
+    contextSnapshot?: SessionContextUsageSnapshotV1;
 };
 
-export type UsageReportV1 = {
-    key: string;
-    sessionId: string;
-    tokens: UsageNumberMap;
-    cost: UsageNumberMap;
-};
+export type UsageObservationBoundaryInput = RuntimeOutboundTranscriptUsageObservationV1 | UsageObservation;
 
 function asNonEmptyString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
@@ -80,63 +60,12 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     return value as Record<string, unknown>;
 }
 
-function createSafeNumberMap(): Record<string, number> {
-    return Object.create(null) as Record<string, number>;
-}
-
-function normalizeNumberMap(raw: unknown): Record<string, number> {
-    const record = asRecord(raw);
-    if (!record) return createSafeNumberMap();
-    const out = createSafeNumberMap();
-    for (const [key, value] of Object.entries(record)) {
-        if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
-        const numeric = asFiniteNonNegativeNumber(value);
-        if (numeric == null) continue;
-        out[key] = numeric;
-    }
-    return out;
-}
-
-function computeTotalFromParts(parts: Readonly<{
-    input?: number;
-    output?: number;
-    cache_creation?: number;
-    cache_read?: number;
-    thought?: number;
-}>): number {
-    return (
-        (parts.input ?? 0) +
-        (parts.output ?? 0) +
-        (parts.cache_creation ?? 0) +
-        (parts.cache_read ?? 0) +
-        (parts.thought ?? 0)
-    );
-}
-
 function normalizeTokensMap(raw: unknown): UsageNumberMap | null {
-    const tokens = normalizeNumberMap(raw);
-    if (Object.keys(tokens).length === 0) return null;
-    if (tokens.total == null) {
-        const hasParts =
-            tokens.input != null ||
-            tokens.output != null ||
-            tokens.cache_creation != null ||
-            tokens.cache_read != null ||
-            tokens.thought != null;
-        if (hasParts) {
-            tokens.total = computeTotalFromParts({
-                input: tokens.input,
-                output: tokens.output,
-                cache_creation: tokens.cache_creation,
-                cache_read: tokens.cache_read,
-                thought: tokens.thought,
-            });
-        }
-    }
-    return tokens.total == null ? null : (tokens as UsageNumberMap);
-}
+    const record = asRecord(raw);
+    if (!record) return null;
 
-function normalizeTopLevelTokens(record: Record<string, unknown>): UsageNumberMap | null {
+    // This table is the only raw provider-token vocabulary in the CLI. Everything
+    // returned below uses the protocol's canonical camelCase token keys.
     const input =
         asFiniteNonNegativeNumber(record.input_tokens) ??
         asFiniteNonNegativeNumber(record.input) ??
@@ -149,7 +78,8 @@ function normalizeTopLevelTokens(record: Record<string, unknown>): UsageNumberMa
         asFiniteNonNegativeNumber(record.completion_tokens) ??
         asFiniteNonNegativeNumber(record.completionTokens) ??
         asFiniteNonNegativeNumber(record.outputTokens);
-    const cacheCreation =
+    const cacheWrite =
+        asFiniteNonNegativeNumber(record.cacheWrite) ??
         asFiniteNonNegativeNumber(record.cache_creation_input_tokens) ??
         asFiniteNonNegativeNumber(record.cache_creation_tokens) ??
         asFiniteNonNegativeNumber(record.cached_write_tokens) ??
@@ -157,6 +87,7 @@ function normalizeTopLevelTokens(record: Record<string, unknown>): UsageNumberMa
         asFiniteNonNegativeNumber(record.cache_creation) ??
         asFiniteNonNegativeNumber(record.cacheCreationTokens);
     const cacheRead =
+        asFiniteNonNegativeNumber(record.cacheRead) ??
         asFiniteNonNegativeNumber(record.cache_read_input_tokens) ??
         asFiniteNonNegativeNumber(record.cache_read_tokens) ??
         asFiniteNonNegativeNumber(record.cached_input_tokens) ??
@@ -164,7 +95,8 @@ function normalizeTopLevelTokens(record: Record<string, unknown>): UsageNumberMa
         asFiniteNonNegativeNumber(record.cachedReadTokens) ??
         asFiniteNonNegativeNumber(record.cache_read) ??
         asFiniteNonNegativeNumber(record.cacheReadTokens);
-    const thought =
+    const reasoning =
+        asFiniteNonNegativeNumber(record.reasoning) ??
         asFiniteNonNegativeNumber(record.thought_tokens) ??
         asFiniteNonNegativeNumber(record.reasoning_output_tokens) ??
         asFiniteNonNegativeNumber(record.reasoningOutputTokens) ??
@@ -179,27 +111,29 @@ function normalizeTopLevelTokens(record: Record<string, unknown>): UsageNumberMa
         totalExplicit != null ||
         input != null ||
         output != null ||
-        cacheCreation != null ||
+        cacheWrite != null ||
         cacheRead != null ||
-        thought != null;
+        reasoning != null;
     if (!anyPresent) return null;
 
-    const out = createSafeNumberMap();
-    out.total =
-        totalExplicit ??
-        computeTotalFromParts({
-            input: input ?? undefined,
-            output: output ?? undefined,
-            cache_creation: cacheCreation ?? undefined,
-            cache_read: cacheRead ?? undefined,
-            thought: thought ?? undefined,
-        });
-    if (input != null) out.input = input;
-    if (output != null) out.output = output;
-    if (cacheCreation != null) out.cache_creation = cacheCreation;
-    if (cacheRead != null) out.cache_read = cacheRead;
-    if (thought != null) out.thought = thought;
-    return out as UsageNumberMap;
+    const canonical = {
+        input: input ?? 0,
+        output: output ?? 0,
+        reasoning: reasoning ?? 0,
+        cacheRead: cacheRead ?? 0,
+        cacheWrite: cacheWrite ?? 0,
+        total: totalExplicit ??
+            (input ?? 0) +
+            (output ?? 0) +
+            (reasoning ?? 0) +
+            (cacheRead ?? 0) +
+            (cacheWrite ?? 0),
+    } satisfies UsageObservationTokens;
+    return canonical;
+}
+
+function normalizeTopLevelTokens(record: Record<string, unknown>): UsageNumberMap | null {
+    return normalizeTokensMap(record);
 }
 
 function normalizeCodexInfoTokens(record: Record<string, unknown>): UsageNumberMap | null {
@@ -214,34 +148,86 @@ function normalizeCodexInfoTokens(record: Record<string, unknown>): UsageNumberM
     return normalizeTopLevelTokens(usageRecord);
 }
 
-function normalizeCostMap(raw: unknown): UsageCostMap | null {
+function normalizeCostBreakdown(record: Record<string, unknown>): Record<string, number> | undefined {
+    const semanticKeys = new Set([
+        'total',
+        'reportedUsd',
+        'reported_usd',
+        'reported',
+        'estimatedUsd',
+        'estimated_usd',
+        'estimated',
+        'invoiceUsd',
+        'effectiveUsd',
+        'billingContext',
+        'costSource',
+        'currency',
+        'breakdown',
+    ]);
+    const breakdown = Object.create(null) as Record<string, number>;
+    const nestedBreakdown = asRecord(record.breakdown);
+    for (const [key, value] of [
+        ...Object.entries(nestedBreakdown ?? {}),
+        ...Object.entries(record).filter(([key]) => !semanticKeys.has(key)),
+    ]) {
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+        const numeric = asFiniteNonNegativeNumber(value);
+        if (numeric != null) breakdown[key] = numeric;
+    }
+    return Object.keys(breakdown).length > 0 ? breakdown : undefined;
+}
+
+function normalizeCostMap(raw: unknown, source: string): UsageCostMap | null {
     if (raw == null) return null;
     const direct = asFiniteNonNegativeNumber(raw);
     if (direct != null) {
-        const out = createSafeNumberMap() as UsageCostMap;
-        out.total = direct;
-        return out;
+        return {
+            reportedUsd: 0,
+            estimatedUsd: direct,
+            currency: 'USD',
+        };
     }
-    const normalized = normalizeNumberMap(raw);
     const record = asRecord(raw);
-    if (Object.keys(normalized).length === 0 && !record) return null;
-    if (normalized.total == null) {
-        normalized.total = Object.entries(normalized)
-            .filter(([key]) => key !== 'total')
-            .reduce((sum, [, value]) => sum + value, 0);
-    }
-    const billingContext = record ? asUsageBillingContext(record.billingContext) : null;
-    const costSource = record ? asUsageCostSource(record.costSource) : null;
-    const currency = record ? asNonEmptyString(record.currency) : null;
-    const out = {
-        ...(normalized as UsageCostMap),
-        ...(record ? {
-            ...(billingContext ? { billingContext } : {}),
-            ...(costSource ? { costSource } : {}),
-            ...(currency ? { currency } : {}),
-        } : {}),
-    } satisfies UsageCostMap;
-    return out;
+    if (!record) return null;
+
+    const total = asFiniteNonNegativeNumber(record.total);
+    const reportedUsd =
+        asFiniteNonNegativeNumber(record.reportedUsd) ??
+        asFiniteNonNegativeNumber(record.reported_usd) ??
+        asFiniteNonNegativeNumber(record.reported) ??
+        (source === 'claude-sdk-result' ? total : null) ??
+        0;
+    const estimatedUsd =
+        asFiniteNonNegativeNumber(record.estimatedUsd) ??
+        asFiniteNonNegativeNumber(record.estimated_usd) ??
+        asFiniteNonNegativeNumber(record.estimated) ??
+        (reportedUsd > 0 ? 0 : total) ??
+        0;
+    const invoiceUsd = asFiniteNonNegativeNumber(record.invoiceUsd);
+    const effectiveUsd = asFiniteNonNegativeNumber(record.effectiveUsd);
+    const billingContext = asUsageBillingContext(record.billingContext);
+    const costSource = asUsageCostSource(record.costSource);
+    const breakdown = normalizeCostBreakdown(record);
+    const hasCostData =
+        reportedUsd > 0 ||
+        estimatedUsd > 0 ||
+        invoiceUsd != null ||
+        effectiveUsd != null ||
+        billingContext != null ||
+        costSource != null ||
+        breakdown != null;
+    if (!hasCostData) return null;
+
+    return {
+        reportedUsd,
+        estimatedUsd,
+        ...(invoiceUsd != null ? { invoiceUsd } : {}),
+        ...(billingContext ? { billingContext } : {}),
+        ...(costSource ? { costSource } : {}),
+        currency: asNonEmptyString(record.currency) ?? 'USD',
+        ...(breakdown ? { breakdown } : {}),
+        ...(effectiveUsd != null ? { effectiveUsd } : {}),
+    };
 }
 
 function normalizeScope(value: unknown): UsageObservationScope | null {
@@ -249,20 +235,6 @@ function normalizeScope(value: unknown): UsageObservationScope | null {
         return value;
     }
     return null;
-}
-
-function getCompatibleLegacyTokens(observation: UsageObservation): UsageNumberMap | null {
-    if (observation.tokens) {
-        return {
-            ...observation.tokens,
-        };
-    }
-    if (observation.contextUsedTokens == null && observation.contextWindowTokens == null) return null;
-    const out = createSafeNumberMap();
-    out.total = observation.contextUsedTokens ?? 0;
-    if (observation.contextUsedTokens != null) out.used = observation.contextUsedTokens;
-    if (observation.contextWindowTokens != null) out.size = observation.contextWindowTokens;
-    return out as UsageNumberMap;
 }
 
 export function extractUsageObservationFromTokenCountMessage(params: Readonly<{
@@ -278,10 +250,16 @@ export function extractUsageObservationFromTokenCountMessage(params: Readonly<{
         normalizeTokensMap(record.tokens) ??
         normalizeTopLevelTokens(record) ??
         normalizeCodexInfoTokens(record);
+    const info = asRecord(record.info);
+    const lastUsage = asRecord(info?.last_token_usage) ?? asRecord(info?.lastTokenUsage);
+    const scope = normalizeScope(record.scope) ?? params.defaultScope ?? 'turn_delta';
+    const source = asNonEmptyString(record.source) ?? params.defaultSource ?? 'token_count';
     const contextUsedExplicit =
         asFiniteNonNegativeNumber(record.context_used_tokens) ??
         asFiniteNonNegativeNumber(record.contextUsedTokens) ??
-        asFiniteNonNegativeNumber(record.used);
+        asFiniteNonNegativeNumber(record.used) ??
+        asFiniteNonNegativeNumber(lastUsage?.total_tokens) ??
+        asFiniteNonNegativeNumber(lastUsage?.totalTokens);
     const contextWindowExplicit =
         asFiniteNonNegativeNumber(record.context_window_tokens) ??
         asFiniteNonNegativeNumber(record.contextWindowTokens) ??
@@ -290,110 +268,35 @@ export function extractUsageObservationFromTokenCountMessage(params: Readonly<{
         asFiniteNonNegativeNumber(asRecord(record.info)?.modelContextWindow);
     const contextUsedTokens =
         contextUsedExplicit ??
-        (contextWindowExplicit != null && tokens ? tokens.total : null);
+        (scope === 'turn_delta' && contextWindowExplicit != null && tokens ? tokens.total : null);
     const contextWindowTokens = contextWindowExplicit ?? null;
-    const cost = normalizeCostMap(record.cost);
+    const cost = normalizeCostMap(record.cost, source);
+    const parsedContextSnapshot = SessionContextUsageSnapshotV1Schema.safeParse(record.contextSnapshot);
+    const contextSnapshot = parsedContextSnapshot.success ? parsedContextSnapshot.data : null;
     const hasData = tokens != null || cost != null || contextUsedTokens != null || contextWindowTokens != null;
     if (!hasData) return null;
 
     return {
         provider: params.provider,
-        source: asNonEmptyString(record.source) ?? params.defaultSource ?? 'token_count',
-        scope: normalizeScope(record.scope) ?? params.defaultScope ?? 'turn_delta',
+        source,
+        scope,
         key: asNonEmptyString(record.key),
         modelId: asNonEmptyString(record.modelId ?? record.model),
         tokens,
         cost,
         contextUsedTokens,
         contextWindowTokens,
+        ...(contextSnapshot ? { contextSnapshot } : {}),
     };
 }
 
-export function buildTokenCountAgentMessageFromUsageObservation(
-    observation: UsageObservation,
-): ({
-    type: 'token-count';
-    tokens: UsageNumberMap;
-    source: string;
-    scope: UsageObservationScope;
-    key?: string;
-    modelId?: string;
-    cost?: UsageCostMap;
-    context_used_tokens?: number;
-    context_window_tokens?: number;
-}) | null {
-    const tokens = getCompatibleLegacyTokens(observation);
-    if (!tokens) return null;
-    return {
-        type: 'token-count',
-        tokens,
-        source: observation.source,
-        scope: observation.scope,
-        ...(observation.key ? { key: observation.key } : {}),
-        ...(observation.modelId ? { modelId: observation.modelId } : {}),
-        ...(observation.cost ? { cost: observation.cost } : {}),
-        ...(observation.contextUsedTokens != null ? { context_used_tokens: observation.contextUsedTokens } : {}),
-        ...(observation.contextWindowTokens != null ? { context_window_tokens: observation.contextWindowTokens } : {}),
-    };
-}
-
-export function buildTokenCountSessionMessageFromUsageObservation(
-    observation: UsageObservation,
-): ({
-    type: 'token_count';
-    tokens: UsageNumberMap;
-    source: string;
-    scope: UsageObservationScope;
-    key?: string;
-    model?: string;
-    cost?: UsageCostMap;
-    context_used_tokens?: number;
-    context_window_tokens?: number;
-}) | null {
-    const tokens = getCompatibleLegacyTokens(observation);
-    if (!tokens) return null;
-    return {
-        type: 'token_count',
-        tokens,
-        source: observation.source,
-        scope: observation.scope,
-        ...(observation.key ? { key: observation.key } : {}),
-        ...(observation.modelId ? { model: observation.modelId } : {}),
-        ...(observation.cost ? { cost: observation.cost } : {}),
-        ...(observation.contextUsedTokens != null ? { context_used_tokens: observation.contextUsedTokens } : {}),
-        ...(observation.contextWindowTokens != null ? { context_window_tokens: observation.contextWindowTokens } : {}),
-    };
-}
-
-export function buildLegacyUsageReportFromUsageObservation(params: Readonly<{
-    sessionId: string;
-    observation: UsageObservation;
-}>): UsageReportV1 | null {
-    const tokens = getCompatibleLegacyTokens(params.observation);
-    if (!tokens) return null;
-    const cost = createSafeNumberMap();
-    for (const [key, value] of Object.entries(params.observation.cost ?? {})) {
-        if (
-            key === 'reportedUsd' ||
-            key === 'estimatedUsd' ||
-            key === 'invoiceUsd' ||
-            key === 'billingContext' ||
-            key === 'costSource' ||
-            key === 'currency'
-        ) {
-            continue;
-        }
-        if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) continue;
-        cost[key] = value;
-    }
-    return {
-        key: params.observation.key ?? `${params.observation.provider}-session`,
-        sessionId: params.sessionId,
-        tokens,
-        cost: Object.keys(cost).length > 0 ? (cost as UsageNumberMap) : (() => {
-            const out = createSafeNumberMap();
-            out.total = 0;
-            return out as UsageNumberMap;
-        })(),
-    };
+export function normalizeUsageObservation(
+    input: UsageObservationBoundaryInput,
+): UsageObservation | null {
+    return extractUsageObservationFromTokenCountMessage({
+        provider: input.provider,
+        body: input,
+        defaultSource: input.source,
+        defaultScope: input.scope,
+    });
 }
