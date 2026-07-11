@@ -168,9 +168,7 @@ function preprocessMessageContent(data: unknown): unknown {
   return record;
 }
 
-const KNOWN_OUTPUT_DATA_TYPES = new Set(['system', 'result', 'summary', 'progress', 'assistant', 'user'] as const);
-
-type UnknownOutputDataType = string & { readonly __happierUnknownOutputDataType: unique symbol };
+type OpaqueOutputDataType = string & { readonly __happierOpaqueOutputDataType: unique symbol };
 
 const OutputExtrasShape = {
   isSidechain: z.boolean().nullish(),
@@ -218,20 +216,15 @@ const RawAgentOutputDataKnownSchema = z.discriminatedUnion('type', [
   ),
 ]);
 
-const RawAgentOutputDataUnknownSchema = z
+const RawAgentOutputDataOpaqueSchema = z
   .object({ type: z.string() })
   .extend(OutputExtrasShape)
   .passthrough()
-  // NOTE: We intentionally do NOT reject known `type` values here.
-  // `RawAgentOutputDataSchema` is `union([Known, Unknown])` with Known tried first,
-  // so well-formed known-type rows still match their rich Known variant. A known-type
-  // row whose body does NOT match (e.g. a Claude `assistant` row missing `message`,
-  // or with `content: null`) falls through to this catch-all instead of failing the
-  // entire record — which would otherwise render as "[Unparsed agent message]" in the
-  // UI. This matches the package's forward-compatibility philosophy.
-  .transform((value) => ({ ...value, type: value.type as UnknownOutputDataType }));
+  // The strict branch is tried first. Malformed known rows and future output types
+  // remain available as opaque data while the shared output envelope stays validated.
+  .transform((value) => ({ ...value, type: value.type as OpaqueOutputDataType }));
 
-const RawAgentOutputDataSchema = z.union([RawAgentOutputDataKnownSchema, RawAgentOutputDataUnknownSchema]);
+const RawAgentOutputDataSchema = z.union([RawAgentOutputDataKnownSchema, RawAgentOutputDataOpaqueSchema]);
 
 const AgentEventLifecycleShape = {
   lifecycleId: z.string().trim().min(1).optional(),
