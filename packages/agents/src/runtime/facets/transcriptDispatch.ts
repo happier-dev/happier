@@ -58,7 +58,8 @@ export type RuntimeOutboundTranscriptUsageObservationV1 = Readonly<{
   }> | null;
   cost: Readonly<{
     total: number;
-    [key: string]: number | string | undefined;
+    breakdown?: Readonly<Record<string, number>>;
+    [key: string]: number | string | Readonly<Record<string, number>> | undefined;
   }> | null;
   contextUsedTokens: number | null;
   contextWindowTokens: number | null;

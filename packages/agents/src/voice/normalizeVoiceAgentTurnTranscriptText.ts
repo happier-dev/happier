@@ -1,3 +1,5 @@
+import { VOICE_TOOL_RESULT_CHANNEL } from '@happier-dev/protocol';
+
 export function normalizeVoiceAgentTurnTranscriptText(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -7,7 +9,7 @@ export function normalizeVoiceAgentTurnTranscriptText(value: unknown): string | 
   const withoutContextEnvelope = unwrapContextUpdateEnvelope(withoutGreetingInstruction);
   const cleaned = withoutContextEnvelope.trim();
   if (cleaned.length === 0) return null;
-  if (cleaned.startsWith('VOICE_TOOL_RESULTS_JSON:')) return null;
+  if (cleaned.startsWith(VOICE_TOOL_RESULT_CHANNEL.payloadMarker)) return null;
   return cleaned;
 }
 

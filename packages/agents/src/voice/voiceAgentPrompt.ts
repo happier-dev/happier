@@ -4,6 +4,7 @@ import {
   listVoiceActionBlockSpecs,
   listVoiceToolActionSpecs,
   renderPromptPlanV1,
+  VOICE_TOOL_RESULT_CHANNEL,
   type PromptBlockV1,
 } from '@happier-dev/protocol';
 
@@ -192,7 +193,7 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
             `- The <${tag}> block MUST contain a single JSON object (no code fences, no extra text).`,
             '- Do not read the JSON aloud; keep all spoken text above the block.',
             '- If you have no actions to trigger, omit the block entirely.',
-            '- After actions run, you may receive a follow-up user message that starts with "VOICE_TOOL_RESULTS_JSON:". Parse the JSON after that prefix (next line) as { toolResults: [...] } and use it to confirm success or explain errors.',
+            `- After actions run, you may receive a follow-up user message that starts with "${VOICE_TOOL_RESULT_CHANNEL.payloadMarker}". Parse the JSON after that prefix (next line) as { toolResults: [...] } and use it to confirm success or explain errors.`,
             '- Always include sessionId internally when the action accepts it.',
             '- The action list below is only the hot path. For anything else, use searchActionSpecs first instead of guessing.',
             '',
