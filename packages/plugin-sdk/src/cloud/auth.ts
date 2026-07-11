@@ -7,6 +7,10 @@ import {
 import type { FetchRuntimeServiceV1 } from '../fetch.js';
 
 export {
+    classifyProviderLimitEvidence,
+    type ProviderLimitCategory,
+} from './providerLimitEvidence.js';
+export {
     ConnectedServiceCredentialRecordV1Schema,
 };
 

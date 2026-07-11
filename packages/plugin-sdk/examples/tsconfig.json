@@ -7,10 +7,9 @@
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "baseUrl": ".",
     "paths": {
-      "@happier-dev/plugin-sdk": ["../src/index.ts"],
-      "@happier-dev/plugin-sdk/*": ["../src/*"]
+      "@happier-dev/plugin-sdk": ["./../src/index.ts"],
+      "@happier-dev/plugin-sdk/*": ["./../src/*"]
     }
   },
   "include": ["**/*.ts"]

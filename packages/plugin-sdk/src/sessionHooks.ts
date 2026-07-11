@@ -2,9 +2,17 @@ import type { SessionProviderTranscriptEventPayloadV1 } from '@happier-dev/proto
 
 export type SessionHookProviderPayloadV1 = Readonly<Record<string, unknown>>;
 
+export type SessionHookLifecycleV1 =
+    | Readonly<{ kind: 'runner' }>
+    | Readonly<{
+        kind: 'session';
+        sessionId: string;
+    }>;
+
 export type SessionHookServerStartRequestV1 = Readonly<{
     providerId: string;
     sessionId: string;
+    lifecycle?: SessionHookLifecycleV1;
     onSessionHook?: (providerSessionId: string, data: SessionHookProviderPayloadV1) => void | Promise<void>;
     onPermissionHook?: (data: SessionHookProviderPayloadV1) => unknown | Promise<unknown>;
     /**
@@ -52,12 +60,7 @@ export type SessionHookPluginFileV1 =
         json?: never;
     }>;
 
-export type SessionHookPluginDirLifecycleV1 =
-    | Readonly<{ kind: 'runner' }>
-    | Readonly<{
-        kind: 'session';
-        sessionId: string;
-    }>;
+export type SessionHookPluginDirLifecycleV1 = SessionHookLifecycleV1;
 
 export type SessionHookPluginDirCreateRequestV1 = Readonly<{
     providerId: string;

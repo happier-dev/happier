@@ -8,8 +8,8 @@ type BuildSessionRuntimeIssueV1 = (params: Readonly<{
   code: string;
   source: 'usage_limit';
   occurredAt: number;
-  provider?: string | null;
-  providerTurnId?: string | null;
+  agentId?: string | null;
+  agentTurnId?: string | null;
   sanitizedPreview?: string | null;
   usageLimit?: Readonly<{
     v: 1;
@@ -45,8 +45,8 @@ describe('buildSessionRuntimeIssueV1', () => {
       code: ' opencode_session_retry ',
       source: 'usage_limit',
       occurredAt: 123.9,
-      provider: ' opencode ',
-      providerTurnId: ' turn-1 ',
+      agentId: ' opencode ',
+      agentTurnId: ' turn-1 ',
       sanitizedPreview: ` ${'x'.repeat(2_100)} `,
       usageLimit,
     });
@@ -58,8 +58,8 @@ describe('buildSessionRuntimeIssueV1', () => {
       code: 'opencode_session_retry',
       source: 'usage_limit',
       occurredAt: 123,
-      provider: 'opencode',
-      providerTurnId: 'turn-1',
+      agentId: 'opencode',
+      agentTurnId: 'turn-1',
       sanitizedPreview: 'x'.repeat(2_000),
       usageLimit,
     });

@@ -32,8 +32,8 @@ export type BrokerBridgeCallSourceParams = Readonly<{
   selectionsEnv: string;
   /** Env var holding the absolute path to the daemon-state file (`httpPort` is read at call time). */
   daemonStatePathEnv: string;
-  /** Env var holding the SCOPED broker-refresh capability token (NEVER the master control token). */
-  refreshTokenEnv: string;
+  /** Env var holding the private capability-file path (NEVER a token or the master control token). */
+  refreshTokenPathEnv: string;
   /** Env var holding the broker version (for the bridge sessionId only). */
   pluginVersionEnv: string;
   /** Fallback broker version literal (when the env var is unset). */
@@ -69,7 +69,7 @@ const PLAN_TYPE_BODY_KEY = ${JSON.stringify(params.planTypeBodyKey || null)};
 const RESULT_ACCOUNT_ID_KEYS = ${JSON.stringify(resultAccountIdKeys)};
 const SELECTIONS_ENV = ${jsString(params.selectionsEnv)};
 const DAEMON_STATE_PATH_ENV = ${jsString(params.daemonStatePathEnv)};
-const REFRESH_TOKEN_ENV = ${jsString(params.refreshTokenEnv)};
+const REFRESH_TOKEN_PATH_ENV = ${jsString(params.refreshTokenPathEnv)};
 const PLUGIN_VERSION_ENV = ${jsString(params.pluginVersionEnv)};
 const PLUGIN_VERSION = ${jsString(params.pluginVersion)};
 const SESSION_TAG = ${jsString(params.sessionTag)};
@@ -98,13 +98,22 @@ function readDaemonHttpPort() {
   return httpPort;
 }
 
-// The scoped broker-refresh capability token (NOT the master controlToken), injected via env.
+// Read the independently random broker capability from its private file on EVERY request. The child
+// env contains only this path, never the raw capability or daemon master.
 function readScopedToken() {
-  const token = process.env[REFRESH_TOKEN_ENV];
-  if (typeof token !== "string" || token.trim().length === 0) {
+  const path = process.env[REFRESH_TOKEN_PATH_ENV];
+  if (typeof path !== "string" || path.trim().length === 0) {
     throw new Error("happier_broker_scoped_token_missing");
   }
-  return token.trim();
+  let parsed;
+  try { parsed = JSON.parse(readFileSync(path.trim(), "utf8")); } catch {
+    throw new Error("happier_broker_capability_file_unreadable");
+  }
+  const token = parsed && parsed.v === 1 && typeof parsed.capability === "string"
+    ? parsed.capability.trim()
+    : "";
+  if (!token) throw new Error("happier_broker_capability_file_invalid");
+  return token;
 }
 
 function resolveSelection() {

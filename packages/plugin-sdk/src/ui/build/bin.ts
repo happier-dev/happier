@@ -2,8 +2,9 @@
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { access, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { basename, dirname, extname, isAbsolute, join, resolve, sep, relative } from 'node:path';
 
 import type { ExecRuntimeServiceV1, ExecRunResultV1 } from '../../exec.js';
@@ -370,13 +371,29 @@ export async function runPluginBuildUiCli(input: RunPluginBuildUiCliInputV1): Pr
     }
 }
 
-function isDirectInvocation(): boolean {
-    const entry = process.argv[1];
+/**
+ * Whether this module is the process entry point. The bin is launched through
+ * an npm `.bin` symlink, and under a `file:` dependency also through a
+ * `node_modules` package symlink into the source checkout — so `argvEntry` and
+ * the symlink-resolved `moduleUrl` differ by raw path while resolving to the
+ * same real file. A raw string compare (the previous behavior) silently
+ * no-ops the CLI (exit 0, zero output); compare canonical real paths instead,
+ * falling back to a raw URL compare only when a path cannot be resolved.
+ */
+export function isBinDirectInvocation(params: Readonly<{
+    argvEntry: string | undefined;
+    moduleUrl: string;
+}>): boolean {
+    const entry = params.argvEntry;
     if (!entry) return false;
-    return import.meta.url === pathToFileURL(entry).href;
+    try {
+        return realpathSync(entry) === realpathSync(fileURLToPath(params.moduleUrl));
+    } catch {
+        return params.moduleUrl === pathToFileURL(entry).href;
+    }
 }
 
-if (isDirectInvocation()) {
+if (isBinDirectInvocation({ argvEntry: process.argv[1], moduleUrl: import.meta.url })) {
     void runPluginBuildUiCli({ argv: process.argv.slice(2) }).then((exitCode) => {
         process.exitCode = exitCode;
     });

@@ -47,6 +47,7 @@ export {
     SessionWorkflowPhaseSnapshotV1Schema,
     SessionWorkflowRunHeadlineV1Schema,
     SessionWorkflowRunSnapshotV1Schema,
+    SessionWorkflowRunStatusReasonV1Schema,
     SessionWorkflowRunStatusV1Schema,
     buildSessionWorkflowActivityHeadline,
     bumpWorkflowRunRecordRevision,
@@ -62,5 +63,6 @@ export {
     type SessionWorkflowPhaseSnapshotV1,
     type SessionWorkflowRunHeadlineV1,
     type SessionWorkflowRunSnapshotV1,
+    type SessionWorkflowRunStatusReasonV1,
     type SessionWorkflowRunStatusV1,
 } from '@happier-dev/protocol';

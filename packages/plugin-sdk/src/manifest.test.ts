@@ -252,7 +252,7 @@ describe('agent-account settings manifest helpers', () => {
             agentId: 'acme',
             fields: [],
             ui: {
-                title: { key: 'settingsProviders.plugins.acme.title' },
+                title: { key: 'settingsAgents.plugins.acme.title' },
                 icon: { ionName: 'sparkles-outline', color: { kind: 'theme', token: 'green' } },
                 sections: [],
                 subagentSettingsSections: [],
@@ -264,7 +264,7 @@ describe('agent-account settings manifest helpers', () => {
             kind: 'agentSettings.v1',
             descriptorId: 'acme.agentSettings.v1',
             agentId: 'acme',
-            title: { key: 'settingsProviders.plugins.acme.title' },
+            title: { key: 'settingsAgents.plugins.acme.title' },
             icon: { ionName: 'sparkles-outline', color: { kind: 'theme', token: 'green' } },
             settings: {},
             subagentSettingsSections: [],
@@ -283,7 +283,7 @@ describe('agent-account settings manifest helpers', () => {
                     description: 'Per-server Acme server URL overrides',
                     ui: {
                         kind: 'text',
-                        title: { key: 'settingsProviders.plugins.acme.fields.serverBaseUrl.title' },
+                        title: { key: 'settingsAgents.plugins.acme.fields.serverBaseUrl.title' },
                         binding: {
                             kind: 'perActiveServer',
                             fallbackSettingKey: 'acmeServerBaseUrl',
@@ -296,7 +296,7 @@ describe('agent-account settings manifest helpers', () => {
                 sections: [
                     {
                         id: 'acmeServer',
-                        title: { key: 'settingsProviders.plugins.acme.sections.server.title' },
+                        title: { key: 'settingsAgents.plugins.acme.sections.server.title' },
                         fields: ['acmeServerBaseUrlByServerIdV1'],
                     },
                 ],

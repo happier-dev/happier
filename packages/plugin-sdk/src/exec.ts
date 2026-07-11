@@ -4,6 +4,7 @@ export type ExecAgentCliLaunchInputV1 = Readonly<{
     args?: readonly string[];
     cwd?: string;
     env?: Readonly<Record<string, string>>;
+    unsetEnvKeys?: readonly string[];
     stdin?: string | Uint8Array;
 }>;
 
@@ -13,6 +14,7 @@ export type ExecBinaryLaunchInputV1 = Readonly<{
     args?: readonly string[];
     cwd?: string;
     env?: Readonly<Record<string, string>>;
+    unsetEnvKeys?: readonly string[];
     stdin?: string | Uint8Array;
 }>;
 
@@ -23,6 +25,7 @@ export type ExecManagedInstallableLaunchInputV1 = Readonly<{
     args?: readonly string[];
     cwd?: string;
     env?: Readonly<Record<string, string>>;
+    unsetEnvKeys?: readonly string[];
     stdin?: string | Uint8Array;
     sourcePreference?: 'managed-first';
 }>;

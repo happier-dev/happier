@@ -52,11 +52,11 @@ export type ExternalSessionRuntimeHostAdapterParamsV1 = Readonly<{
 
 export type ExternalSessionCandidateHostAdapterV1 =
     ExternalSessionCandidateHostRuntimeServiceV1
-    & Readonly<{ providerId: string }>;
+    & Readonly<{ agentId: string }>;
 
 export type ExternalSessionTranscriptStoreAdapterV1 =
     ExternalSessionTranscriptStoreRuntimeServiceV1
-    & Readonly<{ providerId: string }>;
+    & Readonly<{ agentId: string }>;
 
 export type ExternalSessionHostAdaptersContributionV1 = Readonly<{
     createCandidateHostAdapter?: (

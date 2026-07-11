@@ -1,4 +1,8 @@
-import { PluginSettingsContributionV2Schema } from '@happier-dev/protocol';
+import {
+  PluginSettingsContributionV2Schema,
+  VoiceModelPackContributionV1Schema,
+  VoiceModelPackManifestV1Schema,
+} from '@happier-dev/protocol';
 import type {
   AIBackendProfile,
   ParsedPluginAgentContributionV2,
@@ -52,11 +56,31 @@ import type {
   PluginUiTranslationsContributionV1,
   PromptAssetCapabilitiesV1,
   PromptAssetTypeDescriptorV1,
+  ProviderApiKeyCredentialRequirementV1,
+  ProviderCatalogDeclarationV1,
+  ProviderCatalogProbeV1,
+  ProviderCompatibilityCapabilitiesV1,
+  ProviderCompatibilityEvidenceV1,
+  ProviderCompatibilityOverrideV1,
+  ProviderContributionV1,
+  ProviderCredentialTransportV1,
+  ProviderDetectionDescriptorV1,
+  ProviderEndpointTemplateV1,
+  ProviderModelDescriptorV1,
+  ProviderModelLoadDescriptorV1,
+  ProviderWireProtocol,
+  VoiceModelPackContributionV1,
+  VoiceModelPackExecutionHostV1,
+  VoiceModelPackLicenseV1,
+  VoiceModelPackManifestV1,
+  VoiceModelPackRuntimeV1,
 } from '@happier-dev/protocol';
 
 export {
   BackendSurfaceOperationCatalogV1,
   PluginBackendCapabilitiesV1Schema,
+  VoiceModelPackContributionV1Schema,
+  VoiceModelPackManifestV1Schema,
 } from '@happier-dev/protocol';
 
 export function definePluginManifest<const TManifest>(
@@ -124,6 +148,24 @@ export type {
   PluginUiTranslationsContributionV1,
   PromptAssetCapabilitiesV1,
   PromptAssetTypeDescriptorV1,
+  ProviderApiKeyCredentialRequirementV1,
+  ProviderCatalogDeclarationV1,
+  ProviderCatalogProbeV1,
+  ProviderCompatibilityCapabilitiesV1,
+  ProviderCompatibilityEvidenceV1,
+  ProviderCompatibilityOverrideV1,
+  ProviderContributionV1,
+  ProviderCredentialTransportV1,
+  ProviderDetectionDescriptorV1,
+  ProviderEndpointTemplateV1,
+  ProviderModelDescriptorV1,
+  ProviderModelLoadDescriptorV1,
+  ProviderWireProtocol,
+  VoiceModelPackContributionV1,
+  VoiceModelPackExecutionHostV1,
+  VoiceModelPackLicenseV1,
+  VoiceModelPackManifestV1,
+  VoiceModelPackRuntimeV1,
 };
 
 export {

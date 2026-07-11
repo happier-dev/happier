@@ -4,6 +4,8 @@
  */
 export type CoalescedScheduler = Readonly<{
     trigger(): void;
+    /** Trigger a drain and resolve only after the active single-flight cycle reaches idle. */
+    flush(): Promise<void>;
     dispose(): void;
 }>;
 
@@ -11,31 +13,39 @@ export function createCoalescedScheduler(params: Readonly<{
     drain: () => Promise<void>;
     onError?: (error: unknown) => void;
 }>): CoalescedScheduler {
-    let active = false;
     let queued = false;
     let disposed = false;
+    let activeRun: Promise<void> | null = null;
 
-    async function run(): Promise<void> {
-        if (active || disposed) {
+    function run(): Promise<void> {
+        if (disposed) return Promise.resolve();
+        if (activeRun) {
             queued = true;
-            return;
+            return activeRun;
         }
-        active = true;
-        try {
-            do {
-                queued = false;
-                await params.drain();
-            } while (queued && !disposed);
-        } catch (error) {
-            params.onError?.(error);
-        } finally {
-            active = false;
-        }
+
+        const cycle = (async () => {
+            try {
+                do {
+                    queued = false;
+                    await params.drain();
+                } while (queued && !disposed);
+            } catch (error) {
+                params.onError?.(error);
+            }
+        })();
+        activeRun = cycle.finally(() => {
+            activeRun = null;
+        });
+        return activeRun;
     }
 
     return Object.freeze({
         trigger() {
             void run();
+        },
+        flush() {
+            return run();
         },
         dispose() {
             disposed = true;

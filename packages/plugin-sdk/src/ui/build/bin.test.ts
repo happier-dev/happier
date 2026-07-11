@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -9,7 +10,7 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 
 import { defineHostedWebViteBuildPreset } from '../hostedWebBuild.js';
-import { runPluginBuildUiCli, type PluginBuildUiCliConfigV1 } from './bin.js';
+import { isBinDirectInvocation, runPluginBuildUiCli, type PluginBuildUiCliConfigV1 } from './bin.js';
 import type { PluginUiBundlerRunnerV1, PluginUiBuildSurfaceV1 } from './buildUiArtifacts.js';
 
 const hostUiApiVersion = '1.0.0';
@@ -158,5 +159,39 @@ describe('runPluginBuildUiCli', () => {
         );
         const manifest = PluginUiArtifactsManifestV1Schema.parse(JSON.parse(manifestRaw));
         expect(manifest.entries[0]?.contributionId).toBe('examples.reviewWeb');
+    });
+});
+
+describe('isBinDirectInvocation', () => {
+    // The bin is invoked through an npm `.bin` symlink AND, under a `file:`
+    // dependency, through a `node_modules` package symlink into the source
+    // checkout. In both cases `process.argv[1]` and the symlink-resolved
+    // `import.meta.url` differ by raw path but resolve to the same real file.
+    // A raw string compare silently no-ops the CLI (exit 0, zero output); the
+    // check must compare canonical real paths.
+    it('treats a symlinked argv entry pointing at the module file as a direct invocation', async () => {
+        const realEntry = join(projectRoot, 'bin.js');
+        const symlinkEntry = join(projectRoot, 'linked-bin.js');
+        await writeFile(realEntry, '// bin', 'utf8');
+        await symlink(realEntry, symlinkEntry);
+
+        expect(isBinDirectInvocation({
+            argvEntry: symlinkEntry,
+            moduleUrl: pathToFileURL(realEntry).href,
+        })).toBe(true);
+    });
+
+    it('returns false for an unrelated argv entry', () => {
+        expect(isBinDirectInvocation({
+            argvEntry: join(projectRoot, 'other.js'),
+            moduleUrl: pathToFileURL(join(projectRoot, 'bin.js')).href,
+        })).toBe(false);
+    });
+
+    it('returns false when there is no argv entry', () => {
+        expect(isBinDirectInvocation({
+            argvEntry: undefined,
+            moduleUrl: pathToFileURL(join(projectRoot, 'bin.js')).href,
+        })).toBe(false);
     });
 });

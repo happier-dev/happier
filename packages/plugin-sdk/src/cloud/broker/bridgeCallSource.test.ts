@@ -14,7 +14,7 @@ import { buildBrokerBridgeCallSource } from './bridgeCallSource.js';
  */
 const SELECTIONS_ENV = 'TEST_BROKER_SELECTIONS';
 const DAEMON_STATE_PATH_ENV = 'TEST_BROKER_DAEMON_STATE_PATH';
-const REFRESH_TOKEN_ENV = 'TEST_BROKER_REFRESH_TOKEN';
+const REFRESH_TOKEN_PATH_ENV = 'TEST_BROKER_REFRESH_TOKEN_PATH';
 const PLUGIN_VERSION_ENV = 'TEST_BROKER_VERSION';
 
 async function loadBridgeCaller(params: Readonly<{
@@ -31,7 +31,7 @@ async function loadBridgeCaller(params: Readonly<{
     ...params,
     selectionsEnv: SELECTIONS_ENV,
     daemonStatePathEnv: DAEMON_STATE_PATH_ENV,
-    refreshTokenEnv: REFRESH_TOKEN_ENV,
+    refreshTokenPathEnv: REFRESH_TOKEN_PATH_ENV,
     pluginVersionEnv: PLUGIN_VERSION_ENV,
     pluginVersion: '7',
     sessionTag: 'test-broker',
@@ -57,26 +57,38 @@ async function writeDaemonStateFile(token: string): Promise<string> {
   return file;
 }
 
+async function writeCapabilityFile(token: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'happier-broker-capability-'));
+  const file = join(dir, 'capability.json');
+  await writeFile(file, JSON.stringify({
+    v: 1,
+    materializationId: 'mat-test',
+    selectionIdentityDigest: 'test-selection-digest',
+    capability: token,
+  }), { mode: 0o600 });
+  return file;
+}
+
 describe('buildBrokerBridgeCallSource (shared bridge-call, exercised live)', () => {
   const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
     delete process.env[SELECTIONS_ENV];
     delete process.env[DAEMON_STATE_PATH_ENV];
-    delete process.env[REFRESH_TOKEN_ENV];
+    delete process.env[REFRESH_TOKEN_PATH_ENV];
     delete process.env[PLUGIN_VERSION_ENV];
   });
   afterEach(() => {
     globalThis.fetch = originalFetch;
     delete process.env[SELECTIONS_ENV];
     delete process.env[DAEMON_STATE_PATH_ENV];
-    delete process.env[REFRESH_TOKEN_ENV];
+    delete process.env[REFRESH_TOKEN_PATH_ENV];
     delete process.env[PLUGIN_VERSION_ENV];
   });
 
   it('reads httpPort from daemon-state, sends the SCOPED token, and POSTs the descriptor-defined body', async () => {
     process.env[DAEMON_STATE_PATH_ENV] = await writeDaemonStateFile('master-MUST-NOT-LEAK');
-    process.env[REFRESH_TOKEN_ENV] = 'scoped-broker-token';
+    process.env[REFRESH_TOKEN_PATH_ENV] = await writeCapabilityFile('scoped-broker-token');
     process.env[SELECTIONS_ENV] = JSON.stringify({
       alpha: { serviceId: 'service-alpha', profileId: 'profile-a', accountId: null, planType: 'pro' },
     });
@@ -117,7 +129,7 @@ describe('buildBrokerBridgeCallSource (shared bridge-call, exercised live)', () 
 
   it('omits optional plan metadata when no descriptor body key is provided', async () => {
     process.env[DAEMON_STATE_PATH_ENV] = await writeDaemonStateFile('tok');
-    process.env[REFRESH_TOKEN_ENV] = 'scoped';
+    process.env[REFRESH_TOKEN_PATH_ENV] = await writeCapabilityFile('scoped');
     process.env[SELECTIONS_ENV] = JSON.stringify({
       beta: { serviceId: 'service-beta', profileId: 'profile-b', accountId: null, planType: null },
     });
@@ -162,7 +174,7 @@ describe('buildBrokerBridgeCallSource (shared bridge-call, exercised live)', () 
     // forward it so the daemon can authorize against a LIVE runtime target carrying the same identity.
     const IDENTITY_ENV = 'TEST_BROKER_SELECTION_IDENTITY';
     process.env[DAEMON_STATE_PATH_ENV] = await writeDaemonStateFile('tok');
-    process.env[REFRESH_TOKEN_ENV] = 'scoped';
+    process.env[REFRESH_TOKEN_PATH_ENV] = await writeCapabilityFile('scoped');
     process.env[SELECTIONS_ENV] = JSON.stringify({
       alpha: { serviceId: 'service-alpha', profileId: 'profile-a', accountId: null, planType: null },
     });
@@ -209,7 +221,7 @@ describe('buildBrokerBridgeCallSource (shared bridge-call, exercised live)', () 
     // A hung daemon must not hang the provider auth path forever: the emitted source has to attach a
     // bounded AbortSignal to the bridge fetch (guarded for runtimes lacking AbortSignal.timeout).
     process.env[DAEMON_STATE_PATH_ENV] = await writeDaemonStateFile('tok');
-    process.env[REFRESH_TOKEN_ENV] = 'scoped';
+    process.env[REFRESH_TOKEN_PATH_ENV] = await writeCapabilityFile('scoped');
     process.env[SELECTIONS_ENV] = JSON.stringify({
       alpha: { serviceId: 'service-alpha', profileId: 'p', accountId: null, planType: null },
     });
@@ -228,5 +240,35 @@ describe('buildBrokerBridgeCallSource (shared bridge-call, exercised live)', () 
 
     expect(signals).toHaveLength(1);
     expect(signals[0]).toBeInstanceOf(AbortSignal);
+  });
+
+  it('rereads the file-backed capability on every request so atomic rotation reaches long-lived brokers', async () => {
+    process.env[DAEMON_STATE_PATH_ENV] = await writeDaemonStateFile('master-MUST-NOT-LEAK');
+    const capabilityPath = await writeCapabilityFile('capability-a');
+    process.env[REFRESH_TOKEN_PATH_ENV] = capabilityPath;
+    process.env[SELECTIONS_ENV] = JSON.stringify({
+      alpha: { serviceId: 'service-alpha', profileId: 'profile-a', accountId: null, planType: null },
+    });
+    const observedTokens: string[] = [];
+    globalThis.fetch = vi.fn(async (_input: unknown, init: unknown) => {
+      observedTokens.push(new Headers((init as RequestInit).headers).get('x-happier-daemon-token') ?? '');
+      return new Response(JSON.stringify({ ok: true, result: { accessToken: 'access' } }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const fetchAccessTokenFromBridge = await loadBridgeCaller({
+      selectionKey: 'alpha',
+      bridgePath: '/bridge',
+      serviceId: 'service-alpha',
+    });
+
+    await fetchAccessTokenFromBridge(false);
+    await writeFile(capabilityPath, JSON.stringify({
+      v: 1,
+      materializationId: 'mat-test',
+      selectionIdentityDigest: 'test-selection-digest',
+      capability: 'capability-b',
+    }), { mode: 0o600 });
+    await fetchAccessTokenFromBridge(false);
+
+    expect(observedTokens).toEqual(['capability-a', 'capability-b']);
   });
 });

@@ -15,6 +15,18 @@
  */
 export {
   CONNECTED_SERVICE_BROKER_REFRESH_TOKEN_ENV,
+  CONNECTED_SERVICE_BROKER_REFRESH_TOKEN_PATH_ENV,
+  CONNECTED_SERVICE_BROKER_CAPABILITY_VERSION,
+  CONNECTED_SERVICE_BROKER_CAPABILITY_RELATIVE_PATH,
+  digestConnectedServiceBrokerCapability,
+  digestConnectedServiceBrokerSelectionIdentity,
+  readConnectedServiceBrokerCapabilityFile,
+  removeConnectedServiceBrokerCapabilityFile,
+  resolveConnectedServiceBrokerCapabilityPath,
+  verifyConnectedServiceBrokerCapabilityFile,
+  writeConnectedServiceBrokerCapabilityFile,
+  type ConnectedServiceBrokerCapabilityDescriptor,
+  type ConnectedServiceBrokerCapabilityDocumentV1,
   CONNECTED_SERVICE_BROKER_REFRESH_SCOPE_LABEL,
   deriveConnectedServiceBrokerRefreshToken,
   deriveScopedCapabilityToken,

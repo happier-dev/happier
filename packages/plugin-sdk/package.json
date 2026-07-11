@@ -262,11 +262,14 @@
     }
   },
   "scripts": {
-    "prepack": "yarn -s build && node ./scripts/bundleWorkspaceDeps.mjs",
+    "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
+    "prebuild": "node ./scripts/bundleWorkspaceDeps.mjs",
+    "prepack": "yarn -s build && node ./scripts/bundleWorkspaceDeps.mjs --artifact",
+    "pretypecheck": "node ./scripts/bundleWorkspaceDeps.mjs",
     "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "postinstall:real": "yarn -s build",
     "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(/(^|[\\\\/])node_modules([\\\\/]|$)/i.test(process.cwd()))process.exit(0);try{const gate=require('../../scripts/postinstall/shouldRunPostinstall.cjs');if(!gate.shouldRunPostinstall({workspace:'plugin-sdk',scope:process.env.HAPPIER_INSTALL_SCOPE||''}))process.exit(0);}catch{}if(!fs.existsSync('tsconfig.json'))process.exit(0);const run=(cmd,args)=>cp.spawnSync(cmd,args,{stdio:'inherit'});const npmExec=process.env.npm_execpath;let r;if(npmExec){r=run(process.execPath,[npmExec,'run','-s','postinstall:real']);}else{r=run(process.platform==='win32'?'yarn.cmd':'yarn',['-s','postinstall:real']);if(r.error&&process.platform==='win32'){r=run('yarn',['-s','postinstall:real']);}}if(r.error){console.error(r.error.message);process.exit(1);}process.exit(r.status??1);\"",
-    "test": "vitest run",
+    "test": "vitest run --exclude scripts/**/*.test.mjs && node --test scripts/bundleWorkspaceDeps.test.mjs",
     "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "devDependencies": {

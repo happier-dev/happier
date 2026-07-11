@@ -10,12 +10,12 @@ export type BuildSessionRuntimeIssueV1Input = Readonly<{
   source: SessionRuntimeIssueSourceV1;
   occurredAt: number;
   sessionSeq?: number | null;
-  provider?: string | null;
-  providerTurnId?: string | null;
+  agentId?: string | null;
+  agentTurnId?: string | null;
   sanitizedPreview?: string | null;
   usageLimit?: SessionRuntimeUsageLimitDetailsV1 | null;
   temporaryThrottle?: SessionRuntimeTemporaryThrottleDetailsV1 | null;
-  providerProcessExitAfterSwitch?: SessionRuntimeIssueV1['providerProcessExitAfterSwitch'] | null;
+  agentProcessExitAfterSwitch?: SessionRuntimeIssueV1['agentProcessExitAfterSwitch'] | null;
 }>;
 
 function normalizeNonNegativeInteger(value: unknown): number | null {
@@ -37,8 +37,8 @@ export function buildSessionRuntimeIssueV1(
   const code = normalizeString(input.code, 256) ?? input.source;
   const occurredAt = normalizeNonNegativeInteger(input.occurredAt) ?? Date.now();
   const sessionSeq = normalizeNonNegativeInteger(input.sessionSeq);
-  const provider = normalizeString(input.provider, 128);
-  const providerTurnId = normalizeString(input.providerTurnId, 256);
+  const agentId = normalizeString(input.agentId, 128);
+  const agentTurnId = normalizeString(input.agentTurnId, 256);
   const sanitizedPreview = normalizeString(input.sanitizedPreview, 2_000);
 
   return {
@@ -49,13 +49,13 @@ export function buildSessionRuntimeIssueV1(
     source: input.source,
     occurredAt,
     ...(sessionSeq === null ? {} : { sessionSeq }),
-    ...(provider === null ? {} : { provider }),
-    ...(providerTurnId === null ? {} : { providerTurnId }),
+    ...(agentId === null ? {} : { agentId }),
+    ...(agentTurnId === null ? {} : { agentTurnId }),
     ...(sanitizedPreview === null ? {} : { sanitizedPreview }),
     ...(input.usageLimit ? { usageLimit: input.usageLimit } : {}),
     ...(input.temporaryThrottle ? { temporaryThrottle: input.temporaryThrottle } : {}),
-    ...(input.providerProcessExitAfterSwitch
-      ? { providerProcessExitAfterSwitch: input.providerProcessExitAfterSwitch }
+    ...(input.agentProcessExitAfterSwitch
+      ? { agentProcessExitAfterSwitch: input.agentProcessExitAfterSwitch }
       : {}),
   };
 }

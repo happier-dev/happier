@@ -4,11 +4,14 @@ import type {
     RuntimeCore,
 } from '@happier-dev/agents';
 import type {
+    AcpConfigOptionOverridesV1,
+    AgentProviderBindingLaunchMaterializationV1,
     BackendTargetRefV2Input,
     SessionConnectedServiceAuthApplyGenerationRequestV1,
     SessionConnectedServiceAuthApplyGenerationResponseV1,
     SessionConnectedServiceAuthReadRuntimeIdentityRequestV1,
     SessionConnectedServiceAuthReadRuntimeIdentityResponseV1,
+    SessionModelSelectionV1,
 } from '@happier-dev/protocol';
 import type { RuntimeEventV1, RuntimeInputPayloadV1 as ProtocolRuntimeInputPayloadV1 } from '@happier-dev/protocol/runtime';
 
@@ -123,7 +126,7 @@ export type RuntimeSendOptionsV1 = Readonly<{
 export type RuntimeSendResultV1 = Readonly<{
     status: 'accepted' | 'unsupported' | 'unavailable' | 'rejected';
     turnId?: string;
-    providerTurnId?: string;
+    agentTurnId?: string;
     diagnostic?: string;
 }>;
 
@@ -247,6 +250,41 @@ export type SessionRuntimeCreateResultV1 = SessionRuntimeV1;
 
 export type SessionRuntimeMcpServerConfigV1 = unknown;
 
+export type SessionIsolationEnvironmentPlatformV1 = 'win32' | 'posix';
+
+export function composeSessionIsolationEnvironment(params: Readonly<{
+    inheritedEnvironment?: Readonly<Record<string, string | undefined>> | null;
+    isolationEnvironment?: Readonly<Record<string, string>> | null;
+    environment?: Readonly<Record<string, string>> | null;
+    unsetEnvKeys?: readonly string[] | null;
+    platform?: SessionIsolationEnvironmentPlatformV1;
+}>): Record<string, string> {
+    const output: Record<string, string> = {};
+    for (const [key, value] of Object.entries(params.inheritedEnvironment ?? {})) {
+        if (typeof value === 'string') output[key] = value;
+    }
+    const unsetNames = new Set((params.unsetEnvKeys ?? []).map((key) => key.toUpperCase()));
+    for (const key of Object.keys(output)) {
+        if (unsetNames.has(key.toUpperCase())) delete output[key];
+    }
+    const platform = params.platform
+        ?? (typeof process !== 'undefined' && process.platform === 'win32' ? 'win32' : 'posix');
+    const apply = (entries: Readonly<Record<string, string>> | null | undefined) => {
+        for (const [key, value] of Object.entries(entries ?? {})) {
+            if (platform === 'win32') {
+                const normalized = key.toUpperCase();
+                for (const existingKey of Object.keys(output)) {
+                    if (existingKey.toUpperCase() === normalized) delete output[existingKey];
+                }
+            }
+            output[key] = value;
+        }
+    };
+    apply(params.isolationEnvironment);
+    apply(params.environment);
+    return output;
+}
+
 export type CreateSessionRuntimeParamsV1 = Readonly<{
     sessionId?: string;
     backendId?: string;
@@ -255,8 +293,14 @@ export type CreateSessionRuntimeParamsV1 = Readonly<{
     permissionMode?: string;
     initialRuntimeState?: Readonly<Record<string, unknown>> | null;
     metadata?: Readonly<Record<string, unknown>> | null;
+    /** Canonical connection-bound selection; modelId remains the final engine selector. */
+    modelSelection?: SessionModelSelectionV1;
+    modelId?: string;
+    /** Host-validated, non-persisted provider config handoff for this runtime creation only. */
+    providerBindingMaterialization?: AgentProviderBindingLaunchMaterializationV1;
     isolation?: Readonly<{
         env?: Readonly<Record<string, string>>;
+        unsetEnvKeys?: readonly string[];
     }> | null;
     env?: Readonly<Record<string, string>>;
     mcpServers?: Readonly<Record<string, SessionRuntimeMcpServerConfigV1>> | null;
@@ -284,6 +328,13 @@ export type CreateExecutionRunBackendParamsV1 = Readonly<{
     cwd?: string;
     directory?: string;
     modelId?: string;
+    /**
+     * Canonical session config-option overrides (carries e.g. reasoning effort) for the run's
+     * backend. Threaded from the run start request through the run-runtime resolver into the
+     * per-backend factory so a plugin can apply model + effort parity on the exec-run path — the
+     * same `AcpConfigOptionOverridesV1` shape used at the session level.
+     */
+    sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     permissionMode?: string;
     runId?: string;
     accountSettings?: Readonly<Record<string, unknown>> | null;
@@ -296,6 +347,7 @@ export type CreateExecutionRunBackendParamsV1 = Readonly<{
     signal?: AbortSignal;
     isolation?: Readonly<{
         env?: Readonly<Record<string, string>>;
+        unsetEnvKeys?: readonly string[];
     }> | null;
     env?: Readonly<Record<string, string>>;
 }>;

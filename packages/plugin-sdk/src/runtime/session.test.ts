@@ -7,12 +7,39 @@ import {
   isNonSteerablePromptPayload,
   parseSpecialCommand,
   resolveTerminalPromptProviderAcceptanceTimeoutMs,
+  composeSessionIsolationEnvironment,
   type SessionTerminalComposerClearResultV1,
 } from './session.js';
 
 const runtimeSessionSource = readFileSync(new URL('./session.ts', import.meta.url), 'utf8');
 
 describe('public runtime/session helpers', () => {
+  it('composes session isolation env with case-insensitive unsets and Windows replacement semantics', () => {
+    expect(composeSessionIsolationEnvironment({
+      inheritedEnvironment: {
+        OPENAI_API_KEY: 'ambient',
+        OpenAI_Base_Url: 'ambient-url',
+        POSIX_KEY: 'upper',
+        posix_key: 'lower',
+      },
+      isolationEnvironment: { OPENAI_BASE_URL: 'provider-url' },
+      environment: { EMPTY: '' },
+      unsetEnvKeys: ['openai_api_key'],
+      platform: 'win32',
+    })).toEqual({
+      OPENAI_BASE_URL: 'provider-url',
+      POSIX_KEY: 'upper',
+      posix_key: 'lower',
+      EMPTY: '',
+    });
+
+    expect(composeSessionIsolationEnvironment({
+      inheritedEnvironment: { Path: 'ambient', PATH: 'second' },
+      environment: { PATH: 'explicit' },
+      platform: 'posix',
+    })).toEqual({ Path: 'ambient', PATH: 'explicit' });
+  });
+
   it('publishes terminal prompt steerability helpers through the SDK runtime session surface', () => {
     expect(parseSpecialCommand('/compact\nsummarize this session').type).toBe('compact');
     expect(isNonSteerablePromptPayload('/clear')).toBe(true);

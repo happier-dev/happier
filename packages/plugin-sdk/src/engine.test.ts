@@ -31,6 +31,7 @@ import type {
     TimeoutRuntimeServiceV1,
     TranscriptsRuntimeServiceV1,
     RegisterAgentRuntimeV1,
+    AgentProviderBindingAdapterV1,
     RuntimeCoreV1,
     SessionRuntimeV1,
     SubagentRefInputV1,
@@ -46,12 +47,41 @@ import type {
 } from './index.js';
 
 describe('plugin SDK engine contracts', () => {
+    it('exposes a registration-level two-stage provider binding adapter without creating a runtime', async () => {
+        const adapter: AgentProviderBindingAdapterV1 = {
+            v: 1,
+            adapterVersion: 3,
+            prepare: (input) => ({
+                v: 1,
+                materialization: 'engineConfig',
+                adapterBindingKey: `p_${input.connectionId}`,
+            }),
+            materialize: async ({ credential }) => ({
+                v: 1,
+                kind: 'engineConfig',
+                env: [{ name: 'ACME_KEY', value: credential.kind === 'apiKey' ? credential.value : null, source: 'provider' }],
+                engineConfig: { provider: 'acme' },
+            }),
+        };
+        const registration: RegisterAgentRuntimeV1 = {
+            agentId: 'acme.agent',
+            providerBinding: adapter,
+            create: async () => ({}),
+        };
+
+        expect(registration.providerBinding?.prepare({
+            v: 1,
+            agentTargetKey: 'acme.agent',
+            connectionId: 'pc_acme',
+        }).adapterBindingKey).toBe('p_pc_acme');
+    });
+
     it('types agent runtime registration through runtimeCore', () => {
         const sessionRuntime: SessionRuntimeV1 = {
             send: async (input, options) => ({
                 status: options?.signal?.aborted ? 'rejected' : 'accepted',
                 turnId: options?.turnId,
-                providerTurnId: options?.localInputId ?? input.structuredInput?.skillMentions?.[0]?.id,
+                agentTurnId: options?.localInputId ?? input.structuredInput?.skillMentions?.[0]?.id,
             }),
             cancel: async (request) => ({
                 status: request.reason === 'runtime_recovery' ? 'not_running' : 'cancelled',

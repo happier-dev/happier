@@ -38,4 +38,30 @@ describe('createCoalescedScheduler', () => {
 
         expect(drain).not.toHaveBeenCalled();
     });
+
+    it('flush waits for the active drain and one queued follow-up to finish', async () => {
+        let releaseFirstDrain!: () => void;
+        const firstDrain = new Promise<void>((resolve) => {
+            releaseFirstDrain = resolve;
+        });
+        const drain = vi.fn(async () => {
+            if (drain.mock.calls.length === 1) await firstDrain;
+        });
+        const scheduler = createCoalescedScheduler({ drain });
+
+        scheduler.trigger();
+        let flushed = false;
+        const flushPromise = scheduler.flush().then(() => {
+            flushed = true;
+        });
+        await Promise.resolve();
+        expect(flushed).toBe(false);
+
+        releaseFirstDrain();
+        await flushPromise;
+
+        expect(drain).toHaveBeenCalledTimes(2);
+        expect(flushed).toBe(true);
+        scheduler.dispose();
+    });
 });

@@ -53,7 +53,7 @@ import type {
   PluginHandlerServicesV1,
   PluginContextV1,
 } from './context.js';
-import type { RegisterAgentRuntimeV1 } from './engine.js';
+import type { AgentProviderBindingAdapterV1, RegisterAgentRuntimeV1 } from './engine.js';
 import type { RegisterDaemonAuthBridgeV1 } from './agentRuntime/authBridge.js';
 import type {
   AccountSettings,
@@ -598,6 +598,18 @@ type _RuntimeSessionSurfaceMustExposeRecoverableFailurePolicy = AssertTrue<
 type _RuntimeSessionSurfaceMustExposeMcpServers = AssertTrue<
   CreateSessionRuntimeParamsV1 extends Readonly<{
     mcpServers?: Readonly<Record<string, SessionRuntimeMcpServerConfigV1>> | null;
+  }> ? true : false
+>;
+
+type _RuntimeSessionSurfaceMustExposeTransientProviderBinding = AssertTrue<
+  CreateSessionRuntimeParamsV1 extends Readonly<{
+    providerBindingMaterialization?: import('@happier-dev/protocol').AgentProviderBindingLaunchMaterializationV1;
+  }> ? true : false
+>;
+
+type _AgentRuntimeRegistrationMustExposeTwoStageProviderBinding = AssertTrue<
+  RegisterAgentRuntimeV1 extends Readonly<{
+    providerBinding?: AgentProviderBindingAdapterV1;
   }> ? true : false
 >;
 

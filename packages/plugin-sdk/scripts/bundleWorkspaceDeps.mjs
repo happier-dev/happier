@@ -3,7 +3,13 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { execYarn } from '../../../scripts/workspaces/execYarnCommand.mjs';
-import { withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
+import { createWorkspaceChildBuildEnv } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
+import { resolveWorkspaceDependencyBuildOrder } from '../../../scripts/workspaces/resolveWorkspaceDependencyBuildOrder.mjs';
+import { resolveWorkspaceBundlePublicationMode } from '../../../scripts/workspaces/workspaceBundlePublication.mjs';
+import {
+  resolveWorkspaceBundleLockPath,
+  withWorkspaceBundleLock,
+} from '../../../scripts/workspaces/workspaceBundleLock.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -20,11 +26,12 @@ function findRepoRoot(startDir) {
   return resolve(startDir, '..', '..', '..');
 }
 
-async function loadCliCommonWorkspacesModule(repoRoot) {
+async function loadCliCommonWorkspacesModule(repoRoot, env = process.env) {
   const modulePath = resolve(repoRoot, 'packages', 'cli-common', 'dist', 'workspaces', 'index.js');
   if (!existsSync(modulePath)) {
     execYarn(['-s', 'workspace', '@happier-dev/cli-common', 'build'], {
       cwd: repoRoot,
+      env,
       stdio: 'inherit',
     });
   }
@@ -36,41 +43,66 @@ async function loadCliCommonWorkspacesModule(repoRoot) {
   return await import(pathToFileURL(modulePath).href);
 }
 
-function buildWorkspace(repoRoot, workspaceName) {
+function buildWorkspace(repoRoot, workspaceName, env = process.env) {
   execYarn(['-s', 'workspace', `@happier-dev/${workspaceName}`, 'build'], {
     cwd: repoRoot,
+    env,
     stdio: 'inherit',
   });
+}
+
+export function resolvePluginSdkWorkspaceBuildOrder({ repoRoot }) {
+  return resolveWorkspaceDependencyBuildOrder({
+    repoRoot,
+    seedPackageNames: ['@happier-dev/cli-common'],
+  });
+}
+
+export function resolvePluginSdkWorkspaceBundleLockPath({ repoRoot, lockPath = '' }) {
+  const explicitLockPath = String(lockPath ?? '').trim();
+  return explicitLockPath || resolveWorkspaceBundleLockPath(repoRoot);
 }
 
 export async function bundleWorkspaceDeps(opts = {}) {
   const repoRoot = opts.repoRoot ?? findRepoRoot(__dirname);
   const pluginSdkDir = opts.pluginSdkDir ?? resolve(repoRoot, 'packages', 'plugin-sdk');
-  const lockPath = opts.lockPath ?? resolve(repoRoot, '.project', 'tmp', 'plugin-sdk-workspace-deps-build.lock');
+  const lockPath = resolvePluginSdkWorkspaceBundleLockPath({ repoRoot, lockPath: opts.lockPath });
+  const baseEnv = opts.env ?? process.env;
 
-  return withWorkspaceBundleLock(async () => {
-    buildWorkspace(repoRoot, 'protocol');
-    buildWorkspace(repoRoot, 'agents');
+  return withWorkspaceBundleLock(async ({ heldLockValue }) => {
+    const heldLockEnv = createWorkspaceChildBuildEnv({
+      env: baseEnv,
+      heldLockValue,
+    });
+    for (const workspaceName of resolvePluginSdkWorkspaceBuildOrder({ repoRoot })) {
+      buildWorkspace(repoRoot, workspaceName, heldLockEnv);
+    }
 
     const {
-      bundleWorkspacePackages,
+      bundleWorkspacePackagesWithRuntimeDependencies,
       resolveWorkspaceBundlesFromPackageJson,
-      vendorBundledPackageRuntimeDependencies,
-    } = await loadCliCommonWorkspacesModule(repoRoot);
+    } = await loadCliCommonWorkspacesModule(repoRoot, heldLockEnv);
 
     const bundles = resolveWorkspaceBundlesFromPackageJson({
       repoRoot,
       hostPackageDir: pluginSdkDir,
     });
-    bundleWorkspacePackages({ bundles });
-
-    for (const bundle of bundles) {
-      vendorBundledPackageRuntimeDependencies({
-        srcPackageJsonPath: resolve(bundle.srcDir, 'package.json'),
-        destPackageDir: bundle.destDir,
-      });
-    }
-  }, { lockPath, timeoutMs: 240_000, pollIntervalMs: 250, staleAfterMs: 240_000 });
+    bundleWorkspacePackagesWithRuntimeDependencies({
+      bundles,
+      publicationMode: opts.publicationMode ?? 'live',
+    });
+  }, {
+    lockPath,
+    heldLockValue: String(
+      opts.heldLockValue
+        ?? opts.heldLockPath
+        ?? baseEnv?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD
+        ?? '',
+    ).trim(),
+    timeoutMs: 240_000,
+    pollIntervalMs: 250,
+    staleAfterMs: 240_000,
+  });
 }
 
 const invokedAsMain = (() => {
@@ -81,7 +113,12 @@ const invokedAsMain = (() => {
 
 if (invokedAsMain) {
   try {
-    await bundleWorkspaceDeps();
+    await bundleWorkspaceDeps({
+      publicationMode: resolveWorkspaceBundlePublicationMode({
+        argv: process.argv.slice(2),
+        env: process.env,
+      }),
+    });
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);

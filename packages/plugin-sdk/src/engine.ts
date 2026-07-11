@@ -9,6 +9,16 @@ import type {
     RuntimeFacets,
     TerminalRuntimeSurfaceV1,
 } from '@happier-dev/agents';
+import type { AgentProviderBindingAdapterV1 } from './agentRuntime/providerBinding.js';
+
+export type {
+    AgentProviderBindingAdapterV1,
+    AgentProviderBindingCredentialV1,
+    AgentProviderBindingMaterializeInputV1,
+    AgentProviderBindingPrepareInputV1,
+    AgentProviderBindingPreparedV1,
+    AgentProviderBindingResolvedFactsV1,
+} from './agentRuntime/providerBinding.js';
 
 // NOTE: This is intentionally minimal in V1. The runtime lane owns the concrete
 // executable surface shapes (terminal runtime, direct sessions, handoff, etc.).
@@ -38,5 +48,6 @@ export type AgentRuntimeV1 = Readonly<{
 
 export type RegisterAgentRuntimeV1 = Readonly<{
     agentId: string;
+    providerBinding?: AgentProviderBindingAdapterV1;
     create: (ctx: PluginContextV1) => AgentRuntimeV1 | Promise<AgentRuntimeV1>;
 }>;

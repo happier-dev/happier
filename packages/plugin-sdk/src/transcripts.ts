@@ -107,7 +107,7 @@ export type TranscriptAppendUserTextTurnV1 = Readonly<{
 
 export type TranscriptAppendAgentMessageTurnV1 = Readonly<{
     kind: 'agentMessageCommitted' | 'agentMessageEphemeral';
-    provider: string;
+    agentId: string;
     body: Readonly<Record<string, unknown>>;
     localId: string;
     createdAt?: number;
