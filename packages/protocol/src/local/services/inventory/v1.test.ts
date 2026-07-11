@@ -23,6 +23,7 @@ describe('LocalServiceInventoryEntryV1Schema', () => {
         process: {
           pid: 123,
           ppid: 88,
+          processStartTimeMs: 1_717_171_717_000,
           lineagePids: [123, 88, 1],
           command: 'npm run dev -- --token=[REDACTED]',
           cwd: '/repo/app',
@@ -55,6 +56,7 @@ describe('LocalServiceInventoryEntryV1Schema', () => {
     });
 
     expect(parsed.provenance?.process?.redacted).toBe(true);
+    expect(parsed.provenance?.process?.processStartTimeMs).toBe(1_717_171_717_000);
     expect(parsed.provenance?.process?.lineagePids).toEqual([123, 88, 1]);
     expect(parsed.labels[0]?.text).toBe('Main preview');
     expect(parsed.presentation?.displayName).toBe('Happier Web');
@@ -120,7 +122,7 @@ describe('LocalServiceInventorySnapshotV1Schema', () => {
         detectedAt: 1_000,
         lastSeenAt: 4_000,
         state: 'listening',
-        source: 'managed',
+        source: 'detected',
         labels: [],
         confidence: 'high',
         processOwnershipConfidence: 'high',
@@ -130,5 +132,28 @@ describe('LocalServiceInventorySnapshotV1Schema', () => {
     });
 
     expect(upsert.kind).toBe('entry_upserted');
+  });
+
+  it('rejects stale planned source arms that have no producer', () => {
+    for (const source of ['managed', 'registered', 'system']) {
+      const result = LocalServiceInventoryEntryV1Schema.safeParse({
+        id: `machine-a:tcp:127.0.0.1:5173:${source}`,
+        machineId: 'machine-a',
+        address: { kind: 'loopback', host: '127.0.0.1', family: 'ipv4' },
+        port: 5173,
+        protocol: 'tcp',
+        detectedAt: 1_000,
+        lastSeenAt: 2_000,
+        state: 'listening',
+        source,
+        labels: [],
+        confidence: 'high',
+        processOwnershipConfidence: 'high',
+        workspaceAssociationConfidence: 'high',
+        diagnostics: [],
+      });
+
+      expect(result.success).toBe(false);
+    }
   });
 });

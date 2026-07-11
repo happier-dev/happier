@@ -13,10 +13,26 @@ export type LocalServiceAddressV1 = z.infer<typeof LocalServiceAddressV1Schema>;
 export const LocalServiceProtocolV1Schema = z.enum(['tcp']);
 export type LocalServiceProtocolV1 = z.infer<typeof LocalServiceProtocolV1Schema>;
 
+export const LocalServiceEndpointSchemeV1Schema = z.enum(['http', 'https', 'unknown']);
+export type LocalServiceEndpointSchemeV1 = z.infer<typeof LocalServiceEndpointSchemeV1Schema>;
+
+export const LocalServiceEndpointProbeStateV1Schema = z.enum(['ready', 'unknown']);
+export type LocalServiceEndpointProbeStateV1 = z.infer<typeof LocalServiceEndpointProbeStateV1Schema>;
+
+export const LocalServiceEndpointV1Schema = z.object({
+  scheme: LocalServiceEndpointSchemeV1Schema,
+  host: z.string().trim().min(1),
+  port: z.number().int().min(1).max(65_535),
+  probeState: LocalServiceEndpointProbeStateV1Schema,
+  probedAt: z.number().int().nonnegative(),
+  reasonCode: z.string().trim().min(1).max(256).optional(),
+}).strict();
+export type LocalServiceEndpointV1 = z.infer<typeof LocalServiceEndpointV1Schema>;
+
 export const LocalServiceInventoryStateV1Schema = z.enum(['listening', 'stale', 'gone', 'unknown']);
 export type LocalServiceInventoryStateV1 = z.infer<typeof LocalServiceInventoryStateV1Schema>;
 
-export const LocalServiceInventorySourceV1Schema = z.enum(['detected', 'managed', 'registered', 'system']);
+export const LocalServiceInventorySourceV1Schema = z.enum(['detected']);
 export type LocalServiceInventorySourceV1 = z.infer<typeof LocalServiceInventorySourceV1Schema>;
 
 export const LocalServiceInventoryConfidenceV1Schema = z.enum(['high', 'medium', 'low']);
@@ -25,6 +41,7 @@ export type LocalServiceInventoryConfidenceV1 = z.infer<typeof LocalServiceInven
 export const LocalServiceInventoryProcessProvenanceV1Schema = z.object({
   pid: z.number().int().positive(),
   ppid: z.number().int().positive().optional(),
+  processStartTimeMs: z.number().int().nonnegative().optional(),
   lineagePids: z.array(z.number().int().positive()).optional(),
   command: z.string().trim().min(1).optional(),
   cwd: z.string().trim().min(1).optional(),
@@ -90,6 +107,7 @@ export const LocalServiceInventoryEntryV1Schema = z.object({
   id: z.string().trim().min(1),
   machineId: z.string().trim().min(1),
   address: LocalServiceAddressV1Schema,
+  endpoint: LocalServiceEndpointV1Schema.optional(),
   port: z.number().int().min(1).max(65_535),
   protocol: LocalServiceProtocolV1Schema,
   detectedAt: z.number().int().nonnegative(),
@@ -119,6 +137,36 @@ export const LocalServiceInventorySnapshotV1Schema = z.object({
   diagnostics: z.array(LocalServiceInventoryDiagnosticV1Schema).default([]),
 }).strict();
 export type LocalServiceInventorySnapshotV1 = z.infer<typeof LocalServiceInventorySnapshotV1Schema>;
+
+const DaemonLocalServiceInventoryMachineRequestV1Schema = z.object({
+  machineId: z.string().trim().min(1).max(256),
+}).strict();
+
+export const DaemonLocalServiceInventorySnapshotRequestV1Schema =
+  DaemonLocalServiceInventoryMachineRequestV1Schema;
+export type DaemonLocalServiceInventorySnapshotRequestV1 = z.infer<
+  typeof DaemonLocalServiceInventorySnapshotRequestV1Schema
+>;
+
+export const DaemonLocalServiceInventoryRefreshRequestV1Schema =
+  DaemonLocalServiceInventoryMachineRequestV1Schema;
+export type DaemonLocalServiceInventoryRefreshRequestV1 = z.infer<
+  typeof DaemonLocalServiceInventoryRefreshRequestV1Schema
+>;
+
+export const DaemonLocalServiceInventorySnapshotResponseV1Schema = z.object({
+  protocolVersion: z.literal(1),
+  snapshot: LocalServiceInventorySnapshotV1Schema,
+}).strict();
+export type DaemonLocalServiceInventorySnapshotResponseV1 = z.infer<
+  typeof DaemonLocalServiceInventorySnapshotResponseV1Schema
+>;
+
+export const DaemonLocalServiceInventoryRefreshResponseV1Schema =
+  DaemonLocalServiceInventorySnapshotResponseV1Schema;
+export type DaemonLocalServiceInventoryRefreshResponseV1 = z.infer<
+  typeof DaemonLocalServiceInventoryRefreshResponseV1Schema
+>;
 
 export const LocalServiceInventoryLabelPatchV1Schema = z.object({
   inventoryId: z.string().trim().min(1),

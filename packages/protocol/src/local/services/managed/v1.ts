@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { LocalServiceActionKindV1Schema } from '../actions/v1.js';
 import { LocalServiceLoopbackHostV1Schema } from '../hosts.js';
 import { LocalServiceInventoryConfidenceV1Schema } from '../inventory/v1.js';
 
@@ -156,6 +157,30 @@ export const LocalServiceManagedRuntimeStateV1Schema = z.object({
   host: z.string().trim().min(1).optional(),
   port: z.number().int().min(1).max(65_535).optional(),
   url: z.string().url().optional(),
+  supportedActions: z.array(LocalServiceActionKindV1Schema).default([]),
   diagnostics: z.array(LocalServiceManagedDiagnosticV1Schema).default([]),
 }).strict();
 export type LocalServiceManagedRuntimeStateV1 = z.infer<typeof LocalServiceManagedRuntimeStateV1Schema>;
+
+export const LocalServiceManagedRuntimeSnapshotV1Schema = z.object({
+  v: z.literal(1),
+  machineId: z.string().trim().min(1),
+  generatedAt: z.number().int().nonnegative(),
+  refreshState: z.enum(['idle', 'refreshing', 'error']),
+  rows: z.array(LocalServiceManagedRuntimeStateV1Schema).default([]),
+  diagnostics: z.array(LocalServiceManagedDiagnosticV1Schema).default([]),
+}).strict();
+export type LocalServiceManagedRuntimeSnapshotV1 = z.infer<typeof LocalServiceManagedRuntimeSnapshotV1Schema>;
+
+export const DaemonLocalServiceManagedSnapshotRequestV1Schema = z.object({
+  machineId: z.string().trim().min(1),
+}).strict();
+export type DaemonLocalServiceManagedSnapshotRequestV1 =
+  z.infer<typeof DaemonLocalServiceManagedSnapshotRequestV1Schema>;
+
+export const DaemonLocalServiceManagedSnapshotResponseV1Schema = z.object({
+  protocolVersion: z.literal(1),
+  snapshot: LocalServiceManagedRuntimeSnapshotV1Schema,
+}).strict();
+export type DaemonLocalServiceManagedSnapshotResponseV1 =
+  z.infer<typeof DaemonLocalServiceManagedSnapshotResponseV1Schema>;
