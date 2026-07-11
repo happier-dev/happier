@@ -8,6 +8,10 @@ import {
 } from '@happier-dev/cli-common/firstPartyRuntime';
 import { projectPath } from '@/projectPath';
 import { isEmbeddedBunBundlePath } from '@/packagedRuntime/js/isEmbeddedBunBundlePath';
+import {
+  isRunnerSnapshotRuntimeRoot,
+  resolveRuntimeRootsFromLaunchedProcess,
+} from '@/packagedRuntime/resolveRuntimeEntrypointArgv';
 
 const MANAGED_CLI_SHIM_INSTALLS = new Map(
   (['stable', 'preview', 'publicdev'] as const).flatMap((channel) => {
@@ -94,28 +98,6 @@ function resolveRuntimeRootFromInstalledShimPath(pathLike: string): string | nul
     ?? join(dirname(binaryDir), shimInstall.installRootName, 'current');
 }
 
-function resolveRuntimeRootFromScriptPath(pathLike: string): string | null {
-  const normalized = normalizePathLike(pathLike);
-  if (!normalized || isEmbeddedBunBundlePath(normalized)) {
-    return null;
-  }
-  if (basename(normalized).toLowerCase() !== 'index.mjs') {
-    return null;
-  }
-
-  const packageDistMarker = `${String.raw`/`}package-dist${String.raw`/`}`;
-  const distMarker = `${String.raw`/`}dist${String.raw`/`}`;
-  const packageDistIndex = normalized.indexOf(packageDistMarker);
-  if (packageDistIndex >= 0) {
-    return normalized.slice(0, packageDistIndex);
-  }
-  const distIndex = normalized.indexOf(distMarker);
-  if (distIndex >= 0) {
-    return normalized.slice(0, distIndex);
-  }
-  return null;
-}
-
 function resolveManagedInstalledCliProjectRoot(): string | null {
   const channels: Array<'stable' | 'preview' | 'publicdev'> = [];
   try {
@@ -139,9 +121,8 @@ function resolveManagedInstalledCliProjectRoot(): string | null {
 
 export function resolvePackagedRuntimeProjectRoots(): string[] {
   const roots: string[] = [];
-  const launchedScriptRuntimeRoot = resolveRuntimeRootFromScriptPath(process.argv[1]);
   const candidateRoots = [
-    launchedScriptRuntimeRoot,
+    ...resolveRuntimeRootsFromLaunchedProcess(),
     resolveRuntimeRootFromInstalledShimPath(process.execPath),
     resolveRuntimeRootFromInstalledShimPath(process.argv[0]),
     resolveManagedInstalledCliProjectRoot(),
@@ -171,19 +152,26 @@ export function resolvePackagedRuntimeEntrypoint(
   }
 
   const projectRoots = resolvePackagedRuntimeProjectRoots();
+  let firstCandidate: string | null = null;
 
   for (const root of projectRoots) {
+    const isSnapshotRoot = isRunnerSnapshotRuntimeRoot(root);
     if (options.packageDistOnly) {
-      const candidate = join(root, 'package-dist', normalizedRelativePath);
-      if (existsSync(candidate)) {
-        return candidate;
+      const candidates = isSnapshotRoot
+        ? [join(root, normalizedRelativePath), join(root, 'package-dist', normalizedRelativePath)]
+        : [join(root, 'package-dist', normalizedRelativePath)];
+      firstCandidate ??= candidates[0] ?? null;
+      for (const candidate of candidates) {
+        if (existsSync(candidate)) return candidate;
       }
       continue;
     }
     const candidates = [
+      ...(isSnapshotRoot ? [join(root, normalizedRelativePath)] : []),
       join(root, 'package-dist', normalizedRelativePath),
       join(root, 'dist', normalizedRelativePath),
     ];
+    firstCandidate ??= candidates[0] ?? null;
 
     for (const candidate of candidates) {
       if (existsSync(candidate)) {
@@ -192,5 +180,5 @@ export function resolvePackagedRuntimeEntrypoint(
     }
   }
 
-  return join(projectRoots[0] ?? projectPath(), 'package-dist', normalizedRelativePath);
+  return firstCandidate ?? join(projectPath(), 'package-dist', normalizedRelativePath);
 }

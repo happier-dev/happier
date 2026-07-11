@@ -14,6 +14,7 @@ type Deps = Readonly<{
 }>;
 
 const inMemoryBlockedUntilMsByInstallableKey = new Map<string, number>();
+const inMemoryInFlightInstallableKeys = new Set<string>();
 
 function isBlockedInMemory(installableKey: string, nowMs: number): boolean {
   const blockedUntilMs = inMemoryBlockedUntilMsByInstallableKey.get(installableKey);
@@ -39,48 +40,54 @@ export async function startBackgroundRuntimeInstallableUpdate(
 
   const nowMs = Date.now();
   if (isBlockedInMemory(params.installableKey, nowMs)) return;
-
-  let lastCheckAtMs: number | null = null;
-  try {
-    lastCheckAtMs = await deps.readLastCheckAtMs(params.installableKey);
-  } catch (error) {
-    logger.warn(
-      `[installables] failed to read background auto-update state for ${params.installableKey}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-  if (
-    typeof lastCheckAtMs === 'number' &&
-    Number.isFinite(lastCheckAtMs) &&
-    nowMs - lastCheckAtMs < deps.autoUpdateCheckIntervalMs
-  ) {
-    inMemoryBlockedUntilMsByInstallableKey.set(
-      params.installableKey,
-      lastCheckAtMs + deps.autoUpdateCheckIntervalMs,
-    );
-    return;
-  }
-
-  const nextBlockedUntilMs = nowMs + deps.autoUpdateCheckIntervalMs;
-  inMemoryBlockedUntilMsByInstallableKey.set(params.installableKey, nextBlockedUntilMs);
-  try {
-    await deps.writeLastCheckAtMs(params.installableKey, nowMs);
-  } catch (error) {
-    logger.warn(
-      `[installables] failed to persist background auto-update state for ${params.installableKey}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
+  if (inMemoryInFlightInstallableKeys.has(params.installableKey)) return;
+  inMemoryInFlightInstallableKeys.add(params.installableKey);
 
   try {
-    await params.adapter.runBackgroundAutoUpdateCheck();
-  } catch (error) {
-    logger.warn(
-      `[installables] background auto-update check failed for ${params.installableKey}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
+    let lastCheckAtMs: number | null = null;
+    try {
+      lastCheckAtMs = await deps.readLastCheckAtMs(params.installableKey);
+    } catch (error) {
+      logger.warn(
+        `[installables] failed to read background auto-update state for ${params.installableKey}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    if (
+      typeof lastCheckAtMs === 'number' &&
+      Number.isFinite(lastCheckAtMs) &&
+      nowMs - lastCheckAtMs < deps.autoUpdateCheckIntervalMs
+    ) {
+      inMemoryBlockedUntilMsByInstallableKey.set(
+        params.installableKey,
+        lastCheckAtMs + deps.autoUpdateCheckIntervalMs,
+      );
+      return;
+    }
+
+    const nextBlockedUntilMs = nowMs + deps.autoUpdateCheckIntervalMs;
+    inMemoryBlockedUntilMsByInstallableKey.set(params.installableKey, nextBlockedUntilMs);
+    try {
+      await deps.writeLastCheckAtMs(params.installableKey, nowMs);
+    } catch (error) {
+      logger.warn(
+        `[installables] failed to persist background auto-update state for ${params.installableKey}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
+    try {
+      await params.adapter.runBackgroundAutoUpdateCheck();
+    } catch (error) {
+      logger.warn(
+        `[installables] background auto-update check failed for ${params.installableKey}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  } finally {
+    inMemoryInFlightInstallableKeys.delete(params.installableKey);
   }
 }

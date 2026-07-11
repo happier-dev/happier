@@ -1,5 +1,9 @@
 import { compareVersions } from '@happier-dev/cli-common/update';
-import { CODEX_ACP_DEP_ID, INSTALLABLE_KEYS } from '@happier-dev/protocol';
+import type { CapabilityId, InstallableDependencyDescriptor, InstallableKey } from '@happier-dev/protocol';
+import {
+  CODEX_ACP_INSTALLABLE_DESCRIPTOR,
+  CODEX_ACP_RUNTIME_INSTALLABLE_LAUNCH_HELPERS,
+} from '@happier-dev/plugins-codex/agent/installables/codexAcp';
 
 import {
   getCodexAcpDepStatus,
@@ -13,12 +17,9 @@ import type {
   RuntimeInstallableLaunchResolution,
 } from '@/packagedRuntime/installables/registry';
 
-import { resolveCodexAcpSpawnWithOptions } from '@happier-dev/plugins-codex/agent/acp/command';
-import { validateCodexAcpSpawnAvailability } from '@happier-dev/plugins-codex/agent/acp/availability';
-
 type DetectDeps = Readonly<{
-  resolveCodexAcpSpawn: () => { command: string; args: string[] };
-  validateCodexAcpSpawnAvailability: typeof validateCodexAcpSpawnAvailability;
+  resolveCodexAcpSpawn: () => { command: string; args: readonly string[] };
+  validateCodexAcpSpawnAvailability: typeof CODEX_ACP_RUNTIME_INSTALLABLE_LAUNCH_HELPERS.validateAvailability;
   resolveExistingCodexAcpManagedBinPath: typeof resolveExistingCodexAcpManagedBinPath;
 }>;
 
@@ -39,11 +40,13 @@ export async function detectCodexAcpLaunchResolution(
   const resolveManagedBin =
     depsOverrides.resolveExistingCodexAcpManagedBinPath ?? resolveExistingCodexAcpManagedBinPath;
   const deps: DetectDeps = {
-    resolveCodexAcpSpawn: depsOverrides.resolveCodexAcpSpawn ?? (() => resolveCodexAcpSpawnWithOptions({ env }, {
-      resolveExistingManagedBinPath: resolveManagedBin,
-    })),
+    resolveCodexAcpSpawn:
+      depsOverrides.resolveCodexAcpSpawn ?? (() => CODEX_ACP_RUNTIME_INSTALLABLE_LAUNCH_HELPERS.resolveSpawnSpec(
+        { env },
+        { resolveExistingManagedBinPath: resolveManagedBin },
+      )),
     validateCodexAcpSpawnAvailability:
-      depsOverrides.validateCodexAcpSpawnAvailability ?? validateCodexAcpSpawnAvailability,
+      depsOverrides.validateCodexAcpSpawnAvailability ?? CODEX_ACP_RUNTIME_INSTALLABLE_LAUNCH_HELPERS.validateAvailability,
     resolveExistingCodexAcpManagedBinPath: resolveManagedBin,
   };
 
@@ -79,7 +82,7 @@ export async function resolveCodexAcpLaunchCommand(
   const resolveManagedBin =
     depsOverrides.resolveExistingCodexAcpManagedBinPath ?? resolveExistingCodexAcpManagedBinPath;
   const validateAvailability =
-    depsOverrides.validateCodexAcpSpawnAvailability ?? validateCodexAcpSpawnAvailability;
+    depsOverrides.validateCodexAcpSpawnAvailability ?? CODEX_ACP_RUNTIME_INSTALLABLE_LAUNCH_HELPERS.validateAvailability;
   const explicitOverride = hasExplicitCodexAcpOverride(env);
   const managedPath = resolveManagedBin(env);
   const systemAvailable = validateAvailability({ command: 'codex-acp', args: [] }, { env }).ok;
@@ -92,7 +95,7 @@ export async function resolveCodexAcpLaunchCommand(
   try {
     const resolved = depsOverrides.resolveCodexAcpSpawn
       ? depsOverrides.resolveCodexAcpSpawn()
-      : resolveCodexAcpSpawnWithOptions({ env }, { resolveExistingManagedBinPath });
+      : CODEX_ACP_RUNTIME_INSTALLABLE_LAUNCH_HELPERS.resolveSpawnSpec({ env }, { resolveExistingManagedBinPath });
     const availability = validateAvailability(resolved, { env });
     if (!availability.ok) {
       return {
@@ -149,12 +152,18 @@ export async function runCodexAcpBackgroundAutoUpdateCheck(
   }
 }
 
-export const codexAcpRuntimeInstallable: RuntimeInstallableAdapter = {
-  key: INSTALLABLE_KEYS.CODEX_ACP,
-  capabilityId: CODEX_ACP_DEP_ID,
-  detectCapabilityStatus: getCodexAcpDepStatus,
-  detectLaunchResolution: detectCodexAcpLaunchResolution,
-  resolveLaunchCommand: resolveCodexAcpLaunchCommand,
-  installOrUpgrade: installCodexAcp,
-  runBackgroundAutoUpdateCheck: runCodexAcpBackgroundAutoUpdateCheck,
-};
+export function createCodexAcpRuntimeInstallableAdapter(
+  descriptor: Readonly<Pick<InstallableDependencyDescriptor, 'key' | 'capabilityId'>> = CODEX_ACP_INSTALLABLE_DESCRIPTOR,
+): RuntimeInstallableAdapter {
+  return {
+    key: descriptor.key as InstallableKey,
+    capabilityId: descriptor.capabilityId as Extract<CapabilityId, `dep.${string}`>,
+    detectCapabilityStatus: getCodexAcpDepStatus,
+    detectLaunchResolution: detectCodexAcpLaunchResolution,
+    resolveLaunchCommand: resolveCodexAcpLaunchCommand,
+    installOrUpgrade: installCodexAcp,
+    runBackgroundAutoUpdateCheck: runCodexAcpBackgroundAutoUpdateCheck,
+  };
+}
+
+export const codexAcpRuntimeInstallable = createCodexAcpRuntimeInstallableAdapter();

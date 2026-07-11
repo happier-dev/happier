@@ -4,8 +4,16 @@ import {
   type InstallableKey,
   type InstallablesRegistry,
 } from '@happier-dev/protocol';
+import { isCuratedFirstPartyInstallableOwner } from '@happier-dev/protocol/installables';
 
 import { getGitHubReleaseBinaryRuntimeInstallableAdapter } from './sourceAdapters/githubReleaseBinary';
+import { getManagedPypiWheelAssetRuntimeInstallableAdapter } from './sourceAdapters/pypiWheelAsset';
+import {
+  ARCHIVE_DOWNLOAD_INSTALLABLE_SOURCE_KIND,
+  BROWSER_CHROMIUM_INSTALLABLE_KEY,
+  getBrowserChromiumArchiveDownloadInstallableAdapter,
+  type ArchiveDownloadInstallableAdapter,
+} from './sourceAdapters/browserChromium';
 
 export type RuntimeInstallableLaunchAvailability =
   | Readonly<{ ok: true }>
@@ -59,10 +67,11 @@ export async function getRuntimeInstallableAdapter(
   opts: Readonly<{ installablesRegistry?: InstallablesRegistry }> = {},
 ): Promise<RuntimeInstallableAdapter> {
   const registry = opts.installablesRegistry ?? BUILT_IN_INSTALLABLES_REGISTRY;
-  const descriptor = registry.descriptorsByKey[key]?.descriptor;
-  if (!descriptor) {
+  const contribution = registry.descriptorsByKey[key];
+  if (!contribution) {
     throw new Error(`No runtime installable adapter is registered for "${key}"`);
   }
+  const descriptor = contribution.descriptor;
 
   if (descriptor.source.kind === 'github_release_binary') {
     const adapter = await getGitHubReleaseBinaryRuntimeInstallableAdapter(descriptor);
@@ -71,5 +80,33 @@ export async function getRuntimeInstallableAdapter(
     }
   }
 
+  if (descriptor.source.kind === 'managed_pypi_wheel_asset') {
+    if (!isCuratedFirstPartyInstallableOwner(contribution.owner)) {
+      throw new Error(`Installable source kind "managed_pypi_wheel_asset" for "${key}" is restricted to curated first-party contributions`);
+    }
+    const adapter = await getManagedPypiWheelAssetRuntimeInstallableAdapter(descriptor);
+    if (adapter) {
+      return adapter;
+    }
+  }
+
   throw new Error(`Installable source kind "${descriptor.source.kind}" for "${key}" is not executable by the runtime installables adapter`);
 }
+
+/**
+ * Resolve the archive-download installable adapter (MCH-2). Chrome-for-Testing is a per-platform
+ * archive, not a `dep.*` system CLI / npm-shaped package, so it lives in its own archive-download
+ * source-kind keyed by the product-source `key` rather than the `dep.*` `InstallablesRegistry`.
+ * Returns `null` for any unknown key so callers fail closed.
+ */
+export function getArchiveDownloadInstallableAdapter(
+  key: string,
+): ArchiveDownloadInstallableAdapter | null {
+  if (key === BROWSER_CHROMIUM_INSTALLABLE_KEY) {
+    return getBrowserChromiumArchiveDownloadInstallableAdapter();
+  }
+  return null;
+}
+
+export { ARCHIVE_DOWNLOAD_INSTALLABLE_SOURCE_KIND, BROWSER_CHROMIUM_INSTALLABLE_KEY };
+export type { ArchiveDownloadInstallableAdapter };

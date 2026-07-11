@@ -4,4 +4,4 @@ export {
   managedPnpmBinPath,
   managedPnpmInstallDir,
   resolveExistingPnpmCommand,
-} from '@happier-dev/cli-common/providers';
+} from '@happier-dev/cli-common/agents';

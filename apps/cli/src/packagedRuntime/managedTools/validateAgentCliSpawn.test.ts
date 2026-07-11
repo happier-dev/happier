@@ -6,8 +6,8 @@ import { basename, dirname, join } from 'node:path';
 import { createEnvKeyScope } from '../../testkit/env/envScope';
 import { writeExecutableShimSync } from '../../testkit/fs/executableShim';
 import { createTempDirSync, removeTempDirSync } from '../../testkit/fs/tempDir';
-import { resolveProviderCliManagedCommandPath } from './providerCliResolution';
-import { validateProviderCliSpawn } from './validateProviderCliSpawn';
+import { resolveAgentCliManagedCommandPath } from './agentCliResolution';
+import { validateAgentCliSpawn } from './validateAgentCliSpawn';
 
 const TEMP_DIRS = new Set<string>();
 let envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH', 'HAPPIER_GEMINI_PATH']);
@@ -29,30 +29,30 @@ function writeExecutable(filePath: string): void {
   });
 }
 
-describe('validateProviderCliSpawn', () => {
-  it('accepts managed provider CLIs when PATH is missing the system install', async () => {
-    const root = createTempDirSync('happier-provider-spawn-', tmpdir());
+describe('validateAgentCliSpawn', () => {
+  it('accepts managed agent CLIs when PATH is missing the system install', async () => {
+    const root = createTempDirSync('happier-agent-spawn-', tmpdir());
     TEMP_DIRS.add(root);
     process.env.HAPPIER_HOME_DIR = join(root, 'home');
     process.env.PATH = join(root, 'empty-path');
     mkdirSync(process.env.HAPPIER_HOME_DIR, { recursive: true });
     mkdirSync(process.env.PATH, { recursive: true });
 
-    const managedPath = resolveProviderCliManagedCommandPath('gemini', { happyHomeDir: process.env.HAPPIER_HOME_DIR });
+    const managedPath = resolveAgentCliManagedCommandPath('gemini', { happyHomeDir: process.env.HAPPIER_HOME_DIR });
     writeExecutable(managedPath);
 
-    await expect(validateProviderCliSpawn({ agentId: 'gemini' })).resolves.toEqual({ ok: true });
+    await expect(validateAgentCliSpawn({ agentId: 'gemini' })).resolves.toEqual({ ok: true });
   });
 
-  it('returns a provider-specific error when no CLI source is available', async () => {
-    const root = createTempDirSync('happier-provider-spawn-', tmpdir());
+  it('returns an agent-specific error when no CLI source is available', async () => {
+    const root = createTempDirSync('happier-agent-spawn-', tmpdir());
     TEMP_DIRS.add(root);
     process.env.HAPPIER_HOME_DIR = join(root, 'home');
     process.env.PATH = '';
     delete process.env.HAPPIER_GEMINI_PATH;
     mkdirSync(process.env.HAPPIER_HOME_DIR, { recursive: true });
 
-    const result = await validateProviderCliSpawn({ agentId: 'gemini' });
+    const result = await validateAgentCliSpawn({ agentId: 'gemini' });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected validation failure');
     expect(result.errorMessage.toLowerCase()).toContain('gemini');
@@ -64,7 +64,7 @@ describe('validateProviderCliSpawn', () => {
   });
 
   it('fails closed when an explicit override is set but invalid', async () => {
-    const root = createTempDirSync('happier-provider-spawn-', tmpdir());
+    const root = createTempDirSync('happier-agent-spawn-', tmpdir());
     TEMP_DIRS.add(root);
     const systemBin = join(root, 'system-bin');
     mkdirSync(systemBin, { recursive: true });
@@ -73,7 +73,7 @@ describe('validateProviderCliSpawn', () => {
     process.env.PATH = systemBin;
     process.env.HAPPIER_GEMINI_PATH = join(root, 'missing-gemini');
 
-    const result = await validateProviderCliSpawn({ agentId: 'gemini' });
+    const result = await validateAgentCliSpawn({ agentId: 'gemini' });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected validation failure');
     expect(result.errorMessage).toContain('HAPPIER_GEMINI_PATH');

@@ -55,6 +55,54 @@ describe('startBackgroundRuntimeInstallableUpdate', () => {
     expect(writeLastCheckAtMs).toHaveBeenCalledTimes(1);
   });
 
+  it('serializes concurrent background checks for the same installable key', async () => {
+    const adapter = createAdapter();
+    let releaseRead: () => void = () => {
+      throw new Error('read did not start');
+    };
+    let markReadStarted: () => void = () => undefined;
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve;
+    });
+    let readCalls = 0;
+    const readLastCheckAtMs = vi.fn(async () => {
+      readCalls += 1;
+      if (readCalls === 1) {
+        markReadStarted();
+        await new Promise<void>((release) => {
+          releaseRead = release;
+        });
+      }
+      return null;
+    });
+    const writeLastCheckAtMs = vi.fn(async () => {});
+
+    const first = startBackgroundRuntimeInstallableUpdate(
+      { installableKey: `${INSTALLABLE_KEYS.CODEX_ACP}-concurrent`, adapter },
+      {
+        readLastCheckAtMs,
+        writeLastCheckAtMs,
+        autoUpdateCheckIntervalMs: 60_000,
+      },
+    );
+    await readStarted;
+    const second = startBackgroundRuntimeInstallableUpdate(
+      { installableKey: `${INSTALLABLE_KEYS.CODEX_ACP}-concurrent`, adapter },
+      {
+        readLastCheckAtMs,
+        writeLastCheckAtMs,
+        autoUpdateCheckIntervalMs: 60_000,
+      },
+    );
+
+    releaseRead();
+    await Promise.all([first, second]);
+
+    expect(adapter.runBackgroundAutoUpdateCheck).toHaveBeenCalledTimes(1);
+    expect(readLastCheckAtMs).toHaveBeenCalledTimes(1);
+    expect(writeLastCheckAtMs).toHaveBeenCalledTimes(1);
+  });
+
   it('allows another background check after the cooldown expires', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-03-10T10:00:00.000Z'));

@@ -12,7 +12,13 @@ describe('isEmbeddedBunBundlePath', () => {
     expect(isEmbeddedBunBundlePath('C:\\~BUN\\root\\happier.exe')).toBe(true);
   });
 
+  it('recognizes Windows Bun virtual paths parsed from file URLs', () => {
+    expect(isEmbeddedBunBundlePath('/B:/%7EBUN/root/happier.exe')).toBe(true);
+    expect(isEmbeddedBunBundlePath('/B:/~BUN/root/happier.exe')).toBe(true);
+  });
+
   it('rejects ordinary filesystem paths', () => {
     expect(isEmbeddedBunBundlePath('C:/Users/test_qa/dev/apps/cli/dist/index.mjs')).toBe(false);
+    expect(isEmbeddedBunBundlePath('/B:/Users/test/%7EBUN/root/happier.exe')).toBe(false);
   });
 });

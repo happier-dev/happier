@@ -3,9 +3,9 @@ import {
   isAgentId,
   legacyCustomAcpCompat,
 } from '@happier-dev/agents';
-import type { CatalogAgentLookupId } from '@/backends/types';
+import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 
-import { readProviderCliOverrideForRuntime, resolveProviderCliCommandForRuntime } from './providerCliResolution';
+import { readAgentCliOverrideForRuntime, resolveAgentCliCommandForRuntime } from './agentCliResolution';
 
 export function resolveAgentCliRuntimeSpecForLookupId(agentId: CatalogAgentLookupId) {
   if (isAgentId(agentId)) {
@@ -14,17 +14,17 @@ export function resolveAgentCliRuntimeSpecForLookupId(agentId: CatalogAgentLooku
   if (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(agentId)) {
     return legacyCustomAcpCompat.getLegacyCustomAcpAgentCliRuntimeSpec();
   }
-  throw new Error(`Unsupported provider CLI runtime lookup id '${agentId}'`);
+  throw new Error(`Unsupported agent CLI runtime lookup id '${agentId}'`);
 }
 
-export function buildMissingProviderCliCommandErrorMessage(
+export function buildMissingAgentCliCommandErrorMessage(
   agentId: CatalogAgentLookupId,
   opts: Readonly<{ processEnv?: NodeJS.ProcessEnv }> = {},
 ): string {
   const processEnv = opts.processEnv ?? process.env;
   const runtimeSpec = resolveAgentCliRuntimeSpecForLookupId(agentId);
   const envKey = `HAPPIER_${agentId.toUpperCase()}_PATH`;
-  if (readProviderCliOverrideForRuntime(runtimeSpec, processEnv)) {
+  if (readAgentCliOverrideForRuntime(runtimeSpec, processEnv)) {
     return (
       `${capitalize(agentId)} CLI (${agentId}) is unavailable because ${envKey} is set ` +
       `but does not point to a supported CLI entrypoint. Fix ${envKey} or unset it, then restart the daemon.`
@@ -36,15 +36,15 @@ export function buildMissingProviderCliCommandErrorMessage(
   );
 }
 
-export function requireProviderCliCommand(
+export function requireAgentCliCommand(
   agentId: CatalogAgentLookupId,
   opts: Readonly<{ processEnv?: NodeJS.ProcessEnv }> = {},
 ): string {
-  const resolved = resolveProviderCliCommandForRuntime(resolveAgentCliRuntimeSpecForLookupId(agentId), {
+  const resolved = resolveAgentCliCommandForRuntime(resolveAgentCliRuntimeSpecForLookupId(agentId), {
     processEnv: opts.processEnv,
   });
   if (resolved) return resolved.command;
-  throw new ReferenceError(buildMissingProviderCliCommandErrorMessage(agentId, opts));
+  throw new ReferenceError(buildMissingAgentCliCommandErrorMessage(agentId, opts));
 }
 
 function capitalize(value: string): string {

@@ -4,9 +4,9 @@ import { join } from 'node:path';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
-import { buildMissingProviderCliCommandErrorMessage, requireProviderCliCommand } from './requireProviderCliCommand';
+import { buildMissingAgentCliCommandErrorMessage, requireAgentCliCommand } from './requireAgentCliCommand';
 
-describe('requireProviderCliCommand', () => {
+describe('requireAgentCliCommand', () => {
   let envScope = createEnvKeyScope(['PATH', 'HAPPIER_GEMINI_PATH']);
   const tempDirs: string[] = [];
 
@@ -20,17 +20,17 @@ describe('requireProviderCliCommand', () => {
     }
   });
 
-  it('throws a provider-specific error when the CLI is unavailable', () => {
+  it('throws an agent-specific error when the CLI is unavailable', () => {
     process.env.PATH = '';
     delete process.env.HAPPIER_GEMINI_PATH;
 
-    expect(() => requireProviderCliCommand('gemini')).toThrow(
-      buildMissingProviderCliCommandErrorMessage('gemini'),
+    expect(() => requireAgentCliCommand('gemini')).toThrow(
+      buildMissingAgentCliCommandErrorMessage('gemini'),
     );
   });
 
   it('returns the resolved command path when the CLI is available', () => {
-    const dir = createTempDirSync('happier-required-provider-cli-');
+    const dir = createTempDirSync('happier-required-agent-cli-');
     tempDirs.push(dir);
     const binPath = writeExecutableShimSync({
       dir,
@@ -40,15 +40,15 @@ describe('requireProviderCliCommand', () => {
     process.env.PATH = dir;
     delete process.env.HAPPIER_GEMINI_PATH;
 
-    expect(requireProviderCliCommand('gemini')).toBe(binPath);
+    expect(requireAgentCliCommand('gemini')).toBe(binPath);
   });
 
   it('reports an invalid explicit override instead of falling back', () => {
     process.env.PATH = '';
-    const dir = createTempDirSync('happier-required-provider-cli-missing-');
+    const dir = createTempDirSync('happier-required-agent-cli-missing-');
     tempDirs.push(dir);
     process.env.HAPPIER_GEMINI_PATH = join(dir, 'missing-gemini');
 
-    expect(() => requireProviderCliCommand('gemini')).toThrow(/does not point to a supported cli entrypoint/i);
+    expect(() => requireAgentCliCommand('gemini')).toThrow(/does not point to a supported cli entrypoint/i);
   });
 });

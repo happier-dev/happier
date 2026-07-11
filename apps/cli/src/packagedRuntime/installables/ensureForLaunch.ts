@@ -4,7 +4,7 @@ import {
   type InstallableKey,
   type InstallablesRegistry,
 } from '@happier-dev/protocol';
-import { resolveInstallablePolicy } from '@happier-dev/protocol/installablesPolicy';
+import { resolveEffectiveInstallablePolicy } from '@happier-dev/protocol/installablesPolicy';
 
 import {
   getRuntimeInstallableAdapter,
@@ -48,11 +48,10 @@ export async function ensureRuntimeInstallablesForLaunch(
       throw new Error(`No installable catalog entry exists for "${installableKey}"`);
     }
     const adapter = await deps.getRuntimeInstallableAdapter(installableKey, { installablesRegistry });
-    const policy = resolveInstallablePolicy({
+    const policy = resolveEffectiveInstallablePolicy({
       settings: params.settings ?? {},
       machineId: params.machineId,
-      installableKey,
-      defaults: descriptor.defaultPolicy,
+      descriptor,
     });
 
     let resolution = await adapter.detectLaunchResolution({ env: params.env });
@@ -88,7 +87,13 @@ export async function ensureRuntimeInstallablesForLaunch(
       };
     }
 
-    if (!installedThisLaunch && resolution.availability.ok && resolution.canBackgroundAutoUpdate && policy.autoUpdateMode === 'auto') {
+    if (
+      !installedThisLaunch &&
+      resolution.availability.ok &&
+      resolution.canBackgroundAutoUpdate &&
+      policy.autoUpdateMode === 'auto' &&
+      descriptor.consent.update !== 'required'
+    ) {
       void deps.startBackgroundRuntimeInstallableUpdate({
         installableKey,
         adapter,

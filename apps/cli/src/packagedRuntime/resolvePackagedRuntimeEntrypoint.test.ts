@@ -108,6 +108,31 @@ describe('resolvePackagedRuntimeEntrypoint', () => {
         );
     });
 
+    it('prefers the runtime snapshot root derived from any packaged argv entrypoint', () => {
+        Object.defineProperty(process, 'execPath', {
+            value: 'C:\\Program Files\\Bun\\bun.exe',
+            configurable: true,
+        });
+        process.argv = [
+            'bun',
+            'B:/~BUN/root/happier.exe',
+            'C:\\Users\\test\\happier-v0.2.10-windows-x64\\package-dist\\index.mjs',
+            'claude',
+            '--happy-starting-mode',
+            'remote',
+            '--started-by',
+            'daemon',
+        ];
+        vi.mocked(existsSync).mockImplementation((pathLike) => {
+            const path = String(pathLike).replaceAll('\\', '/');
+            return path === 'C:/Users/test/happier-v0.2.10-windows-x64/package-dist/backends/codex/happyMcpStdioBridge.mjs';
+        });
+
+        expect(
+            resolvePackagedRuntimeEntrypoint('backends/codex/happyMcpStdioBridge.mjs').replaceAll('\\', '/'),
+        ).toBe('C:/Users/test/happier-v0.2.10-windows-x64/package-dist/backends/codex/happyMcpStdioBridge.mjs');
+    });
+
     it('prefers the current argv[1] runtime snapshot over managed-installed payloads when both exist', () => {
         Object.defineProperty(process, 'execPath', {
             value: '/usr/local/bin/node',

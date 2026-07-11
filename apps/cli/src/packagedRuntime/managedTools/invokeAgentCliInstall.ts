@@ -1,21 +1,21 @@
 import type { AgentId, AgentCliInstallPlatform } from '@happier-dev/agents';
 import {
-  installProviderCli as installProviderCliDefault,
+  installAgentCli as installAgentCliDefault,
   resolvePlatformFromNodePlatform,
-  type InstallProviderCliResult,
-} from '@happier-dev/cli-common/providers';
+  type InstallAgentCliResult,
+} from '@happier-dev/cli-common/agents';
 
-export type ProviderCliInstallInvocationParams = Readonly<{
+export type AgentCliInstallInvocationParams = Readonly<{
   dryRun?: boolean;
   skipIfInstalled?: boolean;
   platform?: string;
   allowVendorRecipeExecution?: boolean;
 }>;
 
-export type ProviderCliInstallInvocationResult =
+export type AgentCliInstallInvocationResult =
   | Readonly<{
       ok: true;
-      plan: NonNullable<Extract<InstallProviderCliResult, { ok: true }>['plan']>;
+      plan: NonNullable<Extract<InstallAgentCliResult, { ok: true }>['plan']>;
       alreadyInstalled: boolean;
       logPath: string | null;
     }>
@@ -26,7 +26,7 @@ export type ProviderCliInstallInvocationResult =
       logPath: string | null;
     }>;
 
-function resolveProviderCliInstallPlatform(params: Readonly<{
+function resolveAgentCliInstallPlatform(params: Readonly<{
   platform?: string;
   nodePlatform: string;
 }>): AgentCliInstallPlatform | null {
@@ -35,15 +35,15 @@ function resolveProviderCliInstallPlatform(params: Readonly<{
   return resolvePlatformFromNodePlatform(params.nodePlatform);
 }
 
-export async function invokeProviderCliInstall(params: Readonly<{
+export async function invokeAgentCliInstall(params: Readonly<{
   agentId: AgentId;
-  params?: ProviderCliInstallInvocationParams;
+  params?: AgentCliInstallInvocationParams;
   env?: NodeJS.ProcessEnv;
   nodePlatform?: string;
-  installProviderCli?: typeof installProviderCliDefault;
-}>): Promise<ProviderCliInstallInvocationResult> {
+  installAgentCli?: typeof installAgentCliDefault;
+}>): Promise<AgentCliInstallInvocationResult> {
   const nodePlatform = params.nodePlatform ?? process.platform;
-  const platform = resolveProviderCliInstallPlatform({
+  const platform = resolveAgentCliInstallPlatform({
     platform: params.params?.platform,
     nodePlatform,
   });
@@ -56,15 +56,15 @@ export async function invokeProviderCliInstall(params: Readonly<{
     };
   }
 
-  const installProviderCli = params.installProviderCli ?? installProviderCliDefault;
+  const installAgentCli = params.installAgentCli ?? installAgentCliDefault;
   const dryRun = Boolean(params.params?.dryRun);
   const skipIfInstalled = typeof params.params?.skipIfInstalled === 'boolean' ? params.params.skipIfInstalled : true;
   const allowVendorRecipeExecution =
     typeof params.params?.allowVendorRecipeExecution === 'boolean'
       ? params.params.allowVendorRecipeExecution
       : !dryRun;
-  const result = await installProviderCli({
-    providerId: params.agentId,
+  const result = await installAgentCli({
+    agentId: params.agentId,
     platform,
     dryRun,
     skipIfInstalled,

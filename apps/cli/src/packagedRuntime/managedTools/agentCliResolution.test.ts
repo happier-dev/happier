@@ -8,9 +8,9 @@ import { writeTextFileSync } from '../../testkit/fs/fileHelpers';
 import { resolveSystemJavaScriptRuntimeBinary, writeExecutableShimSync } from '../../testkit/fs/executableShim';
 import { createTempDirSync, removeTempDirSync } from '../../testkit/fs/tempDir';
 import {
-  resolveProviderCliCommand,
-  resolveProviderCliManagedCommandPath,
-} from './providerCliResolution';
+  resolveAgentCliCommand,
+  resolveAgentCliManagedCommandPath,
+} from './agentCliResolution';
 
 const envKeys = [
   'HAPPIER_HOME_DIR',
@@ -44,7 +44,7 @@ function writeManagedExecutable(filePath: string, contents: string): void {
   });
 }
 
-describe('resolveProviderCliCommand', () => {
+describe('resolveAgentCliCommand', () => {
   const tempDirs = new Set<string>();
   let envScope = createEnvKeyScope(envKeys);
 
@@ -68,11 +68,11 @@ describe('resolveProviderCliCommand', () => {
     const systemPath = makeExecutable(systemBin, 'codex');
     process.env.PATH = systemBin;
 
-    const managedPath = resolveProviderCliManagedCommandPath('codex', { happyHomeDir: process.env.HAPPIER_HOME_DIR });
+    const managedPath = resolveAgentCliManagedCommandPath('codex', { happyHomeDir: process.env.HAPPIER_HOME_DIR });
     mkdirSync(join(root, 'home', '.noop'), { recursive: true });
     writeManagedExecutable(managedPath, process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n');
 
-    expect(resolveProviderCliCommand('codex')).toEqual(
+    expect(resolveAgentCliCommand('codex')).toEqual(
       expect.objectContaining({
         source: 'system',
         command: systemPath,
@@ -88,10 +88,10 @@ describe('resolveProviderCliCommand', () => {
     process.env.PATH = join(root, 'empty-path');
     mkdirSync(process.env.PATH, { recursive: true });
 
-    const managedPath = resolveProviderCliManagedCommandPath('codex', { happyHomeDir: process.env.HAPPIER_HOME_DIR });
+    const managedPath = resolveAgentCliManagedCommandPath('codex', { happyHomeDir: process.env.HAPPIER_HOME_DIR });
     writeManagedExecutable(managedPath, process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n');
 
-    expect(resolveProviderCliCommand('codex')).toEqual(
+    expect(resolveAgentCliCommand('codex')).toEqual(
       expect.objectContaining({
         source: 'managed',
         command: managedPath,
@@ -109,11 +109,11 @@ describe('resolveProviderCliCommand', () => {
     process.env.PATH = join(root, 'empty-path');
     mkdirSync(process.env.PATH, { recursive: true });
 
-    const managedPath = resolveProviderCliManagedCommandPath('codex', { happyHomeDir: process.env.HAPPIER_HOME_DIR });
+    const managedPath = resolveAgentCliManagedCommandPath('codex', { happyHomeDir: process.env.HAPPIER_HOME_DIR });
     writeTextFileSync(managedPath, '#!/bin/sh\necho ok\n');
     chmodSync(managedPath, 0o644);
 
-    expect(resolveProviderCliCommand('codex')).toBeNull();
+    expect(resolveAgentCliCommand('codex')).toBeNull();
   });
 
   it('honors managed-first source preferences for backend CLIs', () => {
@@ -127,12 +127,12 @@ describe('resolveProviderCliCommand', () => {
     makeExecutable(systemBin, 'codex');
     process.env.PATH = systemBin;
 
-    const managedPath = resolveProviderCliManagedCommandPath('codex', { happyHomeDir: process.env.HAPPIER_HOME_DIR });
+    const managedPath = resolveAgentCliManagedCommandPath('codex', { happyHomeDir: process.env.HAPPIER_HOME_DIR });
     writeManagedExecutable(managedPath, process.platform === 'win32' ? '@echo off\r\necho ok\r\n' : '#!/bin/sh\necho ok\n');
 
     process.env.HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON = JSON.stringify({ codex: 'managed-first' });
 
-    expect(resolveProviderCliCommand('codex')).toEqual(
+    expect(resolveAgentCliCommand('codex')).toEqual(
       expect.objectContaining({
         source: 'managed',
         command: managedPath,
@@ -148,7 +148,7 @@ describe('resolveProviderCliCommand', () => {
     const overridePath = makeExecutable(overrideDir, 'codex');
     process.env.HAPPIER_CODEX_PATH = overridePath;
 
-    expect(resolveProviderCliCommand('codex')).toEqual(
+    expect(resolveAgentCliCommand('codex')).toEqual(
       expect.objectContaining({
         source: 'override',
         command: overridePath,
@@ -169,7 +169,7 @@ describe('resolveProviderCliCommand', () => {
 
     process.env.HAPPIER_CODEX_PATH = join(root, 'missing-codex');
 
-    expect(resolveProviderCliCommand('codex')).toBeNull();
+    expect(resolveAgentCliCommand('codex')).toBeNull();
   });
 
   it('fails closed for a Claude JavaScript override when the explicit JS runtime override is invalid', () => {
@@ -185,7 +185,7 @@ describe('resolveProviderCliCommand', () => {
     process.env.HAPPIER_CLAUDE_PATH = overridePath;
     process.env.HAPPIER_JS_RUNTIME_PATH = join(root, 'missing-runtime', 'node');
 
-    expect(resolveProviderCliCommand('claude')).toBeNull();
+    expect(resolveAgentCliCommand('claude')).toBeNull();
   });
 
   it('accepts a Claude JavaScript override entrypoint even when the file is not directly executable on Unix', () => {
@@ -199,7 +199,7 @@ describe('resolveProviderCliCommand', () => {
     process.env.HAPPIER_CLAUDE_PATH = overridePath;
     process.env.HAPPIER_JS_RUNTIME_PATH = resolveSystemJavaScriptRuntimeBinary(originalPath);
 
-    expect(resolveProviderCliCommand('claude')).toEqual(
+    expect(resolveAgentCliCommand('claude')).toEqual(
       expect.objectContaining({
         source: 'override',
         command: overridePath,
@@ -207,7 +207,7 @@ describe('resolveProviderCliCommand', () => {
     );
   });
 
-  it('fails closed for a system node-shebang provider script under bun when no JavaScript runtime is available', () => {
+  it('fails closed for a system node-shebang agent script under bun when no JavaScript runtime is available', () => {
     if (process.platform === 'win32') return;
 
     const root = createTempDirSync('happier-managed-cli-resolution-', tmpdir());
@@ -225,14 +225,14 @@ describe('resolveProviderCliCommand', () => {
     delete process.env.HAPPIER_NODE_PATH;
 
     expect(
-      resolveProviderCliCommand('gemini', {
+      resolveAgentCliCommand('gemini', {
         isBunRuntime: true,
         currentExecPath: join(root, 'happier'),
       }),
     ).toBeNull();
   });
 
-  it('accepts a system node-shebang provider script under bun when a JavaScript runtime override is configured', () => {
+  it('accepts a system node-shebang agent script under bun when a JavaScript runtime override is configured', () => {
     if (process.platform === 'win32') return;
 
     const root = createTempDirSync('happier-managed-cli-resolution-', tmpdir());
@@ -248,7 +248,7 @@ describe('resolveProviderCliCommand', () => {
     process.env.HAPPIER_JS_RUNTIME_PATH = resolveSystemJavaScriptRuntimeBinary(originalPath);
 
     expect(
-      resolveProviderCliCommand('gemini', {
+      resolveAgentCliCommand('gemini', {
         isBunRuntime: true,
         currentExecPath: join(root, 'happier'),
       }),
@@ -275,11 +275,11 @@ describe('resolveProviderCliCommand', () => {
     chmodSync(systemPath, 0o755);
     process.env.PATH = systemBin;
 
-    const managedPath = resolveProviderCliManagedCommandPath('ohMyPi', { happyHomeDir: process.env.HAPPIER_HOME_DIR });
+    const managedPath = resolveAgentCliManagedCommandPath('ohMyPi', { happyHomeDir: process.env.HAPPIER_HOME_DIR });
     writeManagedExecutable(managedPath, '#!/bin/sh\necho ok\n');
 
     expect(
-      resolveProviderCliCommand('ohMyPi', {
+      resolveAgentCliCommand('ohMyPi', {
         isBunRuntime: false,
         currentExecPath: join(root, 'happier'),
       }),

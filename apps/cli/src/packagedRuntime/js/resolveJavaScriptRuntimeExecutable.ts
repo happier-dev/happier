@@ -1,4 +1,4 @@
-import { resolveJavaScriptRuntimeCommand } from '@happier-dev/cli-common/providers';
+import { resolveJavaScriptRuntimeCommand } from '@happier-dev/cli-common/agents';
 
 export function resolveJavaScriptRuntimeExecutable(params: Readonly<{
   isBunRuntime: boolean;

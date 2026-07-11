@@ -4,14 +4,15 @@ import { basename, dirname, join, delimiter as PATH_DELIMITER } from 'node:path'
 import { tmpdir } from 'node:os';
 
 import type { InstallableDependencyDescriptor } from '@happier-dev/protocol';
-import { CODEX_ACP_INSTALLABLE_DESCRIPTOR, GH_INSTALLABLE_DESCRIPTOR } from '@happier-dev/protocol';
-import { downloadGitHubReleaseAsset } from '@happier-dev/cli-common/providers';
+import { GH_INSTALLABLE_DESCRIPTOR } from '@happier-dev/protocol';
+import { downloadGitHubReleaseAsset, promoteManagedCurrentInstall } from '@happier-dev/cli-common/agents';
 import { extractReleasePayloadRootFromArchive } from '@happier-dev/cli-common/firstPartyRuntime';
 import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
+import { hasCodexAcpRuntimeInstallableAdapterPolicy } from '@happier-dev/plugins-codex/agent/installables/codexAcp';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime/github';
 
 import { configuration } from '@/configuration';
-import { codexAcpRuntimeInstallable } from './codexAcpRuntimeInstallable';
+import { createCodexAcpRuntimeInstallableAdapter } from './codexAcpRuntimeInstallable';
 import { ghRuntimeInstallable } from '../ghRuntimeInstallable';
 import type { RuntimeInstallableAdapter } from '../registry';
 import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
@@ -226,9 +227,10 @@ async function installGitHubReleaseBinary(descriptor: GitHubReleaseBinaryInstall
           `# version: ${asset.version ?? 'unknown'}`,
         ],
       });
-      await rm(join(managedInstallDir(descriptor), 'current'), { recursive: true, force: true });
-      await mkdir(managedInstallDir(descriptor), { recursive: true });
-      await rename(nextDir, join(managedInstallDir(descriptor), 'current'));
+      await promoteManagedCurrentInstall({
+        installRoot: managedInstallDir(descriptor),
+        candidatePath: nextDir,
+      });
       return { ok: true, logPath };
     } finally {
       await rm(scratchDir, { recursive: true, force: true });
@@ -321,14 +323,14 @@ function createGenericGitHubReleaseBinaryRuntimeInstallable(
 export async function getGitHubReleaseBinaryRuntimeInstallableAdapter(
   descriptor: InstallableDependencyDescriptor,
 ): Promise<RuntimeInstallableAdapter | null> {
-  if (descriptor.key === CODEX_ACP_INSTALLABLE_DESCRIPTOR.key) {
-    return codexAcpRuntimeInstallable;
+  if (!isGitHubReleaseBinaryDescriptor(descriptor)) {
+    return null;
+  }
+  if (hasCodexAcpRuntimeInstallableAdapterPolicy(descriptor)) {
+    return createCodexAcpRuntimeInstallableAdapter(descriptor);
   }
   if (descriptor.key === GH_INSTALLABLE_DESCRIPTOR.key) {
     return ghRuntimeInstallable;
-  }
-  if (!isGitHubReleaseBinaryDescriptor(descriptor)) {
-    return null;
   }
   return createGenericGitHubReleaseBinaryRuntimeInstallable(descriptor);
 }

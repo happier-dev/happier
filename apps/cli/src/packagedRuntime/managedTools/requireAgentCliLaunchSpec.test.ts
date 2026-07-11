@@ -8,8 +8,8 @@ import { createEnvKeyScope } from '../../testkit/env/envScope';
 import { writeTextFile } from '../../testkit/fs/fileHelpers';
 import { writeExecutableShim } from '../../testkit/fs/executableShim';
 import { createTempDir, removeTempDir } from '../../testkit/fs/tempDir';
-import { requireProviderCliLaunchSpec } from './requireProviderCliLaunchSpec';
-import { resolveProviderCliManagedCommandPath } from './providerCliResolution';
+import { requireAgentCliLaunchSpec } from './requireAgentCliLaunchSpec';
+import { resolveAgentCliManagedCommandPath } from './agentCliResolution';
 
 const envKeys = [
   'PATH',
@@ -50,16 +50,16 @@ afterEach(async () => {
   tempDirs.clear();
 });
 
-describe('requireProviderCliLaunchSpec', () => {
-  it('wraps system node-shebang provider scripts with the configured JS runtime', async () => {
-    const root = await createTempDir('happier-provider-launch-', tmpdir());
+describe('requireAgentCliLaunchSpec', () => {
+  it('wraps system node-shebang agent scripts with the configured JS runtime', async () => {
+    const root = await createTempDir('happier-agent-launch-', tmpdir());
     tempDirs.add(root);
     const pathDir = join(root, 'bin');
     const runtimeDir = join(root, 'runtime');
     await mkdir(pathDir, { recursive: true });
     await mkdir(runtimeDir, { recursive: true });
 
-    const providerPath = await createExecutable(
+    const agentCliPath = await createExecutable(
       pathDir,
       'gemini',
       '#!/usr/bin/env node\nprocess.stdout.write("ok\\n")\n',
@@ -69,39 +69,39 @@ describe('requireProviderCliLaunchSpec', () => {
     process.env.PATH = pathDir;
     process.env.HAPPIER_JS_RUNTIME_PATH = runtimePath;
 
-    expect(requireProviderCliLaunchSpec('gemini')).toEqual({
+    expect(requireAgentCliLaunchSpec('gemini')).toEqual({
       source: 'system',
-      resolvedPath: providerPath,
+      resolvedPath: agentCliPath,
       command: runtimePath,
-      args: [providerPath],
+      args: [agentCliPath],
     });
   });
 
-  it('returns the provider command directly when no wrapper is needed', async () => {
-    const root = await createTempDir('happier-provider-launch-direct-', tmpdir());
+  it('returns the agent command directly when no wrapper is needed', async () => {
+    const root = await createTempDir('happier-agent-launch-direct-', tmpdir());
     tempDirs.add(root);
     const pathDir = join(root, 'bin');
     await mkdir(pathDir, { recursive: true });
 
-    const providerPath = await createExecutable(pathDir, 'gemini', '#!/bin/sh\necho ok\n');
+    const agentCliPath = await createExecutable(pathDir, 'gemini', '#!/bin/sh\necho ok\n');
     process.env.PATH = pathDir;
     delete process.env.HAPPIER_JS_RUNTIME_PATH;
 
-    expect(requireProviderCliLaunchSpec('gemini')).toEqual({
+    expect(requireAgentCliLaunchSpec('gemini')).toEqual({
       source: 'system',
-      resolvedPath: providerPath,
-      command: providerPath,
+      resolvedPath: agentCliPath,
+      command: agentCliPath,
       args: [],
     });
   });
 
-  it('wraps bun-shebang provider scripts with the bun runtime instead of node', async () => {
-    const root = await createTempDir('happier-provider-launch-bun-', tmpdir());
+  it('wraps bun-shebang agent scripts with the bun runtime instead of node', async () => {
+    const root = await createTempDir('happier-agent-launch-bun-', tmpdir());
     tempDirs.add(root);
     const pathDir = join(root, 'bin');
     await mkdir(pathDir, { recursive: true });
 
-    const providerPath = await createExecutable(
+    const agentCliPath = await createExecutable(
       pathDir,
       'omp',
       '#!/usr/bin/env bun\nconsole.log("ok")\n',
@@ -111,16 +111,16 @@ describe('requireProviderCliLaunchSpec', () => {
     process.env.PATH = pathDir;
     delete process.env.HAPPIER_JS_RUNTIME_PATH;
 
-    expect(requireProviderCliLaunchSpec('ohMyPi')).toEqual({
+    expect(requireAgentCliLaunchSpec('ohMyPi')).toEqual({
       source: 'system',
-      resolvedPath: providerPath,
+      resolvedPath: agentCliPath,
       command: bunPath,
-      args: [providerPath],
+      args: [agentCliPath],
     });
   });
 
   it('wraps direct oh-my-pi Bun TypeScript entrypoints with the Bun binary from the enclosing Bun home', async () => {
-    const root = await createTempDir('happier-provider-launch-ohmypi-bun-home-', tmpdir());
+    const root = await createTempDir('happier-agent-launch-ohmypi-bun-home-', tmpdir());
     tempDirs.add(root);
     const bunRoot = join(root, '.bun');
     const cliDir = join(bunRoot, 'install', 'global', 'node_modules', '@oh-my-pi', 'pi-coding-agent', 'src');
@@ -128,7 +128,7 @@ describe('requireProviderCliLaunchSpec', () => {
     await mkdir(cliDir, { recursive: true });
     await mkdir(bunBinDir, { recursive: true });
 
-    const providerPath = await createExecutable(
+    const agentCliPath = await createExecutable(
       cliDir,
       'cli.ts',
       '#!/usr/bin/env bun\nconsole.log("ok")\n',
@@ -136,28 +136,28 @@ describe('requireProviderCliLaunchSpec', () => {
     const bunPath = await createExecutable(bunBinDir, 'bun', '#!/bin/sh\nexit 0\n');
 
     process.env.PATH = '';
-    process.env.HAPPIER_OHMYPI_PATH = providerPath;
+    process.env.HAPPIER_OHMYPI_PATH = agentCliPath;
     delete process.env.HAPPIER_JS_RUNTIME_PATH;
 
-    expect(requireProviderCliLaunchSpec('ohMyPi')).toEqual({
+    expect(requireAgentCliLaunchSpec('ohMyPi')).toEqual({
       source: 'override',
-      resolvedPath: providerPath,
+      resolvedPath: agentCliPath,
       command: bunPath,
-      args: [providerPath],
+      args: [agentCliPath],
     });
   });
 
   it('keeps managed wrappers as direct commands', async () => {
-    const homeDir = await createTempDir('happier-provider-launch-managed-', tmpdir());
+    const homeDir = await createTempDir('happier-agent-launch-managed-', tmpdir());
     tempDirs.add(homeDir);
     process.env.HAPPIER_HOME_DIR = homeDir;
     process.env.PATH = '';
     delete process.env.HAPPIER_GEMINI_PATH;
 
-    const binPath = resolveProviderCliManagedCommandPath('gemini', { happyHomeDir: homeDir });
+    const binPath = resolveAgentCliManagedCommandPath('gemini', { happyHomeDir: homeDir });
     await writeManagedExecutable(binPath, '#!/bin/sh\necho ok\n');
 
-    expect(requireProviderCliLaunchSpec('gemini')).toEqual({
+    expect(requireAgentCliLaunchSpec('gemini')).toEqual({
       source: 'managed',
       resolvedPath: binPath,
       command: binPath,

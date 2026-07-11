@@ -1,15 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { InstallProviderCliResult } from '@happier-dev/cli-common/providers';
+import type { InstallAgentCliResult } from '@happier-dev/cli-common/agents';
 
-import { invokeProviderCliInstall } from './invokeProviderCliInstall';
+import { invokeAgentCliInstall } from './invokeAgentCliInstall';
 
-describe('invokeProviderCliInstall', () => {
-  it('returns unsupported-platform when the current platform cannot install provider CLIs', async () => {
-    const result = await invokeProviderCliInstall({
+describe('invokeAgentCliInstall', () => {
+  it('returns unsupported-platform when the current platform cannot install agent CLIs', async () => {
+    const result = await invokeAgentCliInstall({
       agentId: 'codex',
       nodePlatform: 'aix',
-      installProviderCli: vi.fn(),
+      installAgentCli: vi.fn(),
     });
 
     expect(result).toEqual({
@@ -21,12 +21,12 @@ describe('invokeProviderCliInstall', () => {
   });
 
   it('keeps vendor recipe execution disabled for dry-run installs', async () => {
-    const installProviderCli = vi.fn<(...args: any[]) => Promise<InstallProviderCliResult>>().mockResolvedValue({
+    const installAgentCli = vi.fn<(...args: any[]) => Promise<InstallAgentCliResult>>().mockResolvedValue({
       ok: true,
       alreadyInstalled: false,
       logPath: '/tmp/install.log',
       plan: {
-        providerId: 'codex',
+        agentId: 'codex',
         title: 'OpenAI Codex CLI',
         binaries: ['codex'],
         platform: 'linux',
@@ -42,16 +42,16 @@ describe('invokeProviderCliInstall', () => {
       },
     });
 
-    const result = await invokeProviderCliInstall({
+    const result = await invokeAgentCliInstall({
       agentId: 'codex',
       nodePlatform: 'linux',
       params: { dryRun: true },
       env: { TEST_ENV: '1' },
-      installProviderCli,
+      installAgentCli,
     });
 
-    expect(installProviderCli).toHaveBeenCalledWith({
-      providerId: 'codex',
+    expect(installAgentCli).toHaveBeenCalledWith({
+      agentId: 'codex',
       platform: 'linux',
       dryRun: true,
       skipIfInstalled: true,
@@ -63,19 +63,19 @@ describe('invokeProviderCliInstall', () => {
       alreadyInstalled: false,
       logPath: '/tmp/install.log',
       plan: expect.objectContaining({
-        providerId: 'codex',
+        agentId: 'codex',
         installMode: 'github_release_binary',
       }),
     });
   });
 
   it('defaults vendor recipe execution on for explicit real installs', async () => {
-    const installProviderCli = vi.fn<(...args: any[]) => Promise<InstallProviderCliResult>>().mockResolvedValue({
+    const installAgentCli = vi.fn<(...args: any[]) => Promise<InstallAgentCliResult>>().mockResolvedValue({
       ok: true,
       alreadyInstalled: false,
       logPath: '/tmp/claude-install.log',
       plan: {
-        providerId: 'claude',
+        agentId: 'claude',
         title: 'Claude Code CLI',
         binaries: ['claude'],
         platform: 'linux',
@@ -87,15 +87,15 @@ describe('invokeProviderCliInstall', () => {
       },
     });
 
-    await invokeProviderCliInstall({
+    await invokeAgentCliInstall({
       agentId: 'claude',
       nodePlatform: 'linux',
-      installProviderCli,
+      installAgentCli,
     });
 
-    expect(installProviderCli).toHaveBeenCalledWith(
+    expect(installAgentCli).toHaveBeenCalledWith(
       expect.objectContaining({
-        providerId: 'claude',
+        agentId: 'claude',
         dryRun: false,
         allowVendorRecipeExecution: true,
       }),
@@ -103,12 +103,12 @@ describe('invokeProviderCliInstall', () => {
   });
 
   it('treats force installs as skipIfInstalled false', async () => {
-    const installProviderCli = vi.fn<(...args: any[]) => Promise<InstallProviderCliResult>>().mockResolvedValue({
+    const installAgentCli = vi.fn<(...args: any[]) => Promise<InstallAgentCliResult>>().mockResolvedValue({
       ok: true,
       alreadyInstalled: false,
       logPath: null,
       plan: {
-        providerId: 'gemini',
+        agentId: 'gemini',
         title: 'Google Gemini CLI',
         binaries: ['gemini'],
         platform: 'linux',
@@ -124,16 +124,16 @@ describe('invokeProviderCliInstall', () => {
       },
     });
 
-    await invokeProviderCliInstall({
+    await invokeAgentCliInstall({
       agentId: 'gemini',
       nodePlatform: 'linux',
       params: { skipIfInstalled: false },
-      installProviderCli,
+      installAgentCli,
     });
 
-    expect(installProviderCli).toHaveBeenCalledWith(
+    expect(installAgentCli).toHaveBeenCalledWith(
       expect.objectContaining({
-        providerId: 'gemini',
+        agentId: 'gemini',
         skipIfInstalled: false,
         allowVendorRecipeExecution: true,
       }),
@@ -141,12 +141,12 @@ describe('invokeProviderCliInstall', () => {
   });
 
   it('passes allowVendorRecipeExecution through when explicitly set', async () => {
-    const installProviderCli = vi.fn<(...args: any[]) => Promise<InstallProviderCliResult>>().mockResolvedValue({
+    const installAgentCli = vi.fn<(...args: any[]) => Promise<InstallAgentCliResult>>().mockResolvedValue({
       ok: true,
       alreadyInstalled: false,
       logPath: '/tmp/claude-install.log',
       plan: {
-        providerId: 'claude',
+        agentId: 'claude',
         title: 'Claude Code CLI',
         binaries: ['claude'],
         platform: 'linux',
@@ -158,23 +158,23 @@ describe('invokeProviderCliInstall', () => {
       },
     });
 
-    await invokeProviderCliInstall({
+    await invokeAgentCliInstall({
       agentId: 'claude',
       nodePlatform: 'linux',
       params: { allowVendorRecipeExecution: true },
-      installProviderCli,
+      installAgentCli,
     });
 
-    expect(installProviderCli).toHaveBeenCalledWith(
+    expect(installAgentCli).toHaveBeenCalledWith(
       expect.objectContaining({
-        providerId: 'claude',
+        agentId: 'claude',
         allowVendorRecipeExecution: true,
       }),
     );
   });
 
   it('maps no-recipe failures to install-not-available', async () => {
-    const installProviderCli = vi.fn<(...args: any[]) => Promise<InstallProviderCliResult>>().mockResolvedValue({
+    const installAgentCli = vi.fn<(...args: any[]) => Promise<InstallAgentCliResult>>().mockResolvedValue({
       ok: false,
       errorCode: 'no-recipe',
       errorMessage: 'No auto-install recipe available for kiro on linux.',
@@ -182,10 +182,10 @@ describe('invokeProviderCliInstall', () => {
       logPath: null,
     });
 
-    const result = await invokeProviderCliInstall({
+    const result = await invokeAgentCliInstall({
       agentId: 'kiro',
       nodePlatform: 'linux',
-      installProviderCli,
+      installAgentCli,
     });
 
     expect(result).toEqual({
