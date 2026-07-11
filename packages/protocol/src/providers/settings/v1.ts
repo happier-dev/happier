@@ -3,8 +3,8 @@ import { z } from 'zod';
 import { ProviderConnectionV1Schema, type ProviderConnectionV1 } from '../connections/v1.js';
 import { ProviderConnectionTombstoneV1Schema } from '../connections/tombstoneV1.js';
 import { ProviderAccountGrantV1Schema, ProviderMachineGrantV1Schema } from '../grants/v1.js';
-import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderLocalIdSchema, ProviderMachineIdSchema, ProviderModelIdSchema } from '../ids.js';
-import { deserializeModelVisibilityRefV1, SessionModelSelectionV1Schema } from '../selection/v1.js';
+import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema, ProviderMachineIdSchema, ProviderModelIdSchema } from '../ids.js';
+import { deserializeModelVisibilityRefV1, ProviderBoundModelRefSchema, SessionModelSelectionV1Schema } from '../selection/v1.js';
 import { PROVIDER_SETTINGS_LIMITS_V1 } from './limits.js';
 export { PROVIDER_SETTINGS_LIMITS_V1 } from './limits.js';
 
@@ -15,7 +15,7 @@ export const ProviderManualModelV1Schema = z.object({
 }).strict();
 export type ProviderManualModelV1 = z.infer<typeof ProviderManualModelV1Schema>;
 
-const ProviderMigrationSourceProfileIdSchema = z.string().min(1).max(256)
+export const ProviderMigrationSourceProfileIdSchema = z.string().min(1).max(256)
   .refine((value) => value === value.trim(), 'Source profile id must be canonical')
   .refine((value) => !/[\u0000-\u001f\u007f]/u.test(value), 'Source profile id must not contain controls');
 
@@ -28,9 +28,61 @@ export const ProviderSettingsMigrationSourceOutcomeV1Schema = z.discriminatedUni
     sourceProfileId: ProviderMigrationSourceProfileIdSchema,
     kind: z.literal('connection'),
     connectionId: ProviderConnectionIdSchema,
+    modelSelection: ProviderBoundModelRefSchema.optional(),
+  }).strict().superRefine((value, ctx) => {
+    if (value.modelSelection && value.modelSelection.providerConnectionId !== value.connectionId) {
+      ctx.addIssue({ code: 'custom', path: ['modelSelection', 'providerConnectionId'], message: 'Migrated model selection must reference the winning connection' });
+    }
+  }),
+  z.object({
+    sourceProfileId: ProviderMigrationSourceProfileIdSchema,
+    kind: z.literal('skipped_disabled'),
   }).strict(),
 ]);
 export type ProviderSettingsMigrationSourceOutcomeV1 = z.infer<typeof ProviderSettingsMigrationSourceOutcomeV1Schema>;
+
+export const ProviderSettingsMigrationConflictKindV1Schema = z.enum([
+  'credential_binding',
+  'manual_model',
+  'edited_default_connection',
+]);
+export type ProviderSettingsMigrationConflictKindV1 = z.infer<typeof ProviderSettingsMigrationConflictKindV1Schema>;
+
+export const ProviderSettingsMigrationModelChoiceV1Schema = z.object({
+  kind: z.enum(['legacy', 'existing']),
+  selection: z.object({
+    agentTargetKey: ProviderAgentTargetKeySchema,
+    modelId: ProviderModelIdSchema,
+  }).strict(),
+  label: z.string().trim().min(1).max(256).optional(),
+}).strict();
+export type ProviderSettingsMigrationModelChoiceV1 = z.infer<
+  typeof ProviderSettingsMigrationModelChoiceV1Schema
+>;
+
+export const ProviderSettingsMigrationPendingConflictV1Schema = z.object({
+  v: z.literal(1),
+  sourceProfileId: ProviderMigrationSourceProfileIdSchema,
+  contributionKey: ProviderContributionKeySchema,
+  existingConnectionId: ProviderConnectionIdSchema.nullable(),
+  kinds: z.array(ProviderSettingsMigrationConflictKindV1Schema).min(1).max(3),
+  modelChoices: z.array(ProviderSettingsMigrationModelChoiceV1Schema).max(2).default([]),
+  candidateFingerprint: z.string().startsWith('legacy-profile-migration-conflict:v1:').max(256),
+  detectedAt: z.number().finite().nonnegative(),
+}).strict().superRefine((value, ctx) => {
+  if (new Set(value.kinds).size !== value.kinds.length) {
+    ctx.addIssue({ code: 'custom', path: ['kinds'], message: 'Migration conflict kinds must be unique' });
+  }
+  const choiceKeys = value.modelChoices.map((choice) =>
+    `${choice.selection.agentTargetKey}\0${choice.selection.modelId}`);
+  if (new Set(choiceKeys).size !== choiceKeys.length) {
+    ctx.addIssue({ code: 'custom', path: ['modelChoices'], message: 'Migration model choices must have unique selections' });
+  }
+  if (!value.kinds.includes('manual_model') && value.modelChoices.length > 0) {
+    ctx.addIssue({ code: 'custom', path: ['modelChoices'], message: 'Only model conflicts may expose model choices' });
+  }
+});
+export type ProviderSettingsMigrationPendingConflictV1 = z.infer<typeof ProviderSettingsMigrationPendingConflictV1Schema>;
 
 export const ProviderSettingsMigrationStateV1Schema = z.object({
   v: z.literal(1),
@@ -38,6 +90,8 @@ export const ProviderSettingsMigrationStateV1Schema = z.object({
     .max(PROVIDER_SETTINGS_LIMITS_V1.migrationCompletedSources),
   pendingCustomProfileIds: z.array(ProviderMigrationSourceProfileIdSchema)
     .max(PROVIDER_SETTINGS_LIMITS_V1.migrationPendingCustomProfiles),
+  pendingConflicts: z.array(ProviderSettingsMigrationPendingConflictV1Schema)
+    .max(PROVIDER_SETTINGS_LIMITS_V1.migrationPendingConflicts).default([]),
   migratedAt: z.number().finite().nonnegative().optional(),
 }).strict().superRefine((value, ctx) => {
   if (new Set(value.completedSources.map((entry) => entry.sourceProfileId)).size !== value.completedSources.length) {
@@ -46,11 +100,18 @@ export const ProviderSettingsMigrationStateV1Schema = z.object({
   if (new Set(value.pendingCustomProfileIds).size !== value.pendingCustomProfileIds.length) {
     ctx.addIssue({ code: 'custom', path: ['pendingCustomProfileIds'], message: 'Pending profile ids must be unique' });
   }
+  if (new Set(value.pendingConflicts.map((entry) => entry.sourceProfileId)).size !== value.pendingConflicts.length) {
+    ctx.addIssue({ code: 'custom', path: ['pendingConflicts'], message: 'Pending migration conflicts must have unique sources' });
+  }
   const completedIds = new Set(value.completedSources.map((entry) => entry.sourceProfileId));
   if (value.pendingCustomProfileIds.some((id) => completedIds.has(id))) {
     ctx.addIssue({ code: 'custom', path: ['pendingCustomProfileIds'], message: 'A source profile cannot be both completed and pending' });
   }
+  if (value.pendingConflicts.some((entry) => completedIds.has(entry.sourceProfileId))) {
+    ctx.addIssue({ code: 'custom', path: ['pendingConflicts'], message: 'A source profile cannot be both completed and conflicted' });
+  }
 });
+export type ProviderSettingsMigrationStateV1 = z.infer<typeof ProviderSettingsMigrationStateV1Schema>;
 
 export const ProviderExperimentalBindingConfirmationV1Schema = z.object({
   v: z.literal(1),
@@ -61,9 +122,17 @@ export const ProviderExperimentalBindingConfirmationV1Schema = z.object({
   confirmedAt: z.number().finite().nonnegative(),
 }).strict();
 
+export function isCanonicalProviderSavedSecretIdV1(value: unknown): value is string {
+  return typeof value === 'string'
+    && value.length >= 1
+    && value.length <= 256
+    && value.trim() === value
+    && !/[\u0000-\u001f\u007f]/u.test(value);
+}
+
 const SecretSlotBindingsSchema = z.record(
   ProviderLocalIdSchema,
-  z.string().min(1).max(256).refine((value) => value === value.trim(), 'Saved-secret id must be canonical'),
+  z.string().refine(isCanonicalProviderSavedSecretIdV1, 'Saved-secret id must be canonical'),
 ).superRefine((value, ctx) => {
   if (Object.keys(value).length > PROVIDER_SETTINGS_LIMITS_V1.credentialSlotsPerScope) {
     ctx.addIssue({ code: 'custom', message: 'Too many credential-slot bindings' });
@@ -248,7 +317,9 @@ export function assertProviderSettingsV1WithinLimits(value: unknown): ProviderSe
   if ((Array.isArray(migration.completedSources)
       && migration.completedSources.length > PROVIDER_SETTINGS_LIMITS_V1.migrationCompletedSources)
     || (Array.isArray(migration.pendingCustomProfileIds)
-      && migration.pendingCustomProfileIds.length > PROVIDER_SETTINGS_LIMITS_V1.migrationPendingCustomProfiles)) {
+      && migration.pendingCustomProfileIds.length > PROVIDER_SETTINGS_LIMITS_V1.migrationPendingCustomProfiles)
+    || (Array.isArray(migration.pendingConflicts)
+      && migration.pendingConflicts.length > PROVIDER_SETTINGS_LIMITS_V1.migrationPendingConflicts)) {
     throw new ProviderSettingsLimitError('Provider settings exceed the migration-record limit');
   }
   let serialized: string | undefined;
@@ -392,7 +463,14 @@ export function parseProviderSettingsV1Narrow(value: unknown): Readonly<{
   );
 
   const defaultsByAgentTargetKey: Record<string, z.infer<typeof SessionModelSelectionV1Schema>> = {};
-  for (const [agentTargetKey, selection] of Object.entries(rawRecord(raw.defaultsByAgentTargetKey))) {
+  const defaultEntries = Object.entries(rawRecord(raw.defaultsByAgentTargetKey));
+  if (defaultEntries.length > PROVIDER_SETTINGS_LIMITS_V1.defaultsByAgentTargetKey) {
+    diagnostics.push({ path: 'defaultsByAgentTargetKey', reason: 'limit_exceeded' });
+  }
+  for (const [agentTargetKey, selection] of defaultEntries.slice(
+    0,
+    PROVIDER_SETTINGS_LIMITS_V1.defaultsByAgentTargetKey,
+  )) {
     const parsed = SessionModelSelectionV1Schema.safeParse(selection);
     if (parsed.success && parsed.data.ref.agentTargetKey === agentTargetKey
       && (parsed.data.ref.providerConnectionId === null || connectionIds.has(parsed.data.ref.providerConnectionId))) {
@@ -407,10 +485,13 @@ export function parseProviderSettingsV1Narrow(value: unknown): Readonly<{
     } else {
       const rawCompleted = Array.isArray(rawMigration.completedSources) ? rawMigration.completedSources : [];
       const rawPending = Array.isArray(rawMigration.pendingCustomProfileIds) ? rawMigration.pendingCustomProfileIds : [];
+      const rawPendingConflicts = Array.isArray(rawMigration.pendingConflicts) ? rawMigration.pendingConflicts : [];
       if (!Array.isArray(rawMigration.completedSources)) diagnostics.push({ path: 'migration.completedSources', reason: 'invalid_record' });
       if (!Array.isArray(rawMigration.pendingCustomProfileIds)) diagnostics.push({ path: 'migration.pendingCustomProfileIds', reason: 'invalid_record' });
+      if (rawMigration.pendingConflicts !== undefined && !Array.isArray(rawMigration.pendingConflicts)) diagnostics.push({ path: 'migration.pendingConflicts', reason: 'invalid_record' });
       if (rawCompleted.length > 2_048) diagnostics.push({ path: 'migration.completedSources', reason: 'limit_exceeded' });
       if (rawPending.length > 2_048) diagnostics.push({ path: 'migration.pendingCustomProfileIds', reason: 'limit_exceeded' });
+      if (rawPendingConflicts.length > PROVIDER_SETTINGS_LIMITS_V1.migrationPendingConflicts) diagnostics.push({ path: 'migration.pendingConflicts', reason: 'limit_exceeded' });
 
       const completedSources: ProviderSettingsMigrationSourceOutcomeV1[] = [];
       const completedIds = new Set<string>();
@@ -448,6 +529,26 @@ export function parseProviderSettingsV1Narrow(value: unknown): Readonly<{
         pendingCustomProfileIds.push(parsed.data);
       }
 
+      const pendingConflicts: ProviderSettingsMigrationPendingConflictV1[] = [];
+      const conflictIds = new Set<string>();
+      for (const [index, entry] of rawPendingConflicts.slice(0, PROVIDER_SETTINGS_LIMITS_V1.migrationPendingConflicts).entries()) {
+        const parsed = ProviderSettingsMigrationPendingConflictV1Schema.safeParse(entry);
+        if (!parsed.success) {
+          diagnostics.push({ path: `migration.pendingConflicts[${index}]`, reason: 'invalid_record' });
+          continue;
+        }
+        if (completedIds.has(parsed.data.sourceProfileId)) {
+          diagnostics.push({ path: `migration.pendingConflicts[${index}]`, reason: 'already_completed' });
+          continue;
+        }
+        if (conflictIds.has(parsed.data.sourceProfileId)) {
+          diagnostics.push({ path: `migration.pendingConflicts[${index}]`, reason: 'duplicate_identity' });
+          continue;
+        }
+        conflictIds.add(parsed.data.sourceProfileId);
+        pendingConflicts.push(parsed.data);
+      }
+
       const migratedAt = z.number().finite().nonnegative().safeParse(rawMigration.migratedAt);
       if (rawMigration.migratedAt !== undefined && !migratedAt.success) {
         diagnostics.push({ path: 'migration.migratedAt', reason: 'invalid_record' });
@@ -456,6 +557,7 @@ export function parseProviderSettingsV1Narrow(value: unknown): Readonly<{
         v: 1,
         completedSources,
         pendingCustomProfileIds,
+        pendingConflicts,
         ...(migratedAt.success ? { migratedAt: migratedAt.data } : {}),
       };
     }

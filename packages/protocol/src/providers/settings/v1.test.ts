@@ -5,6 +5,7 @@ import {
   DEFAULT_PROVIDER_SETTINGS_V1,
   ProviderSettingsLimitError,
   ProviderSettingsV1Schema,
+  ProviderSettingsMigrationPendingConflictV1Schema,
   assertProviderSettingsV1WithinLimits,
   parseProviderSettingsV1Narrow,
 } from './v1.js';
@@ -200,6 +201,28 @@ describe('ProviderSettingsV1Schema', () => {
     expect(parsed.diagnostics).toContainEqual({ path: 'connections', reason: 'limit_exceeded' });
   });
 
+  it('bounds default-selection recovery instead of throwing on an oversized sibling map', () => {
+    const raw = structuredClone(DEFAULT_PROVIDER_SETTINGS_V1) as any;
+    raw.defaultsByAgentTargetKey = Object.fromEntries(
+      Array.from({ length: 2_049 }, (_, index) => {
+        const agentTargetKey = `agent:${index}`;
+        return [agentTargetKey, {
+          v: 1,
+          ref: { agentTargetKey, providerConnectionId: null, modelId: 'native' },
+          updatedAt: 1,
+        }];
+      }),
+    );
+
+    const parsed = parseProviderSettingsV1Narrow(raw);
+    expect(Object.keys(parsed.settings.defaultsByAgentTargetKey)).toHaveLength(2_048);
+    expect(parsed.settings.defaultsByAgentTargetKey['agent:2048']).toBeUndefined();
+    expect(parsed.diagnostics).toContainEqual({
+      path: 'defaultsByAgentTargetKey',
+      reason: 'limit_exceeded',
+    });
+  });
+
   it('rejects non-canonical map keys before they can overwrite canonical bindings', () => {
     const cases: unknown[] = [];
 
@@ -277,10 +300,46 @@ describe('ProviderSettingsV1Schema', () => {
         { sourceProfileId: 'native-login', kind: 'default_environment' },
       ],
       pendingCustomProfileIds: ['pending-valid'],
+      pendingConflicts: [],
       migratedAt: 2,
     });
     expect(parsed.diagnostics).toContainEqual({
       path: 'migration.pendingCustomProfileIds[0]', reason: 'already_completed',
     });
+  });
+
+  it('bounds redacted migration model choices and exposes them only for model conflicts', () => {
+    const base = {
+      v: 1 as const,
+      sourceProfileId: 'deepseek',
+      contributionKey: 'happier.provider.deepseek:providers:deepseek',
+      existingConnectionId: 'pc_existing',
+      kinds: ['manual_model'] as const,
+      candidateFingerprint: 'legacy-profile-migration-conflict:v1:test',
+      detectedAt: 1,
+    };
+    const legacy = {
+      kind: 'legacy' as const,
+      selection: { agentTargetKey: 'agent:claude', modelId: 'legacy-model' },
+      label: 'Legacy model',
+    };
+    const existing = {
+      kind: 'existing' as const,
+      selection: { agentTargetKey: 'agent:claude', modelId: 'existing-model' },
+    };
+    expect(ProviderSettingsMigrationPendingConflictV1Schema.parse({
+      ...base, modelChoices: [existing, legacy],
+    }).modelChoices).toEqual([existing, legacy]);
+    expect(ProviderSettingsMigrationPendingConflictV1Schema.safeParse({
+      ...base, kinds: ['credential_binding'], modelChoices: [legacy],
+    }).success).toBe(false);
+    expect(ProviderSettingsMigrationPendingConflictV1Schema.safeParse({
+      ...base, modelChoices: [legacy, legacy],
+    }).success).toBe(false);
+    expect(ProviderSettingsMigrationPendingConflictV1Schema.safeParse({
+      ...base, modelChoices: [legacy, existing, {
+        kind: 'legacy', selection: { agentTargetKey: 'agent:claude', modelId: 'third' },
+      }],
+    }).success).toBe(false);
   });
 });

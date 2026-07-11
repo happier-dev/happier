@@ -8,11 +8,17 @@ import {
   ProviderSettingsV1Schema,
 } from './v1.js';
 import {
+  addOrUpdateProviderManualModelV1,
+  addOrUpdateProviderManualModelsV1,
   deleteProviderConnectionV1,
   ensureDefaultProviderConnectionV1,
   removeProviderMachineStateV1,
   resolveProviderGrantV1,
   resolveProviderSecretBindingIdV1,
+  removeProviderManualModelV1,
+  resetProviderModelVisibilityV1,
+  setProviderExperimentalConfirmationV1,
+  setProviderModelVisibilityV1,
 } from './operationsV1.js';
 
 function baseSettings() {
@@ -57,6 +63,84 @@ function baseSettings() {
 }
 
 describe('provider settings operations', () => {
+  it('adds a manual-model batch atomically when the final settings would exceed the connection limit', () => {
+    const original = ProviderSettingsV1Schema.parse({
+      ...baseSettings(),
+      manualModelsByConnectionId: {
+        pc_a: Array.from({ length: PROVIDER_SETTINGS_LIMITS_V1.manualModelsPerConnection - 1 }, (_, index) => ({
+          id: `existing-${index}`,
+          addedAt: 1,
+        })),
+      },
+    });
+
+    expect(() => addOrUpdateProviderManualModelsV1(original, {
+      connectionId: 'pc_a',
+      models: [{ id: 'new-a' }, { id: 'new-b' }],
+      addedAt: 10,
+    })).toThrowError(ProviderSettingsLimitError);
+    expect(original.manualModelsByConnectionId.pc_a).toHaveLength(
+      PROVIDER_SETTINGS_LIMITS_V1.manualModelsPerConnection - 1,
+    );
+    expect(original.manualModelsByConnectionId.pc_a?.some((model) => model.id.startsWith('new-'))).toBe(false);
+  });
+
+  it('mutates manual models, exact visibility, and fingerprint-bound confirmations without parallel settings owners', () => {
+    const base = baseSettings();
+    const withManual = addOrUpdateProviderManualModelV1(base, {
+      connectionId: 'pc_a', model: { id: 'org/model', name: 'Model' }, addedAt: 10,
+    });
+    expect(withManual.manualModelsByConnectionId.pc_a).toContainEqual({ id: 'org/model', name: 'Model', addedAt: 10 });
+    const updated = addOrUpdateProviderManualModelV1(withManual, {
+      connectionId: 'pc_a', model: { id: 'org/model', name: 'Renamed' }, addedAt: 11,
+    });
+    expect(updated.manualModelsByConnectionId.pc_a?.filter((model) => model.id === 'org/model'))
+      .toEqual([{ id: 'org/model', name: 'Renamed', addedAt: 10 }]);
+
+    const visibilityRef = {
+      scope: 'agent' as const, agentTargetKey: 'backend:codex',
+      providerConnectionId: 'pc_a', modelId: 'org/model',
+    };
+    const hidden = setProviderModelVisibilityV1(updated, { ref: visibilityRef, hidden: true });
+    expect(hidden.modelVisibilityByRef[serializeModelVisibilityRefV1(visibilityRef)]).toBe('hidden');
+    const visible = setProviderModelVisibilityV1(hidden, { ref: visibilityRef, hidden: false });
+    expect(visible.modelVisibilityByRef[serializeModelVisibilityRefV1(visibilityRef)]).toBeUndefined();
+
+    const confirmed = setProviderExperimentalConfirmationV1(visible, {
+      connectionId: 'pc_a', agentTargetKey: 'backend:codex', modelId: 'org/model',
+      compatibilityFingerprint: 'compatibility:v1:abc', confirmedAt: 20,
+    });
+    expect(confirmed.experimentalBindingConfirmations).toContainEqual({
+      v: 1, connectionId: 'pc_a', agentTargetKey: 'backend:codex', modelId: 'org/model',
+      compatibilityFingerprint: 'compatibility:v1:abc', confirmedAt: 20,
+    });
+    expect(removeProviderManualModelV1(confirmed, { connectionId: 'pc_a', modelId: 'org/model' })
+      .manualModelsByConnectionId.pc_a).toEqual([{ id: 'model-a', addedAt: 1 }]);
+  });
+
+  it('resets only the requested visibility scope and rejects unknown connection references atomically', () => {
+    const native = serializeModelVisibilityRefV1({
+      scope: 'agent', agentTargetKey: 'backend:codex', providerConnectionId: null, modelId: 'native',
+    });
+    const providerAgent = serializeModelVisibilityRefV1({
+      scope: 'agent', agentTargetKey: 'backend:codex', providerConnectionId: 'pc_a', modelId: 'provider',
+    });
+    const providerAll = serializeModelVisibilityRefV1({
+      scope: 'allAgents', providerConnectionId: 'pc_a', modelId: 'provider',
+    });
+    const initial = ProviderSettingsV1Schema.parse({
+      ...baseSettings(), modelVisibilityByRef: { [native]: 'hidden', [providerAgent]: 'hidden', [providerAll]: 'hidden' },
+    });
+    expect(resetProviderModelVisibilityV1(initial, {
+      scope: { kind: 'agent', agentTargetKey: 'backend:codex' },
+    }).modelVisibilityByRef).toEqual({ [providerAll]: 'hidden' });
+    expect(resetProviderModelVisibilityV1(initial, {
+      scope: { kind: 'connection', connectionId: 'pc_a' },
+    }).modelVisibilityByRef).toEqual({ [native]: 'hidden' });
+    expect(() => setProviderModelVisibilityV1(initial, {
+      ref: { scope: 'allAgents', providerConnectionId: 'missing', modelId: 'm' }, hidden: true,
+    })).toThrow();
+  });
   it('CAS-reuses the winning default connection rather than duplicating it', () => {
     const existing = baseSettings();
     const result = ensureDefaultProviderConnectionV1(existing, {

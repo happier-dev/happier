@@ -12,5 +12,7 @@ export const PROVIDER_SETTINGS_LIMITS_V1 = Object.freeze({
   defaultsByAgentTargetKey: 2_048,
   migrationCompletedSources: 2_048,
   migrationPendingCustomProfiles: 2_048,
+  migrationPendingConflicts: 2_048,
   decodedJsonBytes: 4 * 1024 * 1024,
+  readDiagnostics: 256,
 } as const);
