@@ -7,13 +7,20 @@ import {
     stripLocalOnlyAccountSettings,
 } from '@/sync/domains/settings/localOnlyAccountSettings';
 import {
+    MIGRATED_SESSION_ORGANIZATION_ACCOUNT_SETTING_KEYS,
+    stripMigratedSessionOrganizationSettings,
+} from '@/sync/domains/settings/parse/accountSettingsLegacyCleanup';
+import {
     areAccountSettingsScopesEqual,
+    accountSettingsScopeKeySuffix,
     type AccountSettingsScope,
 } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getServerProfileLegacyServerIds } from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storage';
 import { loadPendingSettings } from '@/sync/domains/state/persistence';
+import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
+import { getStorage as getSessionOrganizationStorage } from '@/sync/domains/state/storageStore';
 import {
     loadAccountSettings,
     loadPendingAccountSettings,
@@ -43,11 +50,39 @@ import {
     isServerIssuedIdentityId,
     migrateAccountSettingsServerIdentityKeys,
 } from '@/sync/domains/settings/serverIdentityKeyMigration';
+import { fetchSessionOrganizationSnapshot } from '@/sync/api/session/sessionOrganizationApi';
+import {
+    buildLegacySessionOrganizationImportPlan,
+    stripImportedLegacySessionOrganizationSettingsForServer,
+} from '@/sync/domains/session/organization/legacyImportPlan';
+import { importLegacySessionOrganization as importLegacySessionOrganizationOp } from '@/sync/ops/sessionOrganization/importLegacySessionOrganization';
 import {
     mergePendingSettingsIntoRawBaseline,
     removeCommittedPendingSettings,
 } from './writeback/accountSettingsRawDeltaMerge';
 import { areAccountSettingsRawObjectsEqual } from './writeback/accountSettingsRawEquality';
+
+function legacySessionOrganizationImportMarkerKey(scope: AccountSettingsScope): string {
+    return `session-organization:legacy-import:v1:${accountSettingsScopeKeySuffix(scope)}`;
+}
+
+function hasCompletedLegacySessionOrganizationImport(scope: AccountSettingsScope): boolean {
+    return getPersistenceStorage().getString(legacySessionOrganizationImportMarkerKey(scope)) === '1';
+}
+
+function markLegacySessionOrganizationImportComplete(scope: AccountSettingsScope): void {
+    getPersistenceStorage().set(legacySessionOrganizationImportMarkerKey(scope), '1');
+}
+
+function pickMigratedSessionOrganizationSettings(settings: Record<string, unknown>): Record<string, unknown> {
+    const picked: Record<string, unknown> = {};
+    for (const key of MIGRATED_SESSION_ORGANIZATION_ACCOUNT_SETTING_KEYS) {
+        if (Object.prototype.hasOwnProperty.call(settings, key)) {
+            picked[key] = settings[key];
+        }
+    }
+    return picked;
+}
 
 export type SyncSettingsParams = {
     credentials: AuthCredentials;
@@ -72,7 +107,10 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     const maxRetries = 3;
     let retryCount = 0;
     let lastVersionMismatch: { expectedVersion: number; currentVersion: number; pendingKeys: string[] } | null = null;
-    const pendingServerSettings = stripLocalOnlyAccountSettings(pendingSettings);
+    const pendingAccountSettings = stripLocalOnlyAccountSettings(pendingSettings) as Record<string, unknown>;
+    const pendingLegacySessionOrganizationSettings = pickMigratedSessionOrganizationSettings(pendingAccountSettings);
+    const pendingServerSettings = stripMigratedSessionOrganizationSettings(pendingAccountSettings) as Partial<Settings>;
+    let legacySessionOrganizationImportCompletedThisRun = false;
 
     const encryptionMode = await fetchAccountEncryptionMode(credentials);
     const accountMode = encryptionMode.mode === 'plain' ? 'plain' : 'e2ee';
@@ -271,6 +309,17 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         return { raw: migrated.settings, changed: migrated.changed };
     }
 
+    function mergePendingLegacySessionOrganizationSettings(
+        raw: Record<string, unknown> | null,
+    ): Record<string, unknown> | null {
+        if (Object.keys(pendingLegacySessionOrganizationSettings).length === 0) return raw;
+        const merged = {
+            ...(raw ?? {}),
+            ...pendingLegacySessionOrganizationSettings,
+        };
+        return migrateRawServerIdentityKeys(merged).raw;
+    }
+
     async function fetchAccountSettingsBaseline(options?: { requireReadable?: boolean }): Promise<AccountSettingsServerBaseline> {
         try {
             const fetched = await fetchSettingsV2();
@@ -318,7 +367,8 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     }
 
     function normalizeSettingsForLocalStorage(params: { raw: Record<string, unknown>; mode: 'plain' | 'e2ee' }): Settings {
-        const parsed = settingsParse(params.raw);
+        const raw = stripMigratedSessionOrganizationSettingsForImportedScope(params.raw);
+        const parsed = settingsParse(raw);
         if (params.mode === 'plain') {
             return sealSecretsDeep(parsed, settingsSecretsKey);
         }
@@ -335,19 +385,24 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         raw: Settings | Record<string, unknown>;
         mode: 'plain' | 'e2ee';
     }): { value: Record<string, unknown>; changed: boolean } {
-        const stripped = stripLocalOnlyAccountSettings(params.raw);
+        const strippedLocalOnly = stripLocalOnlyAccountSettings(params.raw);
+        const stripped = stripMigratedSessionOrganizationSettingsForImportedScope(strippedLocalOnly as Record<string, unknown>);
+        const migratedOrganizationStripped = !areAccountSettingsRawObjectsEqual(
+            strippedLocalOnly as Record<string, unknown>,
+            stripped as Record<string, unknown>,
+        );
         if (params.mode === 'plain') {
             const unsealed = unsealSecretsDeepWithKeys(stripped, settingsSecretsReadKeys) as Record<string, unknown>;
-            return { value: unsealed, changed: unsealed !== stripped };
+            return { value: unsealed, changed: migratedOrganizationStripped || unsealed !== stripped };
         }
         if (!settingsSecretsKey) {
-            return { value: stripped as Record<string, unknown>, changed: false };
+            return { value: stripped as Record<string, unknown>, changed: migratedOrganizationStripped };
         }
         const resealed = resealSecretsDeep(stripped, {
             readKeys: settingsSecretsReadKeys,
             writeKey: settingsSecretsKey,
         });
-        return { value: resealed.value as Record<string, unknown>, changed: resealed.changed };
+        return { value: resealed.value as Record<string, unknown>, changed: migratedOrganizationStripped || resealed.changed };
     }
 
     function createSettingsContentForWrite(raw: Record<string, unknown>): {
@@ -375,7 +430,9 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         const parsedSettings = params.raw
             ? normalizeSettingsForLocalStorage({ raw: params.raw, mode: accountMode })
             : { ...settingsDefaults };
-        const remainingServerPending = stripLocalOnlyAccountSettings(params.remainingPendingSettings ?? {});
+        const remainingServerPending = stripMigratedSessionOrganizationSettings(
+            stripLocalOnlyAccountSettings(params.remainingPendingSettings ?? {}) as Record<string, unknown>,
+        ) as Partial<Settings>;
         const mergedWithPending = Object.keys(remainingServerPending).length > 0
             ? applySettings(parsedSettings, remainingServerPending)
             : parsedSettings;
@@ -391,12 +448,100 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         applyActiveSettingsSideEffects(nextSettings);
     }
 
-    function clearCommittedPendingSettings(submittedPendingSettings: Partial<Settings>): Partial<Settings> {
+    function clearCommittedPendingSettings(
+        submittedPendingSettings: Partial<Settings>,
+        options?: { preserveMigratedSessionOrganizationSettings?: boolean },
+    ): Partial<Settings> {
         const currentPendingSettings = loadPendingSettingsForCapturedScope();
-        const nextPendingSettings = removeCommittedPendingSettings(currentPendingSettings, submittedPendingSettings);
+        const mergedCurrentPendingSettings = {
+            ...pendingSettings,
+            ...currentPendingSettings,
+        } as Partial<Settings>;
+        const nextRawPendingSettings = removeCommittedPendingSettings(mergedCurrentPendingSettings, submittedPendingSettings) as Record<string, unknown>;
+        const nextPendingSettings = options?.preserveMigratedSessionOrganizationSettings
+            ? nextRawPendingSettings as Partial<Settings>
+            : stripMigratedSessionOrganizationSettings(nextRawPendingSettings) as Partial<Settings>;
         clearPendingSettings(nextPendingSettings);
         return nextPendingSettings;
     }
+
+    function shouldStripMigratedSessionOrganizationSettings(): boolean {
+        return settingsScope
+            ? legacySessionOrganizationImportCompletedThisRun || hasCompletedLegacySessionOrganizationImport(settingsScope)
+            : false;
+    }
+
+    function stripMigratedSessionOrganizationSettingsForImportedScope<TSettings extends Record<string, unknown>>(settings: TSettings): TSettings {
+        if (!settingsScope || !shouldStripMigratedSessionOrganizationSettings()) return settings;
+        return stripImportedLegacySessionOrganizationSettingsForServer({
+            serverId: settingsScope.serverId,
+            rawSettings: settings,
+        });
+    }
+
+    async function maybeImportLegacySessionOrganization(rawSettings: Record<string, unknown> | null): Promise<boolean> {
+        if (!settingsScope || !rawSettings) return false;
+        if (hasCompletedLegacySessionOrganizationImport(settingsScope)) {
+            legacySessionOrganizationImportCompletedThisRun = true;
+            return true;
+        }
+
+        try {
+            const initialPlan = buildLegacySessionOrganizationImportPlan({
+                serverId: settingsScope.serverId,
+                rawSettings,
+            });
+            if (!initialPlan.hasLegacyOrganizationSettings) return false;
+            if (!initialPlan.hasImportableLegacyOrganization) {
+                markLegacySessionOrganizationImportComplete(settingsScope);
+                legacySessionOrganizationImportCompletedThisRun = true;
+                return true;
+            }
+
+            const snapshotRequest = {
+                includeFolders: true,
+                includeTags: true,
+                includeLabels: true,
+                includeAllFolderAssignments: true,
+                includeAllTagAssignments: true,
+            } as const;
+            const existing = await fetchSessionOrganizationSnapshot({
+                credentials,
+                serverUrl: activeServerUrl,
+                request: snapshotRequest,
+            });
+            const plan = buildLegacySessionOrganizationImportPlan({
+                serverId: settingsScope.serverId,
+                rawSettings,
+                existingSnapshot: existing.snapshot,
+            });
+            if (plan.hasImportableLegacyOrganization) {
+                await importLegacySessionOrganizationOp({
+                    credentials,
+                    serverId: settingsScope.serverId,
+                    serverUrl: activeServerUrl,
+                    request: plan.request,
+                });
+            } else {
+                getSessionOrganizationStorage().getState().applySessionOrganizationSnapshot(
+                    settingsScope.serverId,
+                    existing.snapshot,
+                    snapshotRequest,
+                );
+            }
+            markLegacySessionOrganizationImportComplete(settingsScope);
+            legacySessionOrganizationImportCompletedThisRun = true;
+            return true;
+        } catch (error) {
+            dbgSettings('syncSettings: legacy session organization import skipped', {
+                endpoint: activeServerUrl,
+                error: error instanceof Error ? error.message : String(error),
+            });
+            return false;
+        }
+    }
+
+    let prefetchedFinalBaseline: AccountSettingsServerBaseline | null = null;
 
     // Apply pending settings
     if (Object.keys(pendingServerSettings).length > 0) {
@@ -408,6 +553,9 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         });
 
         let baseline = await fetchAccountSettingsBaseline({ requireReadable: true });
+        let pendingLegacySessionOrganizationImported = await maybeImportLegacySessionOrganization(
+            mergePendingLegacySessionOrganizationSettings(baseline.raw),
+        );
         while (retryCount < maxRetries) {
             const version = baseline.version;
             const merged = mergePendingSettingsIntoRawBaseline({
@@ -417,7 +565,10 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
             });
 
             if (!baseline.serverIdentityKeysChanged && !merged.comparisonChanged && areAccountSettingsRawObjectsEqual(merged.comparisonRaw, merged.outgoingRaw)) {
-                const remainingPendingSettings = clearCommittedPendingSettings(pendingServerSettings);
+                const remainingPendingSettings = clearCommittedPendingSettings(pendingServerSettings, {
+                    preserveMigratedSessionOrganizationSettings: Object.keys(pendingLegacySessionOrganizationSettings).length > 0
+                        && !pendingLegacySessionOrganizationImported,
+                });
                 dbgSettings('syncSettings: pending merge produced no server change; skipped POST', {
                     endpoint: activeServerUrl,
                     serverVersion: version,
@@ -444,7 +595,10 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
                 : await updateSettingsV1({ settings: v1Settings, expectedVersion: version });
 
             if (data.success) {
-                const remainingPendingSettings = clearCommittedPendingSettings(pendingServerSettings);
+                const remainingPendingSettings = clearCommittedPendingSettings(pendingServerSettings, {
+                    preserveMigratedSessionOrganizationSettings: Object.keys(pendingLegacySessionOrganizationSettings).length > 0
+                        && !pendingLegacySessionOrganizationImported,
+                });
                 dbgSettings('syncSettings: POST success; pending cleared', {
                     endpoint: activeServerUrl,
                     expectedVersion: version,
@@ -465,6 +619,9 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
                     pendingKeys: Object.keys(pendingServerSettings).sort(),
                 };
                 baseline = await baselineFromVersionMismatch(data);
+                pendingLegacySessionOrganizationImported = await maybeImportLegacySessionOrganization(
+                    mergePendingLegacySessionOrganizationSettings(baseline.raw),
+                ) || pendingLegacySessionOrganizationImported;
                 dbgSettings('syncSettings: version-mismatch merge', {
                     endpoint: activeServerUrl,
                     expectedVersion: version,
@@ -481,11 +638,34 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     } else if (Object.keys(pendingSettings).length > 0) {
         // Pending keys can include UI-local server-selection fields, which are intentionally local-only.
         // Drop them from pending storage to avoid unnecessary sync attempts.
-        clearCommittedPendingSettings(pendingSettings);
-        dbgSettings('syncSettings: cleared local-only pending settings keys', {
-            endpoint: activeServerUrl,
-            pendingKeys: Object.keys(pendingSettings).sort(),
-        });
+        if (Object.keys(pendingLegacySessionOrganizationSettings).length > 0) {
+            if (settingsScope) {
+                const baseline = await fetchAccountSettingsBaseline({ requireReadable: true });
+                prefetchedFinalBaseline = baseline;
+                const imported = await maybeImportLegacySessionOrganization(
+                    mergePendingLegacySessionOrganizationSettings(baseline.raw),
+                );
+                if (imported) {
+                    clearCommittedPendingSettings(pendingSettings);
+                } else {
+                    dbgSettings('syncSettings: kept pending legacy session organization settings after failed import', {
+                        endpoint: activeServerUrl,
+                        pendingKeys: Object.keys(pendingSettings).sort(),
+                    });
+                }
+            } else {
+                dbgSettings('syncSettings: kept pending legacy session organization settings without account scope', {
+                    endpoint: activeServerUrl,
+                    pendingKeys: Object.keys(pendingSettings).sort(),
+                });
+            }
+        } else {
+            clearCommittedPendingSettings(pendingSettings);
+            dbgSettings('syncSettings: cleared local-only pending settings keys', {
+                endpoint: activeServerUrl,
+                pendingKeys: Object.keys(pendingSettings).sort(),
+            });
+        }
     }
 
     // If exhausted retries, throw to trigger outer backoff delay
@@ -496,8 +676,9 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         throw new Error(`Settings sync failed after ${maxRetries} retries due to version conflicts${mismatchHint}`);
     }
 
-    const fetched = await fetchAccountSettingsBaseline();
+    const fetched = prefetchedFinalBaseline ?? await fetchAccountSettingsBaseline();
     const decryptedSettings = fetched.raw;
+    await maybeImportLegacySessionOrganization(decryptedSettings);
 
     const parsedSettings = decryptedSettings
         ? normalizeSettingsForLocalStorage({ raw: decryptedSettings, mode: accountMode })
@@ -518,7 +699,9 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     // - Pending settings are persisted for crash safety; reload from disk so in-flight sync calls
     //   don't miss deltas when the Sync instance replaces the pending object reference.
     const pendingLatest = loadPendingSettingsForCapturedScope();
-    const pendingLatestForServer = stripLocalOnlyAccountSettings(pendingLatest);
+    const pendingLatestForServer = stripMigratedSessionOrganizationSettings(
+        stripLocalOnlyAccountSettings(pendingLatest) as Record<string, unknown>,
+    ) as Partial<Settings>;
 
     const mergedWithPending =
         Object.keys(pendingLatestForServer).length > 0

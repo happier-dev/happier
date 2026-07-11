@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
+import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 
 function createBaseMockSettings(): Record<string, unknown> {
@@ -88,6 +89,7 @@ const mocks = vi.hoisted(() => {
         loadPendingSettings: vi.fn(() => ({})),
         loadPendingAccountSettings: vi.fn(() => ({})),
         loadAccountSettings: vi.fn(() => ({ settings: createBaseMockSettings(), version: 1 })),
+        persistenceValues: new Map<string, string>(),
         callSequence,
         tracking: {
             capture: vi.fn((..._args: unknown[]) => {
@@ -206,6 +208,19 @@ vi.mock('@/sync/domains/state/persistence', () => ({
     clearPersistence: vi.fn(),
 }));
 
+vi.mock('@/sync/domains/state/persistenceStorage', () => ({
+    getPersistenceStorage: () => ({
+        getString: (key: string) => mocks.persistenceValues.get(key),
+        set: (key: string, value: string) => {
+            mocks.persistenceValues.set(key, value);
+        },
+        delete: (key: string) => {
+            mocks.persistenceValues.delete(key);
+        },
+        getAllKeys: () => [...mocks.persistenceValues.keys()],
+    }),
+}));
+
 vi.mock('@/sync/domains/state/accountSettingsPersistence', () => ({
     loadPendingAccountSettings: mocks.loadPendingAccountSettings,
     loadAccountSettings: mocks.loadAccountSettings,
@@ -242,6 +257,7 @@ const encryptionStub = {
 
 describe('syncSettings local-only server-selection settings', () => {
     beforeEach(() => {
+        invalidateAccountEncryptionModeCache();
         mocks.serverFetch.mockReset();
         mocks.loadPendingSettings.mockReset();
         mocks.loadPendingSettings.mockReturnValue({});
@@ -249,6 +265,7 @@ describe('syncSettings local-only server-selection settings', () => {
         mocks.loadPendingAccountSettings.mockReturnValue({});
         mocks.loadAccountSettings.mockReset();
         mocks.loadAccountSettings.mockReturnValue({ settings: createBaseMockSettings(), version: 1 });
+        mocks.persistenceValues.clear();
         mocks.callSequence.length = 0;
         mocks.tracking.capture.mockClear();
         mocks.tracking.identify.mockClear();

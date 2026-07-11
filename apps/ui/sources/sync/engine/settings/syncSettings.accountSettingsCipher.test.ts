@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
+import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import {
     decryptSecretStringV1,
     deriveAccountMachineKeyFromRecoverySecret,
@@ -24,13 +25,17 @@ const mocks = vi.hoisted(() => {
     });
 
     return {
+        createEncryptionFromAuthCredentials: vi.fn(),
         getRandomBytes: vi.fn((length: number) => new Uint8Array(length).fill(4)),
         serverFetch: vi.fn(),
+        runtimeFetchWithServerReachability: vi.fn(),
         applySettingsFn: vi.fn((base: Record<string, unknown>, delta: Record<string, unknown>) => ({
             ...base,
             ...delta,
         })),
         settingsParse,
+        persistenceValues: new Map<string, string>(),
+        persistenceSet: vi.fn(),
         storageState: {
             settings: {
                 analyticsOptOut: false,
@@ -41,6 +46,14 @@ const mocks = vi.hoisted(() => {
             applySettingsForScope: vi.fn(),
             replaceSettingsForScope: vi.fn(),
             applySettingsLocal: vi.fn(),
+        },
+        storageStoreState: {
+            setSessionOrganizationLoading: vi.fn(),
+            setSessionOrganizationError: vi.fn(),
+            applySessionOrganizationSnapshot: vi.fn(),
+            setSessionTagAssignmentsOptimistic: vi.fn(() => 'optimistic-tag-assignment'),
+            commitSessionOrganizationOptimistic: vi.fn(),
+            rollbackSessionOrganizationOptimistic: vi.fn(),
         },
     };
 });
@@ -55,6 +68,10 @@ vi.mock('@/utils/errors/errors', () => ({
             super(message);
         }
     },
+}));
+
+vi.mock('@/auth/encryption/createEncryptionFromAuthCredentials', () => ({
+    createEncryptionFromAuthCredentials: mocks.createEncryptionFromAuthCredentials,
 }));
 
 vi.mock('@/sync/domains/settings/settings', () => ({
@@ -88,12 +105,6 @@ vi.mock('@/sync/domains/state/storage', async () => {
 });
 
 vi.mock('@/sync/domains/state/persistence', () => ({
-    getPersistenceStorage: () => ({
-        getString: () => undefined,
-        set: vi.fn(),
-        delete: vi.fn(),
-        getAllKeys: () => [],
-    }),
     loadPendingSettings: () => ({}),
     loadSettings: () => ({
         settings: { ...mocks.storageState.settings },
@@ -140,6 +151,20 @@ vi.mock('@/sync/domains/state/persistence', () => ({
     clearPersistence: vi.fn(),
 }));
 
+vi.mock('@/sync/domains/state/persistenceStorage', () => ({
+    getPersistenceStorage: () => ({
+        getString: (key: string) => mocks.persistenceValues.get(key),
+        set: (key: string, value: string) => {
+            mocks.persistenceSet(key, value);
+            mocks.persistenceValues.set(key, value);
+        },
+        delete: (key: string) => {
+            mocks.persistenceValues.delete(key);
+        },
+        getAllKeys: () => [...mocks.persistenceValues.keys()],
+    }),
+}));
+
 vi.mock('@/sync/encryption/secretSettings', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/sync/encryption/secretSettings')>();
     return {
@@ -151,6 +176,16 @@ vi.mock('@/sync/encryption/secretSettings', async (importOriginal) => {
 
 vi.mock('@/sync/http/client', () => ({
     serverFetch: mocks.serverFetch,
+}));
+
+vi.mock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch', () => ({
+    runtimeFetchWithServerReachability: mocks.runtimeFetchWithServerReachability,
+}));
+
+vi.mock('@/sync/domains/state/storageStore', () => ({
+    getStorage: () => ({
+        getState: () => mocks.storageStoreState,
+    }),
 }));
 
 vi.mock('@/platform/cryptoRandom', () => ({
@@ -171,10 +206,18 @@ const TEST_MACHINE_KEY = new Uint8Array(32).fill(11);
 
 describe('syncSettings account settings ciphertext', () => {
     beforeEach(() => {
+        invalidateAccountEncryptionModeCache();
         mocks.serverFetch.mockReset();
+        mocks.runtimeFetchWithServerReachability.mockReset();
         mocks.applySettingsFn.mockClear();
         mocks.settingsParse.mockClear();
+        mocks.createEncryptionFromAuthCredentials.mockReset();
+        mocks.createEncryptionFromAuthCredentials.mockResolvedValue({
+            getContentPrivateKey: () => TEST_MACHINE_KEY,
+        });
         mocks.getRandomBytes.mockClear();
+        mocks.persistenceValues.clear();
+        mocks.persistenceSet.mockClear();
         mocks.storageState.settings = {
             analyticsOptOut: false,
         };
@@ -184,6 +227,13 @@ describe('syncSettings account settings ciphertext', () => {
         mocks.storageState.applySettingsForScope.mockReset();
         mocks.storageState.replaceSettingsForScope.mockReset();
         mocks.storageState.applySettingsLocal.mockReset();
+        mocks.storageStoreState.setSessionOrganizationLoading.mockReset();
+        mocks.storageStoreState.setSessionOrganizationError.mockReset();
+        mocks.storageStoreState.applySessionOrganizationSnapshot.mockReset();
+        mocks.storageStoreState.setSessionTagAssignmentsOptimistic.mockReset();
+        mocks.storageStoreState.setSessionTagAssignmentsOptimistic.mockReturnValue('optimistic-tag-assignment');
+        mocks.storageStoreState.commitSessionOrganizationOptimistic.mockReset();
+        mocks.storageStoreState.rollbackSessionOrganizationOptimistic.mockReset();
     });
 
     it('POSTs settings as a canonical account_scoped_v1 ciphertext (no encryptRaw)', async () => {
@@ -427,7 +477,7 @@ describe('syncSettings account settings ciphertext', () => {
         expect(body.expectedVersion).toBe(8);
     });
 
-    it('migrates legacy server ids nested inside fetched account settings', async () => {
+    it('imports legacy session organization settings and strips them from account settings storage', async () => {
         const encryptionStub = {
             getContentPrivateKey: () => TEST_MACHINE_KEY,
             decryptRaw: vi.fn(async () => {
@@ -458,9 +508,25 @@ describe('syncSettings account settings ciphertext', () => {
                     serverIds: ['localhost-52753', '192.168.1.115-52753', 'srv_identity'],
                     presentation: 'grouped',
                 }],
+                workspaceLabelsV1: {
+                    'server:srv_identity:workspaces': 'Legacy Workspace',
+                },
             },
             randomBytes: mocks.getRandomBytes,
         });
+        const emptySnapshot = {
+            snapshot: {
+                schemaVersion: 1,
+                version: 0,
+                pins: [],
+                folders: [],
+                folderAssignments: [],
+                tags: [],
+                tagAssignments: [],
+                orderEntries: [],
+                labels: [],
+            },
+        };
 
         mocks.serverFetch
             .mockResolvedValueOnce(
@@ -474,9 +540,30 @@ describe('syncSettings account settings ciphertext', () => {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
                 }),
+            );
+        mocks.runtimeFetchWithServerReachability
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify(emptySnapshot), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
             )
             .mockResolvedValueOnce(
-                new Response(JSON.stringify({ success: true, version: 13 }), {
+                new Response(JSON.stringify({
+                    imported: {
+                        pins: 2,
+                        folders: 0,
+                        tags: 2,
+                        orderEntries: 4,
+                        labels: 1,
+                    },
+                }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify(emptySnapshot), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
                 }),
@@ -495,6 +582,97 @@ describe('syncSettings account settings ciphertext', () => {
             ['/v2/account/settings', 'GET'],
             ['/v2/account/settings', 'POST'],
         ]);
+        expect(mocks.runtimeFetchWithServerReachability.mock.calls.map(([params]) => [
+            String(params.url).replace('http://127.0.0.1:3009', ''),
+            params.init?.method ?? 'GET',
+        ])).toEqual([
+            [
+                '/v2/session-organization?includeFolders=true&includeTags=true&includeLabels=true&includeAllFolderAssignments=true&includeAllTagAssignments=true',
+                'GET',
+            ],
+            ['/v2/session-organization/import', 'POST'],
+            [
+                '/v2/session-organization?includeFolders=true&includeTags=true&includeLabels=true&includeAllTagAssignments=true',
+                'GET',
+            ],
+        ]);
+        const importCall = mocks.runtimeFetchWithServerReachability.mock.calls.find(([params]) => {
+            return String(params.url).endsWith('/v2/session-organization/import');
+        });
+        expect(importCall).toBeTruthy();
+        const importBody = JSON.parse(String(importCall?.[0].init?.body ?? 'null'));
+        expect(importBody.pins).toEqual([
+            { sessionId: 'session-a', sortKey: '00000001' },
+            { sessionId: 'session-b', sortKey: '00000002' },
+        ]);
+        expect(importBody.tags).toEqual([
+            {
+                tagId: 'legacy-tag',
+                tagKey: 'legacy-tag',
+                sortKey: '00000001',
+                display: expect.objectContaining({ t: 'encrypted' }),
+            },
+            {
+                tagId: 'identity-tag',
+                tagKey: 'identity-tag',
+                sortKey: '00000002',
+                display: expect.objectContaining({ t: 'encrypted' }),
+            },
+        ]);
+        expect(importBody.tagAssignments).toEqual([
+            { sessionId: 'session-a', tagIds: ['legacy-tag'] },
+            { sessionId: 'session-b', tagIds: ['identity-tag'] },
+        ]);
+        expect(importBody.orderEntries).toEqual(expect.arrayContaining([
+            {
+                scopeKind: 'group',
+                scopeKey: 'server:srv_identity:active:project:p1',
+                itemKind: 'session',
+                itemKey: 'session-a',
+                sortKey: '00000001',
+            },
+            {
+                scopeKind: 'group',
+                scopeKey: 'server:srv_identity:active:project:p2',
+                itemKind: 'session',
+                itemKey: 'session-c',
+                sortKey: '00000001',
+            },
+            {
+                scopeKind: 'pinned',
+                scopeKey: 'pins',
+                itemKind: 'session',
+                itemKey: 'session-a',
+                sortKey: '00000001',
+            },
+            {
+                scopeKind: 'workspace',
+                scopeKey: 'srv_identity',
+                itemKind: 'workspace',
+                itemKey: 'legacy',
+                sortKey: '00000001',
+            },
+        ]));
+        expect(importBody.labels).toEqual([
+            {
+                labelKind: 'workspace',
+                scopeKey: 'server:srv_identity:workspaces',
+                display: expect.objectContaining({ t: 'encrypted' }),
+            },
+        ]);
+        expect(mocks.persistenceSet.mock.calls).toEqual([
+            [expect.stringMatching(/^session-organization:legacy-import:v1:/), '1'],
+        ]);
+        expect(mocks.storageStoreState.applySessionOrganizationSnapshot).toHaveBeenCalledWith(
+            'srv_identity',
+            emptySnapshot.snapshot,
+            expect.objectContaining({
+                includeFolders: true,
+                includeTags: true,
+                includeLabels: true,
+                includeAllTagAssignments: true,
+            }),
+        );
 
         const migrateBody = JSON.parse(String(mocks.serverFetch.mock.calls[2]?.[1]?.body)) as {
             content?: { t?: unknown; c?: unknown };
@@ -506,29 +684,451 @@ describe('syncSettings account settings ciphertext', () => {
             material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
             ciphertext: String(migrateBody.content?.c ?? ''),
         });
-        expect(opened?.value).toEqual(expect.objectContaining({
-            pinnedSessionKeysV1: ['srv_identity:session-a', 'srv_identity:session-b'],
-            sessionTagsV1: {
-                'srv_identity:session-a': ['legacy-tag'],
-                'srv_identity:session-b': ['identity-tag'],
-            },
-            sessionListGroupOrderV1: {
-                'server:srv_identity:active:project:p1': ['srv_identity:session-a'],
-                'server:srv_identity:active:project:p2': ['srv_identity:session-c'],
-                'pinned-v1': ['srv_identity:session-a'],
-            },
-            sessionWorkspaceOrderV1: {
-                'server:srv_identity:workspaces': ['workspace:legacy'],
-            },
-        }));
-        expect((opened?.value as Record<string, unknown> | undefined)?.serverSelectionGroups).toBeUndefined();
+        const postedSettings = opened?.value as Record<string, unknown> | undefined;
+        expect(postedSettings).toEqual(expect.objectContaining({ analyticsOptOut: false }));
+        expect(postedSettings?.pinnedSessionKeysV1).toBeUndefined();
+        expect(postedSettings?.sessionTagsV1).toBeUndefined();
+        expect(postedSettings?.sessionListGroupOrderV1).toBeUndefined();
+        expect(postedSettings?.sessionWorkspaceOrderV1).toBeUndefined();
+        expect(postedSettings?.sessionFoldersV1).toBeUndefined();
+        expect(postedSettings?.workspaceLabelsV1).toBeUndefined();
+        expect(postedSettings?.serverSelectionGroups).toBeUndefined();
         expect(mocks.storageState.applySettingsForScope).toHaveBeenLastCalledWith(
             { serverId: 'srv_identity', accountId: 'account-a' },
-            expect.objectContaining({
-                pinnedSessionKeysV1: ['srv_identity:session-a', 'srv_identity:session-b'],
-            }),
-            13,
+            expect.any(Object),
+            expect.any(Number),
         );
+        const appliedSettings = mocks.storageState.applySettingsForScope.mock.calls[
+            mocks.storageState.applySettingsForScope.mock.calls.length - 1
+        ]?.[1] as Record<string, unknown>;
+        expect(appliedSettings.pinnedSessionKeysV1).toBeUndefined();
+        expect(appliedSettings.sessionTagsV1).toBeUndefined();
+        expect(appliedSettings.sessionListGroupOrderV1).toBeUndefined();
+        expect(appliedSettings.sessionWorkspaceOrderV1).toBeUndefined();
+        expect(appliedSettings.sessionFoldersV1).toBeUndefined();
+        expect(appliedSettings.workspaceLabelsV1).toBeUndefined();
+    });
+
+    it('preserves other-server legacy organization settings while cleaning the imported scope', async () => {
+        const encryptionStub = {
+            getContentPrivateKey: () => TEST_MACHINE_KEY,
+            decryptRaw: vi.fn(async () => {
+                throw new Error('decryptRaw should not be used for canonical account settings ciphertext');
+            }),
+        } as unknown as Encryption;
+        const fetchedCiphertext = sealAccountScopedBlobCiphertext({
+            kind: 'account_settings',
+            material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
+            payload: {
+                analyticsOptOut: false,
+                pinnedSessionKeysV1: ['localhost-52753:session-a', 'other-server:session-b'],
+                sessionFoldersV1: {
+                    v: 1,
+                    folders: [
+                        {
+                            id: 'folder-current',
+                            workspace: {
+                                t: 'workspaceScope',
+                                serverId: 'localhost-52753',
+                                machineId: 'machine-a',
+                                rootPath: '/repo',
+                            },
+                            parentId: null,
+                            name: 'Current',
+                            createdAt: 1,
+                            updatedAt: 1,
+                        },
+                        {
+                            id: 'folder-other',
+                            workspace: {
+                                t: 'workspaceScope',
+                                serverId: 'other-server',
+                                machineId: 'machine-b',
+                                rootPath: '/other',
+                            },
+                            parentId: null,
+                            name: 'Other',
+                            createdAt: 1,
+                            updatedAt: 1,
+                        },
+                    ],
+                },
+                sessionTagsV1: {
+                    'localhost-52753:session-a': ['current-tag'],
+                    'other-server:session-b': ['other-tag'],
+                },
+                sessionListGroupOrderV1: {
+                    'pinned-v1': ['localhost-52753:session-a', 'other-server:session-b', 'folder:folder-current'],
+                    'server:localhost-52753:active:project:p1': ['localhost-52753:session-a'],
+                    'server:other-server:active:project:p2': ['other-server:session-b'],
+                },
+                sessionWorkspaceOrderV1: {
+                    'server:localhost-52753:workspaces': ['workspace:/repo'],
+                    'server:other-server:workspaces': ['workspace:/other'],
+                },
+                workspaceLabelsV1: {
+                    'server:localhost-52753:workspaces': 'Current Workspace',
+                    'server:other-server:workspaces': 'Other Workspace',
+                },
+            },
+            randomBytes: mocks.getRandomBytes,
+        });
+        const emptySnapshot = {
+            snapshot: {
+                schemaVersion: 1,
+                version: 0,
+                pins: [],
+                folders: [],
+                folderAssignments: [],
+                tags: [],
+                tagAssignments: [],
+                orderEntries: [],
+                labels: [],
+            },
+        };
+
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ content: { t: 'encrypted', c: fetchedCiphertext }, version: 41 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ success: true, version: 42 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
+        mocks.runtimeFetchWithServerReachability
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify(emptySnapshot), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({
+                    imported: {
+                        pins: 1,
+                        folders: 1,
+                        tags: 1,
+                        orderEntries: 4,
+                        labels: 1,
+                    },
+                }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify(emptySnapshot), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
+
+        await syncSettings({
+            credentials,
+            encryption: encryptionStub,
+            settingsScope: { serverId: 'localhost-52753', accountId: 'account-a' },
+            pendingSettings: {},
+            clearPendingSettings: vi.fn(),
+        });
+
+        const cleanupBody = JSON.parse(String(mocks.serverFetch.mock.calls[2]?.[1]?.body)) as {
+            content?: { t?: unknown; c?: unknown };
+        };
+        const openedCleanup = openAccountScopedBlobCiphertext({
+            kind: 'account_settings',
+            material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
+            ciphertext: String(cleanupBody.content?.c ?? ''),
+        });
+
+        expect(openedCleanup?.value).toEqual(expect.objectContaining({
+            analyticsOptOut: false,
+            pinnedSessionKeysV1: ['other-server:session-b'],
+            sessionFoldersV1: {
+                v: 1,
+                folders: [
+                    {
+                        id: 'folder-other',
+                        workspace: {
+                            t: 'workspaceScope',
+                            serverId: 'other-server',
+                            machineId: 'machine-b',
+                            rootPath: '/other',
+                        },
+                        parentId: null,
+                        name: 'Other',
+                        createdAt: 1,
+                        updatedAt: 1,
+                    },
+                ],
+            },
+            sessionTagsV1: {
+                'other-server:session-b': ['other-tag'],
+            },
+            sessionListGroupOrderV1: {
+                'pinned-v1': ['other-server:session-b'],
+                'server:other-server:active:project:p2': ['other-server:session-b'],
+            },
+            sessionWorkspaceOrderV1: {
+                'server:other-server:workspaces': ['workspace:/other'],
+            },
+            workspaceLabelsV1: {
+                'server:other-server:workspaces': 'Other Workspace',
+            },
+        }));
+    });
+
+    it('applies an already-imported session organization snapshot before marking legacy settings consumed', async () => {
+        const encryptionStub = {
+            getContentPrivateKey: () => TEST_MACHINE_KEY,
+            decryptRaw: vi.fn(async () => {
+                throw new Error('decryptRaw should not be used for canonical account settings ciphertext');
+            }),
+        } as unknown as Encryption;
+        const fetchedCiphertext = sealAccountScopedBlobCiphertext({
+            kind: 'account_settings',
+            material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
+            payload: {
+                analyticsOptOut: false,
+                pinnedSessionKeysV1: ['srv_identity:session-a'],
+            },
+            randomBytes: mocks.getRandomBytes,
+        });
+        const existingSnapshot = {
+            schemaVersion: 1,
+            version: 4,
+            pins: [{
+                sessionId: 'session-a',
+                sortKey: '00000001',
+                pinnedAt: 123,
+            }],
+            folders: [],
+            folderAssignments: [],
+            tags: [],
+            tagAssignments: [],
+            orderEntries: [],
+            labels: [],
+        };
+
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ content: { t: 'encrypted', c: fetchedCiphertext }, version: 51 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ success: true, version: 52 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
+        mocks.runtimeFetchWithServerReachability.mockResolvedValueOnce(
+            new Response(JSON.stringify({ snapshot: existingSnapshot }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            }),
+        );
+
+        await syncSettings({
+            credentials,
+            encryption: encryptionStub,
+            settingsScope: { serverId: 'srv_identity', accountId: 'account-a' },
+            pendingSettings: {},
+            clearPendingSettings: vi.fn(),
+        });
+
+        expect(mocks.runtimeFetchWithServerReachability.mock.calls.map(([params]) => [
+            String(params.url).replace('http://127.0.0.1:3009', ''),
+            params.init?.method ?? 'GET',
+        ])).toEqual([
+            [
+                '/v2/session-organization?includeFolders=true&includeTags=true&includeLabels=true&includeAllFolderAssignments=true&includeAllTagAssignments=true',
+                'GET',
+            ],
+        ]);
+        expect(mocks.storageStoreState.applySessionOrganizationSnapshot).toHaveBeenCalledWith(
+            'srv_identity',
+            existingSnapshot,
+            expect.objectContaining({
+                includeFolders: true,
+                includeTags: true,
+                includeLabels: true,
+                includeAllTagAssignments: true,
+            }),
+        );
+        expect(mocks.persistenceSet.mock.calls).toEqual([
+            [expect.stringMatching(/^session-organization:legacy-import:v1:/), '1'],
+        ]);
+    });
+
+    it('imports legacy-only pending organization settings before clearing pending storage', async () => {
+        const encryptionStub = {
+            getContentPrivateKey: () => TEST_MACHINE_KEY,
+            decryptRaw: vi.fn(async () => {
+                throw new Error('decryptRaw should not be used for canonical account settings ciphertext');
+            }),
+        } as unknown as Encryption;
+        const serverCiphertext = sealAccountScopedBlobCiphertext({
+            kind: 'account_settings',
+            material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
+            payload: { analyticsOptOut: false },
+            randomBytes: mocks.getRandomBytes,
+        });
+        const emptySnapshot = {
+            snapshot: {
+                schemaVersion: 1,
+                version: 0,
+                pins: [],
+                folders: [],
+                folderAssignments: [],
+                tags: [],
+                tagAssignments: [],
+                orderEntries: [],
+                labels: [],
+            },
+        };
+        const clearPendingSettings = vi.fn();
+
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ content: { t: 'encrypted', c: serverCiphertext }, version: 21 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
+        mocks.runtimeFetchWithServerReachability
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify(emptySnapshot), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({
+                    imported: {
+                        pins: 1,
+                        folders: 0,
+                        tags: 0,
+                        orderEntries: 0,
+                        labels: 0,
+                    },
+                }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify(emptySnapshot), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
+
+        await syncSettings({
+            credentials,
+            encryption: encryptionStub,
+            settingsScope: { serverId: 'srv_identity', accountId: 'account-a' },
+            pendingSettings: {
+                pinnedSessionKeysV1: ['srv_identity:pending-session'],
+            } as any,
+            clearPendingSettings,
+        });
+
+        expect(mocks.serverFetch.mock.calls.map((call) => [call[0], call[1]?.method ?? 'GET'])).toEqual([
+            ['/v1/account/encryption', 'GET'],
+            ['/v2/account/settings', 'GET'],
+        ]);
+        const importCall = mocks.runtimeFetchWithServerReachability.mock.calls.find(([params]) => {
+            return String(params.url).endsWith('/v2/session-organization/import');
+        });
+        expect(importCall).toBeTruthy();
+        const importBody = JSON.parse(String(importCall?.[0].init?.body ?? 'null'));
+        expect(importBody.pins).toEqual([
+            { sessionId: 'pending-session', sortKey: '00000001' },
+        ]);
+        expect(clearPendingSettings).toHaveBeenCalledWith({});
+    });
+
+    it('keeps pending legacy organization settings when mixed pending import fails', async () => {
+        const encryptionStub = {
+            getContentPrivateKey: () => TEST_MACHINE_KEY,
+            decryptRaw: vi.fn(async () => {
+                throw new Error('decryptRaw should not be used for canonical account settings ciphertext');
+            }),
+        } as unknown as Encryption;
+        const serverCiphertext = sealAccountScopedBlobCiphertext({
+            kind: 'account_settings',
+            material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
+            payload: { analyticsOptOut: false },
+            randomBytes: mocks.getRandomBytes,
+        });
+        const clearPendingSettings = vi.fn();
+
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ content: { t: 'encrypted', c: serverCiphertext }, version: 31 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ success: true, version: 32 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
+        mocks.runtimeFetchWithServerReachability.mockResolvedValueOnce(
+            new Response(JSON.stringify({ error: 'temporary' }), {
+                status: 503,
+                headers: { 'Content-Type': 'application/json' },
+            }),
+        );
+
+        await syncSettings({
+            credentials,
+            encryption: encryptionStub,
+            settingsScope: { serverId: 'srv_identity', accountId: 'account-a' },
+            pendingSettings: {
+                claudeLocalPermissionBridgeEnabled: true,
+                pinnedSessionKeysV1: ['srv_identity:pending-session'],
+            } as any,
+            clearPendingSettings,
+        });
+
+        expect(mocks.runtimeFetchWithServerReachability).toHaveBeenCalledTimes(1);
+        expect(clearPendingSettings).toHaveBeenCalledWith({
+            pinnedSessionKeysV1: ['srv_identity:pending-session'],
+        });
+        expect(mocks.persistenceSet).not.toHaveBeenCalled();
     });
 
     it('does not rewrite payload-discovered aliases when the active scope is still host-derived', async () => {
@@ -562,6 +1162,12 @@ describe('syncSettings account settings ciphertext', () => {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
                 }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ success: true, version: 13 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
             );
 
         await syncSettings({
@@ -576,15 +1182,21 @@ describe('syncSettings account settings ciphertext', () => {
             ['/v1/account/encryption', 'GET'],
             ['/v2/account/settings', 'GET'],
         ]);
+        expect(mocks.runtimeFetchWithServerReachability).not.toHaveBeenCalled();
+        expect(mocks.persistenceSet.mock.calls).toEqual([
+            [expect.stringMatching(/^session-organization:legacy-import:v1:/), '1'],
+        ]);
         expect(mocks.storageState.applySettingsForScope).toHaveBeenLastCalledWith(
             { serverId: 'localhost-52753', accountId: 'account-a' },
-            expect.objectContaining({
-                sessionListGroupOrderV1: {
-                    'server:192.168.1.115-52753:active:project:p2': ['192.168.1.115-52753:session-c'],
-                },
-            }),
+            expect.any(Object),
             12,
         );
+        const appliedHostSettings = mocks.storageState.applySettingsForScope.mock.calls[
+            mocks.storageState.applySettingsForScope.mock.calls.length - 1
+        ]?.[1] as Record<string, unknown>;
+        expect(appliedHostSettings.sessionListGroupOrderV1).toEqual({
+            'server:192.168.1.115-52753:active:project:p2': ['192.168.1.115-52753:session-c'],
+        });
     });
 
     it('migrates legacy-sealed saved secrets to canonical machine-key sealing after fetch', async () => {
