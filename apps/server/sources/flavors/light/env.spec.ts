@@ -64,7 +64,7 @@ describe("light env helpers", () => {
 
   it("resolveLightSqliteDatabaseUrl includes canonical sqlite URL params", () => {
     expect(resolveLightSqliteDatabaseUrl("/tmp/happier-data", "linux")).toBe(
-      "file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=1",
+      "file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=4",
     );
   });
 
@@ -88,7 +88,7 @@ describe("light env helpers", () => {
     ) => string;
 
     expect(render("/tmp/happier-data", "linux", { HAPPIER_DB_CONNECTION_LIMIT: "1" })).toBe(
-      "file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=1",
+      "file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=4",
     );
   });
 
@@ -132,7 +132,7 @@ describe("light env helpers", () => {
 
       applyPackagedLightRuntimeSqliteDefaults(env, { executablePath });
 
-      expect(env.DATABASE_URL).toBe("file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=1");
+      expect(env.DATABASE_URL).toBe("file:///tmp/happier-data/happier-server-light.sqlite?socket_timeout=30&connection_limit=4");
       expect(env.HAPPIER_SQLITE_AUTO_MIGRATE).toBe("1");
       expect(env.HAPPIER_SQLITE_MIGRATIONS_DIR).toBe(migrationsDir);
     } finally {

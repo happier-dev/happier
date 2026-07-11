@@ -5,14 +5,14 @@ import { join } from 'node:path';
 
 import { applySqliteMigrationsIfNeeded, listSqliteMigrations, resolveSqliteDatabaseFilePath, resolveSqliteMigrationsDir } from './sqliteMigrations';
 
-type SqliteState = { tables: Set<string>; applied: Map<string, string>; closeCount: number };
+type SqliteState = { tables: Set<string>; applied: Map<string, string>; closeCount: number; execStatements: string[] };
 
 const sqliteStore = new Map<string, SqliteState>();
 
 function getSqliteState(databasePath: unknown): SqliteState {
   const key = String(databasePath ?? '');
   if (!sqliteStore.has(key)) {
-    sqliteStore.set(key, { tables: new Set(), applied: new Map(), closeCount: 0 });
+    sqliteStore.set(key, { tables: new Set(), applied: new Map(), closeCount: 0, execStatements: [] });
   }
   return sqliteStore.get(key)!;
 }
@@ -42,6 +42,7 @@ class FakeDatabase {
   exec(sql: unknown): void {
     const text = String(sql ?? '').trim();
     if (!text) return;
+    this.state.execStatements.push(text);
     const upper = text.toUpperCase();
     if (upper === 'BEGIN' || upper === 'COMMIT' || upper === 'ROLLBACK') return;
     const isCreateTableIfNotExists = upper.includes('CREATE TABLE IF NOT EXISTS');
@@ -156,6 +157,7 @@ describe('light sqlite migrations (unit)', () => {
     expect(state.tables.has('Widget')).toBe(true);
     expect(state.applied.has('20260101000000_first')).toBe(true);
     expect(state.applied.has('20260201000000_second')).toBe(true);
+    expect(state.execStatements[0]).toBe('PRAGMA auto_vacuum=INCREMENTAL;');
   });
 
   it('applySqliteMigrationsIfNeeded closes the Bun sqlite connection before Prisma starts', async () => {

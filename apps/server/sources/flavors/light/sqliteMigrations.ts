@@ -126,6 +126,9 @@ async function createBunSqliteExecutor(params: { databasePath: string }): Promis
     throw new Error('bun:sqlite Database is unavailable (expected Bun runtime)');
   }
   const db = new Database(params.databasePath);
+  // Must be set before the first table is created. Existing databases retain their configured
+  // auto-vacuum mode; converting those requires an explicit full VACUUM maintenance operation.
+  db.exec('PRAGMA auto_vacuum=INCREMENTAL;');
   db.exec(
     [
       'CREATE TABLE IF NOT EXISTS _prisma_migrations (',
