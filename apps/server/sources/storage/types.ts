@@ -48,6 +48,7 @@ declare global {
             agentState: string | null;
             agentStateVersion: number;
             dataEncryptionKey: string | null;
+            encryptionMode: "e2ee" | "plain";
             active: boolean;
             activeAt: number;
             createdAt: number;

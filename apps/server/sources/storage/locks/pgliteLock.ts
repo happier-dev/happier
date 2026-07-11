@@ -1,5 +1,5 @@
 import { open, readFile, unlink } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
@@ -116,8 +116,9 @@ async function removeLockFileBestEffort(lockPath: string): Promise<void> {
 
 export function getPgliteDirLockPath(dbDir: string): string {
     // Keep the lock adjacent (not inside) the pglite DB dir, but make it unique per dbDir.
-    const short = createHash("sha256").update(dbDir).digest("hex").slice(0, 12);
-    return join(dirname(dbDir), `${PGLITE_LOCK_FILENAME}.${short}`);
+    const resolvedDbDir = resolve(dbDir);
+    const short = createHash("sha256").update(resolvedDbDir).digest("hex").slice(0, 12);
+    return join(dirname(resolvedDbDir), `${PGLITE_LOCK_FILENAME}.${short}`);
 }
 
 export async function acquirePgliteDirLock(
@@ -127,11 +128,12 @@ export async function acquirePgliteDirLock(
     // IMPORTANT:
     // Do not write arbitrary files inside the pglite DB directory. Some pglite/wasm builds are
     // sensitive to unexpected extra files and can hard-abort. Keep the lock adjacent.
-    const lockPath = getPgliteDirLockPath(dbDir);
+    const resolvedDbDir = resolve(dbDir);
+    const lockPath = getPgliteDirLockPath(resolvedDbDir);
 
     // If a legacy adjacent lock exists (older versions used a shared filename), treat it as authoritative
     // to avoid running concurrently with older servers.
-    const legacyAdjacentLockPath = join(dirname(dbDir), PGLITE_LOCK_FILENAME);
+    const legacyAdjacentLockPath = join(dirname(resolvedDbDir), PGLITE_LOCK_FILENAME);
     if (legacyAdjacentLockPath !== lockPath) {
         const firstRead = await readLockInfoDisposition(legacyAdjacentLockPath);
         const legacy =
@@ -139,7 +141,7 @@ export async function acquirePgliteDirLock(
 
         if (legacy.kind === "valid") {
             const legacyInfo = legacy.info;
-            const sameDbDir = legacyInfo.dbDir ? legacyInfo.dbDir === dbDir : true;
+            const sameDbDir = legacyInfo.dbDir ? resolve(legacyInfo.dbDir) === resolvedDbDir : true;
             const legacyAlive = legacyInfo.pid ? isPidAlive(legacyInfo.pid) : false;
             if (sameDbDir) {
                 if (legacyAlive) {
@@ -162,7 +164,7 @@ export async function acquirePgliteDirLock(
     }
     // Cleanup legacy location from earlier versions (best-effort).
     // Leaving this file inside the DB dir has caused pglite hard-aborts in some environments.
-    const legacyLockPath = join(dbDir, PGLITE_LOCK_FILENAME);
+    const legacyLockPath = join(resolvedDbDir, PGLITE_LOCK_FILENAME);
     if (legacyLockPath !== lockPath) {
         await removeLockFileBestEffort(legacyLockPath).catch(() => {});
     }
@@ -174,7 +176,7 @@ export async function acquirePgliteDirLock(
                 pid: process.pid,
                 createdAt: new Date().toISOString(),
                 purpose,
-                dbDir,
+                dbDir: resolvedDbDir,
             };
             await handle.writeFile(JSON.stringify(payload, null, 2) + "\n", "utf8");
         } finally {

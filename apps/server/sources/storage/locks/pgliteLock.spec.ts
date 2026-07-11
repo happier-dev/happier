@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { acquirePgliteDirLock, getPgliteDirLockPath, PGLITE_LOCK_FILENAME } from "./pgliteLock";
 
@@ -38,6 +38,18 @@ describe("storage/pgliteLock", () => {
 
         await release();
         await expect(readFile(lockPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    });
+
+    it("uses the same lock path for relative and absolute dbDir values", async () => {
+        const parentDir = await makeTempDir();
+        createdPaths.push(parentDir);
+        const previousCwd = process.cwd();
+        process.chdir(parentDir);
+        try {
+            expect(getPgliteDirLockPath("db")).toBe(getPgliteDirLockPath(resolve("db")));
+        } finally {
+            process.chdir(previousCwd);
+        }
     });
 
     it("does not remove a lock file owned by a different pid when releasing", async () => {

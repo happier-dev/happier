@@ -49,6 +49,29 @@ describe("storage/prisma", () => {
         expect(exportedValues.sort()).toEqual([...new Set(fullValues)].sort());
     });
 
+    it("ships runtime-activity Session projection migrations for every supported provider", () => {
+        const root = join(process.cwd());
+        const migrationName = "20260701140000_add_session_runtime_activity_projection";
+        const migrationFiles = [
+            join(root, "prisma", "migrations", migrationName, "migration.sql"),
+            join(root, "prisma", "sqlite", "migrations", migrationName, "migration.sql"),
+            join(root, "prisma", "mysql", "migrations", migrationName, "migration.sql"),
+        ];
+        const fields = [
+            "runtimeActivityActiveCount",
+            "runtimeActivityObservedAt",
+            "runtimeActivityExpiresAt",
+            "runtimeActivitySourceClass",
+        ];
+
+        for (const migrationFile of migrationFiles) {
+            const migrationSql = readFileSync(migrationFile, "utf-8");
+            for (const field of fields) {
+                expect(migrationSql).toContain(field);
+            }
+        }
+    });
+
     it("detects Prisma-like error codes without relying on Prisma error classes", () => {
         expect(isPrismaErrorCode({ code: "P2034" }, "P2034")).toBe(true);
         expect(isPrismaErrorCode({ code: "P2002" }, "P2034")).toBe(false);

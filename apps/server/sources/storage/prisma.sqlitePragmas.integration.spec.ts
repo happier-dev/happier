@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { renderPrismaCompatibleSqliteDatabaseUrl } from "@happier-dev/cli-common/firstPartyRuntime";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { db } from "@/storage/db";
+import { db, resolveSqliteRuntimePragmasFromEnv } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 describe("storage/prisma sqlite pragmas", () => {
@@ -35,6 +35,9 @@ describe("storage/prisma sqlite pragmas", () => {
         const [{ timeout }] = await db.$queryRawUnsafe<Array<{ timeout: number | bigint }>>(
             "SELECT timeout FROM pragma_busy_timeout;",
         );
+        const [{ journal_size_limit: journalSizeLimit }] = await db.$queryRawUnsafe<
+            Array<{ journal_size_limit: number | bigint }>
+        >("SELECT journal_size_limit FROM pragma_journal_size_limit;");
         const timeoutRows = await Promise.all(
             Array.from({ length: 16 }, () =>
                 db.$queryRawUnsafe<Array<{ timeout: number | bigint }>>("SELECT timeout FROM pragma_busy_timeout;"),
@@ -44,7 +47,20 @@ describe("storage/prisma sqlite pragmas", () => {
         expect(journalMode.toLowerCase()).toBe("wal");
         expect(Number(synchronous)).toBe(1); // NORMAL
         expect(Number(timeout)).toBe(30000);
+        expect(Number(journalSizeLimit)).toBe(64 * 1024 * 1024);
         expect(timeoutRows.flat().map((row) => Number(row.timeout))).toEqual(Array.from({ length: 16 }, () => 30000));
+    });
+
+    it("accepts negative journal_size_limit values as SQLite no-limit opt-out", () => {
+        expect(resolveSqliteRuntimePragmasFromEnv({
+            HAPPIER_SQLITE_JOURNAL_SIZE_LIMIT_BYTES: "-1",
+        }).journalSizeLimitBytes).toBe(-1);
+    });
+
+    it("treats zero journal_size_limit as an explicit minimum-size limit", () => {
+        expect(resolveSqliteRuntimePragmasFromEnv({
+            HAPPIER_SQLITE_JOURNAL_SIZE_LIMIT_BYTES: "0",
+        }).journalSizeLimitBytes).toBe(0);
     });
 
     it("observes consistent synchronous mode when sqlite connection_limit is explicit", async () => {
