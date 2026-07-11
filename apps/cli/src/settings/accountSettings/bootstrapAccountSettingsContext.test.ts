@@ -260,7 +260,7 @@ describe('bootstrapAccountSettingsContext', () => {
 
     expect(applySideEffects).toHaveBeenCalledWith(
       expect.objectContaining({
-        settings: expect.objectContaining({ schemaVersion: 6, codexBackendMode: 'mcp' }),
+        settings: expect.objectContaining({ schemaVersion: 6, codexBackendMode: 'appServer' }),
       }),
     );
   });

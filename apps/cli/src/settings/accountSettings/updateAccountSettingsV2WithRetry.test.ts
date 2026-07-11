@@ -81,6 +81,33 @@ describe('updateAccountSettingsV2WithRetry', () => {
     expect((calls[0]?.content as any)?.v?.mcpServersSettingsV1).toEqual({ v: 1, strictMode: false, servers: [], bindings: [] });
   });
 
+  it('awaits an asynchronous per-attempt mutation before sealing and writing', async () => {
+    let releaseMutation!: () => void;
+    const mutationBarrier = new Promise<void>((resolve) => { releaseMutation = resolve; });
+    let updateCalls = 0;
+    const operation = updateAccountSettingsV2WithRetry({
+      credentials: createLegacyCredentialsStub(),
+      mutate: async (settings: Readonly<Record<string, unknown>>) => {
+        await mutationBarrier;
+        return { ...settings, asynchronouslyDerived: 'ready' };
+      },
+      deps: {
+        fetchSettings: async () => ({ content: { t: 'plain', v: { schemaVersion: 7 } }, version: 1 }),
+        updateSettings: async (request): Promise<AccountSettingsV2UpdateResponse> => {
+          updateCalls += 1;
+          expect(request.content).toMatchObject({ t: 'plain', v: { asynchronouslyDerived: 'ready' } });
+          return { success: true, version: 2 };
+        },
+      },
+    });
+
+    await Promise.resolve();
+    expect(updateCalls).toBe(0);
+    releaseMutation();
+    await expect(operation).resolves.toMatchObject({ version: 2 });
+    expect(updateCalls).toBe(1);
+  });
+
   it('decrypts encrypted v2 content, applies mutation, and posts encrypted content back', async () => {
     const credentials = createLegacyCredentialsStub();
     const initial = { ...accountSettingsParse({ schemaVersion: 2 }), someKey: 'before' };

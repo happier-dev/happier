@@ -119,19 +119,25 @@ async function parseSettingsFromContent(params: Readonly<{
   throw new Error('Failed to decrypt account settings ciphertext');
 }
 
-export async function updateAccountSettingsV2WithRetry(_params: Readonly<{
+export type AccountSettingsUpdateV2Deps = Readonly<{
+  fetchSettings?: () => Promise<{ content: AccountSettingsStoredContentEnvelope | null; version: number }>;
+  updateSettings?: (req: Readonly<{ expectedVersion: number; content: AccountSettingsStoredContentEnvelope | null }>) => Promise<AccountSettingsV2UpdateResponse>;
+  randomBytes?: (n: number) => Uint8Array;
+  nowMs?: () => number;
+  resolveCachePath?: (credentials: Credentials) => string;
+  writeCache?: (path: string, cache: AccountSettingsCache) => Promise<void>;
+}>;
+
+export type UpdateAccountSettingsV2WithRetryParams = Readonly<{
   credentials: Credentials;
-  mutate: (settings: Readonly<Record<string, unknown>>) => Record<string, unknown>;
-  deps?: Readonly<{
-    fetchSettings?: () => Promise<{ content: AccountSettingsStoredContentEnvelope | null; version: number }>;
-    updateSettings?: (req: Readonly<{ expectedVersion: number; content: AccountSettingsStoredContentEnvelope | null }>) => Promise<AccountSettingsV2UpdateResponse>;
-    randomBytes?: (n: number) => Uint8Array;
-    nowMs?: () => number;
-    resolveCachePath?: (credentials: Credentials) => string;
-    writeCache?: (path: string, cache: AccountSettingsCache) => Promise<void>;
-  }>;
+  mutate: (settings: Readonly<Record<string, unknown>>) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  deps?: AccountSettingsUpdateV2Deps;
   maxAttempts?: number;
-}>): Promise<{ version: number; settings?: AccountSettings }> {
+}>;
+
+export async function updateAccountSettingsV2WithRetry(
+  _params: UpdateAccountSettingsV2WithRetryParams,
+): Promise<{ version: number; settings?: AccountSettings }> {
   const params = _params;
   const maxAttempts = Number.isFinite(params.maxAttempts) && (params.maxAttempts as number) > 0 ? Math.floor(params.maxAttempts as number) : 3;
   const randomBytes = params.deps?.randomBytes ?? resolveDefaultRandomBytes();
@@ -205,7 +211,7 @@ export async function updateAccountSettingsV2WithRetry(_params: Readonly<{
     const parsed = await parseSettingsFromContent({ content, credentials: params.credentials });
     const nextRaw = mergeMutationResultWithRawBase({
       rawBase: parsed.raw,
-      mutatedRaw: parsePersistedAccountSettingsObject(params.mutate(parsed.raw)),
+      mutatedRaw: parsePersistedAccountSettingsObject(await params.mutate(parsed.raw)),
     });
     const nextSettings = accountSettingsParse(nextRaw);
 

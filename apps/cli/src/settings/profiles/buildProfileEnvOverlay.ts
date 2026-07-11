@@ -1,4 +1,12 @@
-import { buildBackendTargetKey, decryptSecretValueWithKeysV1, getProfileEnvironmentVariables, type AIBackendProfile } from '@happier-dev/protocol';
+import {
+  buildBackendTargetKey,
+  decryptSecretValueWithKeysV1,
+  isLaunchProfileV2,
+  isCanonicalProviderSavedSecretIdV1,
+  validateLaunchProfileV2ReservedEnvironment,
+  type AIBackendProfile,
+  type LaunchProfileV2,
+} from '@happier-dev/protocol';
 
 import { isPermissionMode, type PermissionMode } from '@/api/types';
 import { expandEnvironmentVariables } from '@/utils/expandEnvVars';
@@ -17,9 +25,7 @@ export type BuildProfileEnvOverlayResult = Readonly<{
 
 function readNonEmptyEnv(processEnv: NodeJS.ProcessEnv, name: string): string | null {
   const raw = processEnv[name];
-  if (typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  return isCanonicalProviderSavedSecretIdV1(raw) ? raw : null;
 }
 
 function extractTemplateVarNames(value: string): string[] {
@@ -44,7 +50,7 @@ function readSecretBindingId(params: Readonly<{
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function resolvePermissionModeSeed(profile: AIBackendProfile, agentId: string): PermissionMode | null {
+function resolvePermissionModeSeed(profile: AIBackendProfile | LaunchProfileV2, agentId: string): PermissionMode | null {
   const targetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId });
   const raw = profile.defaultPermissionModeByTargetKey?.[targetKey];
   if (typeof raw !== 'string') return null;
@@ -55,18 +61,24 @@ function resolvePermissionModeSeed(profile: AIBackendProfile, agentId: string): 
 
 export async function buildProfileEnvOverlay(params: Readonly<{
   agentId: string;
-  profile: AIBackendProfile;
+  profile: AIBackendProfile | LaunchProfileV2;
   accountSettings: Readonly<Record<string, unknown>>;
   credentials: Credentials;
   processEnv: NodeJS.ProcessEnv;
   promptSecretFn: SecretPromptFn | null;
   startedBy: 'terminal' | 'daemon' | undefined;
+  reservedEnvironmentVariableNames: ReadonlySet<string>;
 }>): Promise<BuildProfileEnvOverlayResult> {
   const requiredConfigMissing: string[] = [];
 
-  const overlayRaw: Record<string, string> = {
-    ...getProfileEnvironmentVariables(params.profile),
-  };
+  const isSlim = isLaunchProfileV2(params.profile);
+  if (isSlim) {
+    validateLaunchProfileV2ReservedEnvironment(params.profile, params.reservedEnvironmentVariableNames);
+  }
+  const overlayRaw: Record<string, string> = Object.fromEntries(
+    (isSlim ? params.profile.extraEnvironmentVariables : params.profile.environmentVariables)
+      .map((entry) => [entry.name, entry.value]),
+  );
 
   const requiredEnvNames = new Set<string>(
     (params.profile.envVarRequirements ?? []).filter((r) => r.required === true).map((r) => r.name),
