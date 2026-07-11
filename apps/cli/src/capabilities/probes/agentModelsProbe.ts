@@ -707,42 +707,54 @@ export async function probeAgentModelsBestEffort(params: {
         handleToolCall: async () => ({ decision: 'abort' }),
       };
 
-      let backend: AcpProbeBackend | null = null;
       try {
-        const probeBackendOptions = entry.resolveModelsProbeBackendOptions?.({
-          backendTarget: params.backendTarget,
-          accountSettings: params.accountSettings,
-        }) ?? {};
-        const created = await createCatalogAcpBackend<any>(params.agentId, {
+        return await withPreflightSessionControlsProbeEnvironment({
+          agentId: params.agentId,
+          probeKind: 'models',
           cwd,
-          env: {},
-          mcpServers: {},
-          permissionHandler,
-          permissionMode: 'default',
-          ...probeBackendOptions,
+          connectedServices: params.connectedServices,
+          credentials: params.credentials ?? null,
+          accountSettings: params.accountSettings ?? null,
+          processEnv: params.env ?? process.env,
+        }, async ({ env }) => {
+          let backend: AcpProbeBackend | null = null;
+          try {
+            const probeBackendOptions = entry.resolveModelsProbeBackendOptions?.({
+              backendTarget: params.backendTarget,
+              accountSettings: params.accountSettings,
+            }) ?? {};
+            const created = await createCatalogAcpBackend<any>(params.agentId, {
+              cwd,
+              env,
+              mcpServers: {},
+              permissionHandler,
+              permissionMode: 'default',
+              ...probeBackendOptions,
+            });
+            backend = created.backend;
+            if (!backend) {
+              agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+              return fallback;
+            }
+
+            const models = await probeModelsFromAcpBackend({ backend, timeoutMs }).catch(() => null);
+            if (!models) {
+              agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+              return fallback;
+            }
+
+            const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
+            agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
+            return res;
+          } finally {
+            if (backend) {
+              await backend.dispose().catch(() => {});
+            }
+          }
         });
-        backend = created.backend;
-        if (!backend) {
-          agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
-          return fallback;
-        }
-
-        const models = await probeModelsFromAcpBackend({ backend, timeoutMs }).catch(() => null);
-        if (!models) {
-          agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
-          return fallback;
-        }
-
-        const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };
-        agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
-        return res;
       } catch {
         agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
         return fallback;
-      } finally {
-        if (backend) {
-          await backend.dispose().catch(() => {});
-        }
       }
     } catch {
       agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });

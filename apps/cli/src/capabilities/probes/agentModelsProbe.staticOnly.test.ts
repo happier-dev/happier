@@ -24,6 +24,13 @@ vi.mock('./configuredAcpProbeBackend', () => ({
   createConfiguredAcpProbeBackend: createConfiguredAcpProbeBackendMock,
 }));
 
+vi.mock('./preflightSessionControlsProbeEnvironment', () => ({
+  withPreflightSessionControlsProbeEnvironment: async (
+    _params: unknown,
+    run: (environment: { env: NodeJS.ProcessEnv }) => Promise<unknown>,
+  ) => await run({ env: { MATERIALIZED_PROBE_ENV: '1' } }),
+}));
+
 vi.mock('@/agent/catalog/registry', async () => {
   const { normalizeKimiAcpPythonSelector } = await import('@happier-dev/plugins-kimi/agent/acp/pythonSelectorEnv');
   const readKimiSelector = (accountSettings?: Record<string, unknown> | null) =>
@@ -171,6 +178,41 @@ describe('probeAgentModelsBestEffort (static-only providers)', () => {
       kimiAcpPythonSelector: 'poll',
     }));
     expect(createCatalogAcpBackendMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('passes the materialized preflight environment to fallback catalog ACP model probing', async () => {
+    validateCatalogAcpProbeSpawnMock.mockResolvedValueOnce({ ok: true });
+    createCatalogAcpBackendMock.mockResolvedValueOnce({
+      backend: {
+        startSession: async () => ({ sessionId: 'session-kimi' }),
+        getSessionModelState: () => ({
+          availableModels: [{ id: 'env-model', name: 'Env model' }],
+        }),
+        getSessionConfigOptionsState: () => null,
+        dispose: vi.fn(async () => {}),
+      },
+    });
+
+    await probeAgentModelsBestEffort({
+      agentId: 'kimi',
+      cwd: process.cwd(),
+      timeoutMs: 100,
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+        },
+      },
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+      },
+      accountSettings: {},
+    });
+
+    expect(createCatalogAcpBackendMock).toHaveBeenCalledWith('kimi', expect.objectContaining({
+      env: expect.objectContaining({ MATERIALIZED_PROBE_ENV: '1' }),
+    }));
   });
 
   it('normalizes mixed-case Kimi poll selector settings before probing and cache partitioning', async () => {

@@ -2,7 +2,7 @@ import type { AccountSettings } from '@happier-dev/protocol';
 
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 import { isCatalogAgentId } from '@/agent/catalog/resolution';
-import { ApiClient, type ApiClient as ApiClientType } from '@/api/api';
+import type { ApiClient as ApiClientType } from '@/api/api';
 import { configuration } from '@/configuration';
 import { resolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
 import { resolveConnectedServicesMaterializationBaseDir } from '@/daemon/connectedServices/materialize/resolveConnectedServicesMaterializationBaseDir';
@@ -49,6 +49,14 @@ function runCleanup(cleanup: Cleanup): void {
   }
 }
 
+async function createConnectedServiceSpawnApi(credentials: Credentials): Promise<ApiClientType> {
+  // ApiClient is the application composition root and statically owns session/RPC registration.
+  // Load it only for the optional connected-service path so reusable capability probes remain a
+  // lower-level leaf and registration cannot form an API -> RPC -> probe -> API import cycle.
+  const { ApiClient } = await import('@/api/api');
+  return await ApiClient.create(credentials);
+}
+
 export async function resolvePreflightSessionControlsProbeEnvironment(
   params: ResolvePreflightSessionControlsProbeEnvironmentParams,
 ): Promise<PreflightSessionControlsProbeEnvironment> {
@@ -57,7 +65,7 @@ export async function resolvePreflightSessionControlsProbeEnvironment(
   if (!params.credentials) return base;
   if (!isCatalogAgentId(params.agentId)) return base;
 
-  const api = params.api ?? await ApiClient.create(params.credentials);
+  const api = params.api ?? await createConnectedServiceSpawnApi(params.credentials);
   const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
   const materialized = await resolveConnectedServiceAuthForSpawn({
     agentId: params.agentId,

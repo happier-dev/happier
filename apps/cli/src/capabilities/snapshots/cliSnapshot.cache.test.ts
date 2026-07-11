@@ -512,8 +512,10 @@ process.exit(0);
     const prevPath = process.env.PATH;
     const prevCountFile = process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
     const prevAnthropicKey = process.env.ANTHROPIC_API_KEY;
+    const prevClaudePath = process.env.HAPPIER_CLAUDE_PATH;
     process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
     process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE = countFile;
+    process.env.HAPPIER_CLAUDE_PATH = claudePath;
     delete process.env.ANTHROPIC_API_KEY;
 
     try {
@@ -535,6 +537,8 @@ process.exit(0);
       else delete process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
       if (typeof prevAnthropicKey === 'string') process.env.ANTHROPIC_API_KEY = prevAnthropicKey;
       else delete process.env.ANTHROPIC_API_KEY;
+      if (typeof prevClaudePath === 'string') process.env.HAPPIER_CLAUDE_PATH = prevClaudePath;
+      else delete process.env.HAPPIER_CLAUDE_PATH;
       await fixture.cleanup();
     }
   }, 20_000);
@@ -590,8 +594,10 @@ process.exit(0);
     const prevPath = process.env.PATH;
     const prevCountFile = process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
     const prevHome = process.env.HOME;
+    const prevClaudePath = process.env.HAPPIER_CLAUDE_PATH;
     process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
     process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE = countFile;
+    process.env.HAPPIER_CLAUDE_PATH = claudePath;
     process.env.HOME = homeA;
 
     try {
@@ -613,6 +619,8 @@ process.exit(0);
       else delete process.env.HAPPIER_TEST_CLI_SNAPSHOT_COUNT_FILE;
       if (typeof prevHome === 'string') process.env.HOME = prevHome;
       else delete process.env.HOME;
+      if (typeof prevClaudePath === 'string') process.env.HAPPIER_CLAUDE_PATH = prevClaudePath;
+      else delete process.env.HAPPIER_CLAUDE_PATH;
       await fixture.cleanup();
     }
   }, 20_000);
