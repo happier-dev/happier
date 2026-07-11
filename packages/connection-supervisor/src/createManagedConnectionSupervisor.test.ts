@@ -17,11 +17,14 @@ function createDeferred<T = void>() {
   return { promise, resolve, reject };
 }
 
-function createTransportHarness(options?: Readonly<{ autoConnectOnCall?: boolean }>) {
+function createTransportHarness(options?: Readonly<{
+  autoConnectOnCall?: boolean;
+  initiallyConnected?: boolean;
+}>) {
   const onConnectedListeners = new Set<() => void>();
   const onDisconnectedListeners = new Set<(event: { intentional?: boolean; reason?: string | null; error?: unknown }) => void>();
   const onErrorListeners = new Set<(error: unknown) => void>();
-  let connected = false;
+  let connected = options?.initiallyConnected ?? false;
   const autoConnectOnCall = options?.autoConnectOnCall ?? true;
 
   const transport: ManagedConnectionTransport = {
@@ -548,6 +551,35 @@ describe('createManagedConnectionSupervisor', () => {
 
     expect(states).toContain('connecting:initial_connect');
     expect(states).toContain('online:initial_connect');
+  });
+
+  it('publishes online when connect resolves for an already-connected transport without a new event', async () => {
+    const harness = createTransportHarness({
+      autoConnectOnCall: false,
+      initiallyConnected: true,
+    });
+    const states: string[] = [];
+    const onConnected = vi.fn();
+
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      createTransport: () => harness.transport,
+      probeReadiness: async (): Promise<ReadinessProbeResult> => ({ status: 'ready' }),
+      onStateChange: (state) => {
+        states.push(`${state.phase}:${state.reason ?? 'none'}`);
+      },
+      onConnected,
+      initialFastRetryDelayMs: 1,
+      backoffMinMs: 5,
+      backoffMaxMs: 20,
+      jitterRatio: 0,
+    });
+
+    await supervisor.start();
+
+    expect(states).toContain('connecting:initial_connect');
+    expect(states).toContain('online:initial_connect');
+    expect(onConnected).toHaveBeenCalledTimes(1);
   });
 
   it('does one fast retry before entering managed retry mode', async () => {

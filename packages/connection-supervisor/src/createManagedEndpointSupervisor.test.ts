@@ -188,6 +188,35 @@ describe('createManagedEndpointSupervisor', () => {
     vi.useRealTimers();
   });
 
+  it('preserves a planned server restart reason from retry_later probes', async () => {
+    vi.useFakeTimers();
+    const probeReadiness = vi
+      .fn<() => Promise<ReadinessProbeResult>>()
+      .mockResolvedValueOnce({ status: 'retry_later', retryAfterMs: 50, reason: 'server_restarting' })
+      .mockResolvedValueOnce({ status: 'ready' });
+
+    const supervisor = createManagedEndpointSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      probeReadiness,
+      initialFastRetryDelayMs: 1,
+      backoffMinMs: 10,
+      backoffMaxMs: 20,
+      jitterRatio: 0,
+    });
+
+    await supervisor.start();
+
+    expect(supervisor.getState()).toEqual(expect.objectContaining({
+      phase: 'offline',
+      reason: 'server_restarting',
+    }));
+
+    await vi.advanceTimersByTimeAsync(50);
+    expect(supervisor.getState().phase).toBe('online');
+
+    vi.useRealTimers();
+  });
+
   it('clamps retryAfterMs=0 to avoid a tight retry loop', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);

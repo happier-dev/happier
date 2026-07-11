@@ -123,25 +123,34 @@ export function createManagedConnectionSupervisor(
     const transport = config.createTransport();
     currentTransport = transport;
 
+    const markTransportConnected = () => {
+      if (
+        localGeneration !== generation
+        || isStopped
+        || currentTransport !== transport
+        || state.phase === 'online'
+      ) {
+        return;
+      }
+      // Defensive: if we previously scheduled a reconnect timer (e.g. from a transient connect_error) and the
+      // transport still ends up connected, ensure we don't reconnect again later from the stale timer.
+      clearRetryTimer();
+      const now = Date.now();
+      reconnectAttempt = params.attempt;
+      publish({
+        phase: 'online',
+        reason: params.initial ? 'initial_connect' : state.reason,
+        attempt: params.attempt,
+        nextRetryAt: null,
+        lastConnectedAt: now,
+        lastDisconnectedAt: state.lastDisconnectedAt,
+        lastErrorMessage: null,
+      });
+      void config.onConnected?.({ state });
+    };
+
     detachCurrentListeners = [
-      transport.onConnected(() => {
-        if (localGeneration !== generation || isStopped) return;
-        // Defensive: if we previously scheduled a reconnect timer (e.g. from a transient connect_error) and the
-        // transport still ends up connected, ensure we don't reconnect again later from the stale timer.
-        clearRetryTimer();
-        const now = Date.now();
-        reconnectAttempt = params.attempt;
-        publish({
-          phase: 'online',
-          reason: params.initial ? 'initial_connect' : state.reason,
-          attempt: params.attempt,
-          nextRetryAt: null,
-          lastConnectedAt: now,
-          lastDisconnectedAt: state.lastDisconnectedAt,
-          lastErrorMessage: null,
-        });
-        void config.onConnected?.({ state });
-      }),
+      transport.onConnected(markTransportConnected),
       transport.onDisconnected((event) => {
         if (localGeneration !== generation || isStopped) return;
         void handleDisconnect(event);
@@ -189,6 +198,9 @@ export function createManagedConnectionSupervisor(
 
     try {
       await transport.connect();
+      if (transport.isConnected()) {
+        markTransportConnected();
+      }
     } catch (error) {
       if (localGeneration !== generation || isStopped) return;
       await applyExternallyReportedProbeResult(classifyTransportError(config, error), { generation: localGeneration });

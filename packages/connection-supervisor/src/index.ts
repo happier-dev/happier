@@ -17,6 +17,7 @@ export type {
   ManagedConnectionTimingPolicy,
   ManagedConnectionTransport,
   ReadinessProbeResult,
+  ReadinessRetryLaterReason,
   TransportDisconnectEvent,
 } from './managedConnectionTypes.js';
 export type {

@@ -19,7 +19,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "node -e \"const fs=require('node:fs');fs.rmSync('dist', { recursive: true, force: true });fs.rmSync('.tsbuildinfo', { force: true });\" && node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
+    "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
+    "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",
     "test": "yarn -s build && node --test test/*.test.mjs && vitest run --config vitest.config.ts",
     "postinstall:real": "yarn -s build",

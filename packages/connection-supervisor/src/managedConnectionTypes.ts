@@ -18,6 +18,8 @@ export type ManagedConnectionReason =
   | 'manual_disconnect'
   | null;
 
+export type ReadinessRetryLaterReason = Extract<ManagedConnectionReason, 'server_restarting' | 'probe_failed'>;
+
 export type ManagedConnectionState = Readonly<{
   phase: ManagedConnectionPhase;
   reason: ManagedConnectionReason;
@@ -48,7 +50,7 @@ export type ReadinessProbeResult =
   | Readonly<{ status: 'ready' }>
   | Readonly<{ status: 'server_unreachable'; errorMessage?: string }>
   | Readonly<{ status: 'auth_failed'; statusCode?: number; errorMessage?: string }>
-  | Readonly<{ status: 'retry_later'; retryAfterMs?: number; errorMessage?: string }>;
+  | Readonly<{ status: 'retry_later'; retryAfterMs?: number; errorMessage?: string; reason?: ReadinessRetryLaterReason }>;
 
 export type ManagedProbeReportScope = Readonly<{
   generation: number;

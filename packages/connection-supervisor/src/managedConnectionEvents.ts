@@ -9,6 +9,6 @@ export function deriveManagedConnectionReason(params: Readonly<{
   if (params.disconnectEvent?.intentional) return 'manual_disconnect';
   if (params.probe?.status === 'auth_failed') return 'auth_invalid';
   if (params.probe?.status === 'server_unreachable') return 'server_unreachable';
-  if (params.probe?.status === 'retry_later') return 'probe_failed';
+  if (params.probe?.status === 'retry_later') return params.probe.reason ?? 'probe_failed';
   return 'transport_disconnect';
 }
