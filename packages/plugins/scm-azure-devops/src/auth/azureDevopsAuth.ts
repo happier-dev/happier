@@ -1,5 +1,8 @@
-import type { ScmHostingProviderRef } from '@happier-dev/protocol';
-import { AZ_CLI_SETUP_URL, AZ_DEP_ID } from '@happier-dev/protocol/installables';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm';
+import {
+  AZ_CLI_SETUP_URL,
+  AZ_DEP_ID,
+} from '@happier-dev/plugin-sdk/experimental/managedDependencies';
 import type { ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk';
 
 export type AzureDevopsCliAuthDetectionResult =

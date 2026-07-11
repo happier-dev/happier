@@ -1,4 +1,4 @@
-import { AZ_DEP_ID } from '@happier-dev/protocol/installables';
+import { AZ_DEP_ID } from '@happier-dev/plugin-sdk/experimental/managedDependencies';
 import type {
   ScmHostingProviderDefaultBranchInput,
   ScmHostingProviderDefaultBranchMetadata,
@@ -20,7 +20,7 @@ import type {
   ScmHostingRepositorySummary,
   ScmPullRequestState,
   ScmPullRequestSummary,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/scm';
 
 import { azureDevopsHostingProviderAdapter } from '../detection/adapter.js';
 import {

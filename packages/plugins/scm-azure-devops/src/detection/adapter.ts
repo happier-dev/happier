@@ -1,4 +1,4 @@
-import type { ScmHostingProviderRef } from '@happier-dev/protocol';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm';
 
 import { encodeCompareRef, parseScmRemoteUrl, stripTrailingSlash } from './remoteUrl.js';
 

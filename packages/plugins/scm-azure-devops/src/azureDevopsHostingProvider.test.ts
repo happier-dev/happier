@@ -33,10 +33,7 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
         trustPolicy: 'local_trusted',
         installPolicy: 'link',
       },
-      runtime: {
-        apiVersion: 1,
-        capabilities: ['scmHostingProviders'],
-      },
+      uses: ['scmHostingProviders'],
       contributes: {
         scmHostingProviders: [
           {
