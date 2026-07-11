@@ -40,10 +40,7 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
         trustPolicy: 'local_trusted',
         installPolicy: 'link',
       },
-      runtime: {
-        apiVersion: 1,
-        capabilities: ['scmHostingProviders', 'connectedAccountDescriptors'],
-      },
+      uses: ['scmHostingProviders', 'connectedAccountDescriptors'],
       contributes: {
         scmHostingProviders: [
           {

@@ -1,8 +1,8 @@
 import type {
   ScmHostingProviderRef,
   ScmPullRequestSummary,
-} from '@happier-dev/protocol';
-import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/scm';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 import type { ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk';
 import { describe, expect, it } from 'vitest';
 

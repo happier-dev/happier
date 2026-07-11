@@ -1,8 +1,13 @@
 import type {
+  ScmForgeHttpErrorContext,
+  ScmForgeHttpFetcher,
+  ScmForgeHttpResponse,
   ScmHostingProviderRef,
   ScmPullRequestSummary,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/scm';
+import { requestScmForgeJson } from '@happier-dev/plugin-sdk/scm';
 import type { ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk';
+import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 import { readBitbucketRepositoryCoordinates } from '../parsing/bitbucketCoordinates.js';
 import {
@@ -13,25 +18,15 @@ import {
 } from './errors.js';
 import { mapBitbucketPullRequest } from './mapping.js';
 
-export type BitbucketRestResponse = Readonly<{
-  ok: boolean;
-  status: number;
-  statusText: string;
-  json(): Promise<unknown>;
-  text(): Promise<string>;
-}>;
+export type BitbucketRestResponse = ScmForgeHttpResponse;
 
-export type BitbucketRestFetcher = (url: string, init?: RequestInit) => Promise<BitbucketRestResponse>;
+export type BitbucketRestFetcher = ScmForgeHttpFetcher;
 
 export type BitbucketBasicAuthMaterialization = Readonly<{
   username: string;
   password: string;
   profileKey?: string;
 }>;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
 
 function readNestedRecord(source: unknown, key: string): Record<string, unknown> | null {
   return isRecord(source) && isRecord(source[key]) ? source[key] as Record<string, unknown> : null;
@@ -43,7 +38,7 @@ function readNestedString(source: unknown, ...keys: readonly string[]): string |
     if (!isRecord(current)) return null;
     current = current[key];
   }
-  return typeof current === 'string' && current.trim().length > 0 ? current.trim() : null;
+  return readString(current);
 }
 
 function encodeBasicCredential(username: string, password: string): string {
@@ -84,18 +79,6 @@ export async function resolveBitbucketBasicAuth(input: Readonly<{
   };
 }
 
-async function readResponseBody(response: BitbucketRestResponse): Promise<unknown> {
-  try {
-    return await response.json();
-  } catch {
-    try {
-      return JSON.parse(await response.text());
-    } catch {
-      return null;
-    }
-  }
-}
-
 function bodyLooksLikeDuplicatePullRequest(body: unknown): boolean {
   const message = readNestedString(body, 'error', 'message')
     ?? (isRecord(body) && typeof body.error === 'string' ? body.error : null)
@@ -120,30 +103,28 @@ function readDuplicatePullRequest(
   );
 }
 
-async function readBitbucketJson(
+function mapBitbucketApiError(
   provider: ScmHostingProviderRef,
-  response: BitbucketRestResponse,
-): Promise<unknown> {
-  if (response.ok) return response.json();
-  const body = await readResponseBody(response);
-  if (response.status === 401 || response.status === 403) {
+  context: ScmForgeHttpErrorContext,
+): Error {
+  if (context.status === 401 || context.status === 403) {
     throw createBitbucketAuthRequiredError('Bitbucket API authentication failed');
   }
-  if (response.status === 404) {
+  if (context.status === 404) {
     throw createBitbucketNotFoundError();
   }
-  if (response.status === 409 || response.status === 400) {
-    if (bodyLooksLikeDuplicatePullRequest(body)) {
-      const pullRequest = readDuplicatePullRequest(provider, body);
+  if (context.status === 409 || context.status === 400) {
+    if (bodyLooksLikeDuplicatePullRequest(context.body)) {
+      const pullRequest = readDuplicatePullRequest(provider, context.body);
       throw createBitbucketAlreadyExistsError({
         ...(pullRequest ? { pullRequest } : {}),
       });
     }
-    if (bodyLooksLikeAlreadyExists(body)) {
+    if (bodyLooksLikeAlreadyExists(context.body)) {
       throw createBitbucketAlreadyExistsError();
     }
   }
-  throw createBitbucketCommandFailedError(`Bitbucket API request failed with status ${response.status || response.statusText}`);
+  throw createBitbucketCommandFailedError(`Bitbucket API request failed with status ${context.status || context.statusText}`);
 }
 
 export async function requestBitbucketJson(input: Readonly<{
@@ -153,8 +134,13 @@ export async function requestBitbucketJson(input: Readonly<{
   url: string;
   init?: Omit<RequestInit, 'headers'>;
 }>): Promise<unknown> {
-  return readBitbucketJson(input.provider, await input.fetcher(input.url, {
-    ...input.init,
-    headers: headersFor(input.auth),
-  }));
+  return requestScmForgeJson({
+    url: input.url,
+    init: {
+      ...input.init,
+      headers: headersFor(input.auth),
+    },
+    fetcher: input.fetcher,
+    mapError: (context) => mapBitbucketApiError(input.provider, context),
+  });
 }

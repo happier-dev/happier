@@ -20,7 +20,7 @@ import type {
   ScmHostingRepositorySummary,
   ScmPullRequestState,
   ScmPullRequestSummary,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/scm';
 
 import { bitbucketHostingProviderAdapter } from '../adapter.js';
 import {

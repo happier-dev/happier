@@ -1,6 +1,4 @@
-import {
-  BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR,
-} from '@happier-dev/protocol';
+import { BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR } from '@happier-dev/plugin-sdk/experimental/manifest/connectedAccountDescriptors';
 import { definePluginManifest, type PluginManifestV2 } from '@happier-dev/plugin-sdk';
 
 export const PLUGIN_MANIFEST = definePluginManifest({
@@ -17,9 +15,10 @@ export const PLUGIN_MANIFEST = definePluginManifest({
     resolvedVersion: '0.0.0',
   },
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: ['scmHostingProviders', 'connectedAccountDescriptors'] },
-  targets: {},
-  capabilities: {},
+  activationEvents: ['onScmProvider:scm.bitbucket'],
+  uses: ['scmHostingProviders', 'connectedAccountDescriptors'],
+  entrypoints: { main: './dist/index.js' },
+  permissions: { required: [], optional: [] },
   contributes: {
     scmHostingProviders: [
       {

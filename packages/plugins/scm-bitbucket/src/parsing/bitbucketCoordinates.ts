@@ -1,4 +1,5 @@
-import type { ScmHostingProviderRef } from '@happier-dev/protocol';
+import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm';
+import { readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 import { createBitbucketInvalidRequestError } from '../operations/errors.js';
 
@@ -12,10 +13,6 @@ export type BitbucketRepositoryCoordinates = Readonly<{
 
 const BITBUCKET_CLOUD_HOST = 'bitbucket.org';
 const BITBUCKET_CLOUD_API_BASE_URL = 'https://api.bitbucket.org/2.0';
-
-function readString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
 
 function normalizeRootHttpsUrl(value: string, fieldName: string): URL {
   let parsed: URL;

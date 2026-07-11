@@ -1,4 +1,6 @@
-import type { PluginApiV1 } from '@happier-dev/plugin-sdk';
+import type {
+  PluginApi,
+} from '@happier-dev/plugin-sdk';
 
 import { BITBUCKET_SCM_HOSTING_PROVIDER_ID } from './adapter.js';
 import {
@@ -7,7 +9,7 @@ import {
 } from './auth/basicAuthMaterializer.js';
 import { bitbucketApiAdapter } from './operations/bitbucketApiAdapter.js';
 
-export function activate(api: PluginApiV1): void {
+export function activate(api: PluginApi): void {
   api.registerScmHostingProvider({
     id: BITBUCKET_SCM_HOSTING_PROVIDER_ID,
     auth: {

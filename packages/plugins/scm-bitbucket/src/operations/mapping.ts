@@ -4,7 +4,8 @@ import type {
   ScmHostingRepositoryVisibility,
   ScmPullRequestState,
   ScmPullRequestSummary,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/scm';
+import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 import {
   buildBitbucketRepositoryWebUrl,
@@ -15,14 +16,6 @@ export type BitbucketPullRequestListDecodeResult = Readonly<{
   pullRequests: readonly ScmPullRequestSummary[];
   diagnostics: readonly string[];
 }>;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function readString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
 
 function readPositiveInt(value: unknown): number | null {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;

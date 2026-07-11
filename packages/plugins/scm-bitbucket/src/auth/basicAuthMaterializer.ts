@@ -1,7 +1,5 @@
-import {
-  BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR,
-  type ConnectedServiceCredentialRecordV1,
-} from '@happier-dev/protocol';
+import { BITBUCKET_CONNECTED_ACCOUNT_DESCRIPTOR } from '@happier-dev/plugin-sdk/experimental/manifest/connectedAccountDescriptors';
+import type { ConnectedServiceCredentialRecordV1 } from '@happier-dev/plugin-sdk/scm';
 
 export type BitbucketScmHostingBasicAuthMaterializationRequest = Readonly<{
   kind: 'scm_hosting_basic_auth';

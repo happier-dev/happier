@@ -20,13 +20,13 @@
     "package.json"
   ],
   "scripts": {
+    "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node ../../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json",
     "test": "vitest run --testTimeout 30000",
     "typecheck": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@happier-dev/plugin-sdk": "0.0.0",
-    "@happier-dev/protocol": "0.0.0"
+    "@happier-dev/plugin-sdk": "0.0.0"
   },
   "devDependencies": {
     "typescript": "^5.9.2",
