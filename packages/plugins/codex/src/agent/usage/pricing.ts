@@ -3,6 +3,14 @@ export type CodexUsageNumberMap = Readonly<{
     [key: string]: number;
 }>;
 
+export type CodexUsageCost = Readonly<{
+    total: number;
+    estimatedUsd: number;
+    input: number;
+    output: number;
+    breakdown?: Readonly<Record<string, number>>;
+}>;
+
 type CodexModelPricing = Readonly<{
     input: number;
     cachedInput: number;
@@ -81,7 +89,7 @@ function asFiniteNonNegativeNumber(value: unknown): number | null {
 export function estimateCodexUsageCost(params: Readonly<{
     modelId: string | null | undefined;
     tokens: CodexUsageNumberMap | null;
-}>): CodexUsageNumberMap | null {
+}>): CodexUsageCost | null {
     const pricing = resolvePricing(params.modelId);
     const tokens = params.tokens;
     if (!pricing || !tokens) return null;
@@ -92,6 +100,7 @@ export function estimateCodexUsageCost(params: Readonly<{
 
     const inputCost = (inputTokens / MILLION) * pricing.input;
     const cachedInputCost = (cachedInputTokens / MILLION) * pricing.cachedInput;
+    const cacheSavingsUsd = (cachedInputTokens / MILLION) * (pricing.input - pricing.cachedInput);
     const outputCost = (outputTokens / MILLION) * pricing.output;
     const total = inputCost + cachedInputCost + outputCost;
 
@@ -102,5 +111,6 @@ export function estimateCodexUsageCost(params: Readonly<{
         estimatedUsd: total,
         input: inputCost + cachedInputCost,
         output: outputCost,
+        ...(cacheSavingsUsd > 0 ? { breakdown: { cacheSavingsUsd } } : {}),
     };
 }

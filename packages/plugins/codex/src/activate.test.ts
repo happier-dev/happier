@@ -12,6 +12,7 @@ import type {
 } from '@happier-dev/plugin-sdk';
 
 import { activate } from './activate.js';
+import { CODEX_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
 
 describe('activate', () => {
   const previousCodexHome = process.env.CODEX_HOME;
@@ -62,6 +63,7 @@ describe('activate', () => {
       expect(backendRegistrations).toEqual([
         expect.objectContaining({
           agentId: 'codex',
+          providerBinding: CODEX_PROVIDER_BINDING_ADAPTER_V1,
           create: expect.any(Function),
         }),
       ]);

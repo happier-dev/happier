@@ -20,9 +20,10 @@ describe('buildCodexAppServerTokenCountObservationInput', () => {
             modelId: 'gpt-5.4',
         });
 
-        const cost = input?.body.cost as Readonly<Record<string, number>> | undefined;
+        const cost = input?.body.cost as Readonly<Record<string, unknown>> | undefined;
         expect(input?.defaultScope).toBe('session_cumulative');
         expect(cost?.estimatedUsd).toBeCloseTo(32.525, 6);
         expect(cost?.total).toBeCloseTo(32.525, 6);
+        expect(cost?.breakdown).toEqual({ cacheSavingsUsd: 0.225 });
     });
 });

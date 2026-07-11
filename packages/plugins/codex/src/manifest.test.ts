@@ -7,6 +7,37 @@ import {
 import { PLUGIN_MANIFEST } from './manifest';
 
 describe('Codex plugin manifest', () => {
+  it('declares the exact Responses provider intake owned by the Codex adapter', () => {
+    const contribution = PLUGIN_MANIFEST.contributes.agents.find((entry) => entry.id === 'codex');
+
+    expect(contribution?.providerSupport).toEqual({
+      acceptsProtocols: ['openai-responses'],
+      required: { streaming: true, toolRoundTrips: true },
+      credentialSupport: {
+        supportsNoAuth: true,
+        apiKeyTransports: [{
+          protocol: 'openai-responses',
+          destination: {
+            kind: 'httpHeader',
+            names: 'anyValidated',
+            formats: ['raw', 'bearer'],
+          },
+        }],
+      },
+      authIsolation: {
+        suppressConnectedServiceIds: ['openai-codex', 'openai'],
+        ownedEnvKeys: [
+          'HAPPIER_CODEX_PROVIDER_API_KEY',
+          'OPENAI_API_KEY',
+          'CODEX_API_KEY',
+        ],
+      },
+      materialization: 'engineConfig',
+      applyPolicy: 'restart_session',
+      supportsFreeformModelIds: true,
+    });
+  });
+
   it('declares agent settings as plugin-authored contribution data', () => {
     const contribution = PLUGIN_MANIFEST.contributes.agentSettings?.find((entry) => entry.agentId === 'codex');
 

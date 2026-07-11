@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { registerSensitiveDiagnosticValues } from '@happier-dev/protocol';
 
 import {
     createCodexAppServerTurnFailure,
@@ -102,10 +103,30 @@ describe('createCodexAppServerTurnFailure', () => {
         });
 
         expect(isCodexAppServerTemporaryRecoverableTurnFailureError(failure)).toBe(true);
+        expect((failure as Error & { runtimeAuthClassification?: unknown }).runtimeAuthClassification).toMatchObject({
+            kind: 'capacity',
+            limitCategory: 'capacity',
+            quotaScope: 'provider',
+            serviceId: 'openai-codex',
+        });
     });
 
     it('formats non-empty messages for UI without double-prefixing error text', () => {
         expect(formatCodexAppServerErrorForUi(new Error('provider failed'))).toBe('Error: provider failed');
         expect(formatCodexAppServerErrorForUi(new Error('Error: provider failed'))).toBe('Error: provider failed');
+    });
+
+    it('redacts an exact runtime provider credential from app-server failure diagnostics', () => {
+        const credential = 'codex provider credential with spaces !';
+        const lease = registerSensitiveDiagnosticValues([credential]);
+        try {
+            const failure = createCodexAppServerTurnFailure({
+                value: { error: { message: `provider rejected ${credential}` } },
+            });
+
+            expect(formatCodexAppServerErrorForUi(failure)).toBe('Error: provider rejected [REDACTED]');
+        } finally {
+            lease.close();
+        }
     });
 });

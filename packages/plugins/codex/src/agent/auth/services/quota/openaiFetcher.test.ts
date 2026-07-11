@@ -146,7 +146,7 @@ describe('createOpenAiCodexQuotaFetcher', () => {
         status: 200,
         statusText: 'OK',
         headers: {},
-        json: async () => ({ ok: true }),
+        json: async () => ({ code: 'reset', windows_reset: 2 }),
         text: async () => '',
         arrayBuffer: async () => new ArrayBuffer(0),
       };
@@ -170,13 +170,15 @@ describe('createOpenAiCodexQuotaFetcher', () => {
     });
 
     const fetcher = createOpenAiCodexQuotaFetcher({ runtimeFetch });
-    await fetcher.consumeRecoveryCredit?.({
+    const outcome = await fetcher.consumeRecoveryCredit?.({
       record,
       now,
       idempotencyKey: 'consume:work:credit-1',
       providerCreditId: 'credit-1',
       signal: new AbortController().signal,
     });
+
+    expect(outcome).toBe('consumed');
 
     expect(requests).toHaveLength(1);
     expect(requests[0]).toMatchObject({
@@ -185,11 +187,10 @@ describe('createOpenAiCodexQuotaFetcher', () => {
       headers: expect.objectContaining({
         Authorization: 'Bearer at',
         'ChatGPT-Account-Id': 'acct',
-        'Idempotency-Key': 'consume:work:credit-1',
       }),
       body: {
-        idempotency_key: 'consume:work:credit-1',
-        reset_credit_id: 'credit-1',
+        redeem_request_id: 'consume:work:credit-1',
+        credit_id: 'credit-1',
       },
     });
   });

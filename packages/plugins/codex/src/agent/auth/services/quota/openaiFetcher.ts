@@ -2,7 +2,7 @@ import type {
   ConnectedServiceCredentialRecordV1,
   ConnectedServiceId,
   ConnectedServiceQuotaMeterV1,
-  ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1,
+  ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1,
   ConnectedServiceQuotaSnapshotV1,
 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 import type { FetchRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
@@ -56,7 +56,7 @@ export type CodexQuotaFetcher = Readonly<{
     idempotencyKey: string;
     providerCreditId?: string;
     signal: AbortSignal;
-  }>) => Promise<ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1 | void>;
+  }>) => Promise<Exclude<ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1, 'unknown_after_timeout'>>;
 }>;
 
 export type CodexQuotaFetcherDescriptor = Readonly<{
@@ -169,11 +169,13 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
   return {
     serviceId: 'openai-codex',
     consumeRecoveryCredit: async ({ record, idempotencyKey, providerCreditId, signal }) => {
-      if (record.kind !== 'oauth') return;
+      if (record.kind !== 'oauth') {
+        throw new Error('OpenAI reset-credit consume requires OAuth credentials');
+      }
       if (!resetCreditConsumeUrl) {
         throw new Error('OpenAI reset-credit consume endpoint unavailable');
       }
-      await consumeCodexRateLimitResetCredit({
+      const outcome = await consumeCodexRateLimitResetCredit({
         accessToken: record.oauth.accessToken,
         accountId: record.oauth.providerAccountId,
         idempotencyKey,
@@ -183,6 +185,16 @@ export function createOpenAiCodexQuotaFetcher(params?: Readonly<{
         signal,
         runtimeFetch,
       });
+      switch (outcome.code) {
+        case 'reset':
+          return 'consumed';
+        case 'already_redeemed':
+          return 'already_consumed';
+        case 'no_credit':
+          return 'not_available';
+        case 'nothing_to_reset':
+          return 'nothing_to_reset';
+      }
     },
     loadQuota: async ({ record, now, signal }) => {
       if (record.kind !== 'oauth') return null;

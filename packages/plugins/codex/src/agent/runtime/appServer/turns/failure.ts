@@ -1,3 +1,6 @@
+import { classifyProviderLimitEvidence } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol';
+
 import { classifyCodexConnectedServiceAuthFailure } from '../../../auth/services/runtime/auth/failure.js';
 import {
     readRecord,
@@ -79,10 +82,13 @@ function readCodexAppServerErrorPayload(value: unknown): CodexAppServerErrorPayl
 }
 
 function formatCodexAppServerErrorPayloadMessage(payload: CodexAppServerErrorPayload): string | null {
+    let message: string | null;
     if (payload.message && payload.additionalDetails) {
-        return `${payload.message}\n\n${payload.additionalDetails}`;
+        message = `${payload.message}\n\n${payload.additionalDetails}`;
+    } else {
+        message = payload.message ?? payload.additionalDetails;
     }
-    return payload.message ?? payload.additionalDetails;
+    return message === null ? null : redactBugReportSensitiveText(message);
 }
 
 export function readCodexAppServerErrorMessage(value: unknown): string | null {
@@ -120,16 +126,6 @@ function isCodexAppServerContextWindowExhaustedPayload(payload: CodexAppServerEr
         || [payload.message, payload.additionalDetails].some(textMatchesCodexContextWindowExhaustedMessage);
 }
 
-function textMatchesCodexTemporaryRecoverableTurnFailureMessage(value: string | null): boolean {
-    const normalized = value?.toLowerCase() ?? '';
-    return normalized.includes('selected model is at capacity')
-        || (normalized.includes('model is at capacity') && normalized.includes('try a different model'));
-}
-
-function isCodexAppServerTemporaryRecoverableTurnFailurePayload(payload: CodexAppServerErrorPayload): boolean {
-    return [payload.message, payload.additionalDetails].some(textMatchesCodexTemporaryRecoverableTurnFailureMessage);
-}
-
 export function isCodexAppServerContextWindowExhaustedError(error: unknown): boolean {
     if (error instanceof CodexAppServerTurnFailure) {
         return error.isContextWindowExhausted;
@@ -143,7 +139,7 @@ export function isCodexAppServerTemporaryRecoverableTurnFailureError(error: unkn
         return error.isTemporaryRecoverableTurnFailure;
     }
     if (!(error instanceof Error)) return false;
-    return textMatchesCodexTemporaryRecoverableTurnFailureMessage(error.message);
+    return classifyProviderLimitEvidence(error) === 'capacity';
 }
 
 export function shouldDeferCodexAppServerTurnFailureToPromptLoop(error: unknown): boolean {
@@ -162,45 +158,46 @@ export function createCodexAppServerTurnFailure(params: Readonly<{
         profileId: params.sourceAccountIdentity?.profileId ?? null,
         groupId: params.sourceAccountIdentity?.groupId ?? null,
     };
+    const runtimeAuthClassification = payload
+        ? classifyCodexConnectedServiceAuthFailure({
+            providerErrorPath: true,
+            error: {
+                error: {
+                    message: payload.message,
+                    additionalDetails: payload.additionalDetails,
+                    codexErrorInfo: payload.codexErrorInfo,
+                    resetsAt: payload.resetsAt,
+                    retryAfterMs: payload.retryAfterMs,
+                    retryAfter: payload.retryAfter,
+                    planType: payload.planType,
+                    rateLimits: payload.rateLimits,
+                },
+            },
+            serviceId: 'openai-codex',
+            profileId: authContext.profileId,
+            groupId: authContext.groupId,
+            sourceAccountIdentity: params.sourceAccountIdentity
+                ? {
+                    providerAccountId: params.sourceAccountIdentity.providerAccountId,
+                    accountLabel: params.sourceAccountIdentity.accountLabel,
+                    groupGeneration: params.sourceAccountIdentity.generation,
+                }
+                : null,
+        })
+        : null;
     return new CodexAppServerTurnFailure(
         payload ? formatCodexAppServerErrorPayloadMessage(payload) ?? 'Codex app-server turn failed' : 'Codex app-server turn failed',
         {
             isAuthAccountChanged: payload ? isCodexAppServerAuthAccountChangedPayload(payload) : false,
             isContextWindowExhausted: payload ? isCodexAppServerContextWindowExhaustedPayload(payload) : false,
-            isTemporaryRecoverableTurnFailure: payload ? isCodexAppServerTemporaryRecoverableTurnFailurePayload(payload) : false,
-            runtimeAuthClassification: payload
-                ? classifyCodexConnectedServiceAuthFailure({
-                    providerErrorPath: true,
-                    error: {
-                        error: {
-                            message: payload.message,
-                            additionalDetails: payload.additionalDetails,
-                            codexErrorInfo: payload.codexErrorInfo,
-                            resetsAt: payload.resetsAt,
-                            retryAfterMs: payload.retryAfterMs,
-                            retryAfter: payload.retryAfter,
-                            planType: payload.planType,
-                            rateLimits: payload.rateLimits,
-                        },
-                    },
-                    serviceId: 'openai-codex',
-                    profileId: authContext.profileId,
-                    groupId: authContext.groupId,
-                    sourceAccountIdentity: params.sourceAccountIdentity
-                        ? {
-                            providerAccountId: params.sourceAccountIdentity.providerAccountId,
-                            accountLabel: params.sourceAccountIdentity.accountLabel,
-                            groupGeneration: params.sourceAccountIdentity.generation,
-                        }
-                        : null,
-                })
-                : null,
+            isTemporaryRecoverableTurnFailure: runtimeAuthClassification?.kind === 'capacity',
+            runtimeAuthClassification,
         },
     );
 }
 
 export function formatCodexAppServerErrorForUi(error: Error): string {
-    const message = error.message.trim();
+    const message = redactBugReportSensitiveText(error.message).trim();
     if (!message) return 'Codex error';
     return /^error[:\s]/i.test(message) ? message : `Error: ${message}`;
 }

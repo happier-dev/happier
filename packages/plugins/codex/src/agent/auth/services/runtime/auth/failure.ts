@@ -1,9 +1,15 @@
-import type { ConnectedServiceId, ConnectedServiceLimitCategoryV1, ConnectedServiceProfileId } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
+import {
+  classifyProviderLimitEvidence,
+  type ConnectedServiceId,
+  type ConnectedServiceLimitCategoryV1,
+  type ConnectedServiceProfileId,
+} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 export type CodexConnectedServiceRuntimeFailureKind =
   | 'usage_limit'
   | 'rate_limit'
   | 'temporary_throttle'
+  | 'capacity'
   | 'auth_expired'
   | 'account_changed'
   | 'refresh_failed'
@@ -18,6 +24,8 @@ export type CodexConnectedServiceRuntimeFailureClassification = Readonly<{
   groupId: string | null;
   resetsAtMs: number | null;
   retryAfterMs: number | null;
+  connectedServiceRecovery?: 'available';
+  quotaScope?: 'provider';
   planType: string | null;
   sourceProviderAccountId?: string | null;
   sourceAccountLabel?: string | null;
@@ -182,6 +190,7 @@ function buildClassification(
     limitCategory?: CodexConnectedServiceRuntimeFailureClassification['limitCategory'];
     resetsAtMs?: number | null;
     retryAfterMs?: number | null;
+    quotaScope?: CodexConnectedServiceRuntimeFailureClassification['quotaScope'];
     planType?: string | null;
     rateLimits?: unknown | null;
     source: CodexConnectedServiceRuntimeFailureClassification['source'];
@@ -201,6 +210,8 @@ function buildClassification(
     groupId: input.groupId,
     resetsAtMs: params.resetsAtMs ?? null,
     retryAfterMs: params.retryAfterMs ?? null,
+    connectedServiceRecovery: 'available',
+    ...(params.quotaScope ? { quotaScope: params.quotaScope } : {}),
     planType: params.planType ?? null,
     ...(sourceProviderAccountId ? { sourceProviderAccountId } : {}),
     ...(sourceProviderAccountId && sourceAccountLabel ? { sourceAccountLabel } : {}),
@@ -241,6 +252,15 @@ export function classifyCodexConnectedServiceAuthFailure(
       kind: 'temporary_throttle',
       limitCategory: 'rate_limit',
       retryAfterMs: readRetryAfterMs(record),
+      source: record ? 'structured_provider_error' : 'stable_provider_message',
+    });
+  }
+
+  if (input.providerErrorPath && classifyProviderLimitEvidence(input.error) === 'capacity') {
+    return buildClassification(input, {
+      kind: 'capacity',
+      limitCategory: 'capacity',
+      quotaScope: 'provider',
       source: record ? 'structured_provider_error' : 'stable_provider_message',
     });
   }

@@ -20,6 +20,44 @@ async function createExecutableShim(name: string): Promise<string> {
 }
 
 describe('resolveCodexDaemonSpawnPrerequisites', () => {
+  it('checks the installed Codex version for a provider-bound app-server spawn', async () => {
+    const runSystemTool = vi.fn(async () => ({
+      ok: true as const,
+      stdout: 'codex-cli 0.144.3',
+      stderr: '',
+    }));
+
+    await expect(resolveCodexDaemonSpawnPrerequisites({
+      payload: {
+        runtimeSelection: {
+          providerRuntimeSelection: { codexBackendMode: 'appServer' },
+          providerBinding: {
+            v: 1,
+            agentTargetKey: 'codex',
+            connectionId: 'pc_gateway',
+            modelId: 'model-a',
+          },
+        },
+      },
+    }, {
+      tools: {
+        resolveManagedInstallable: vi.fn(),
+        runSystemTool,
+      },
+    })).resolves.toEqual({ allowed: true });
+    expect(runSystemTool).toHaveBeenCalledTimes(1);
+
+    runSystemTool.mockResolvedValueOnce({ ok: true, stdout: 'codex-cli 0.145.0', stderr: '' });
+    await expect(resolveCodexDaemonSpawnPrerequisites({
+      payload: { runtimeSelection: { providerBinding: { v: 1, agentTargetKey: 'codex', connectionId: 'pc_gateway', modelId: 'model-a' } } },
+    }, {
+      tools: { resolveManagedInstallable: vi.fn(), runSystemTool },
+    })).resolves.toMatchObject({
+      allowed: false,
+      reasonCode: 'codex_provider_runtime_unsupported',
+    });
+  });
+
   it('requests Codex ACP through the daemon tool-resolution context', async () => {
     const commandPath = await createExecutableShim('codex-acp');
     const resolveManagedInstallable = vi.fn(async () => ({

@@ -16,6 +16,10 @@ import {
   startCodexAppServerRuntime,
 } from './runtime.js';
 import { resolveCodexTerminalPermissionPolicy } from '../terminal/permissionPolicy.js';
+import {
+  CodexProviderBindingEngineConfigV1Schema,
+  type CodexProviderBindingEngineConfigV1,
+} from '../../providerBinding/runtimeConfig.js';
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -79,7 +83,12 @@ function normalizeModelOverride(value: unknown): string | null {
   return modelId && modelId !== 'default' ? modelId : null;
 }
 
-function readInitialModelId(sessionParams: CreateSessionRuntimeParamsV1): string | null {
+type InitialCodexModelSelection = Readonly<{
+  modelId: string | null;
+  providerConnectionId: string | null;
+}>;
+
+function readInitialModelSelection(sessionParams: CreateSessionRuntimeParamsV1): InitialCodexModelSelection {
   const sessionParamsRecord = readRecord(sessionParams);
   const metadata = readRecord(sessionParams.metadata);
   const targetKey = buildBackendTargetKeyV2({
@@ -93,19 +102,45 @@ function readInitialModelId(sessionParams: CreateSessionRuntimeParamsV1): string
     if (explicitSelection.data.ref.agentTargetKey !== targetKey) {
       throw new SessionModelSelectionResolutionError('model_selection_agent_target_mismatch');
     }
-    return explicitSelection.data.ref.modelId;
+    return {
+      modelId: explicitSelection.data.ref.modelId,
+      providerConnectionId: explicitSelection.data.ref.providerConnectionId ?? null,
+    };
   }
   if (hasExplicitSelection) {
     throw new Error('Invalid session model selection');
   }
   const explicitLegacyModelId = normalizeModelOverride(sessionParamsRecord?.modelId);
-  if (explicitLegacyModelId) return explicitLegacyModelId;
+  if (explicitLegacyModelId) return { modelId: explicitLegacyModelId, providerConnectionId: null };
   const intent = resolveSessionModelSelectionIntentV1({
     canonical: metadata?.modelSelectionIntentV1,
     legacy: metadata?.modelOverrideV1,
     agentTargetKey: targetKey,
   });
-  return intent?.selection?.modelId ?? null;
+  return {
+    modelId: intent?.selection?.modelId ?? null,
+    providerConnectionId: intent?.selection?.providerConnectionId ?? null,
+  };
+}
+
+function readInitialProviderBinding(
+  sessionParams: CreateSessionRuntimeParamsV1,
+  providerConnectionId: string | null,
+): CodexProviderBindingEngineConfigV1 | null {
+  const materialization = sessionParams.providerBindingMaterialization;
+  if (!materialization) {
+    if (providerConnectionId) {
+      throw new Error('Codex provider-bound model selection requires provider binding materialization');
+    }
+    return null;
+  }
+  if (!providerConnectionId) {
+    throw new Error('Codex provider binding materialization requires a provider-bound model selection');
+  }
+  if (materialization.kind !== 'engineConfig') {
+    throw new Error('Codex provider binding materialization must use engine config');
+  }
+  return CodexProviderBindingEngineConfigV1Schema.parse(materialization.engineConfig);
 }
 
 function readImportHistory(value: unknown): boolean {
@@ -133,14 +168,19 @@ export async function createCodexAppServerSessionRuntime(params: Readonly<{
   const initialProcessEnv = readProcessEnv(params.ctx, params.sessionParams);
   const initialHappierSessionId = readHappierSessionId(params.sessionParams);
   const initialProviderSessionId = readInitialProviderSessionId(params.sessionParams);
-  const initialModelId = readInitialModelId(params.sessionParams);
+  const initialModelSelection = readInitialModelSelection(params.sessionParams);
+  const initialProviderBinding = readInitialProviderBinding(
+    params.sessionParams,
+    initialModelSelection.providerConnectionId,
+  );
 
   const runtime = createCodexAppServerRuntime({
     ctx: params.ctx,
     directory: initialDirectory,
     happierSessionId: initialHappierSessionId,
     initialProviderSessionId,
-    initialModelId,
+    initialModelId: initialModelSelection.modelId,
+    initialProviderBinding,
     processEnv: initialProcessEnv,
     mcpServers: params.sessionParams.mcpServers,
     resolveCurrentPolicy: () => resolveCodexTerminalPermissionPolicy(readSessionPermissionMode(params.sessionParams)),

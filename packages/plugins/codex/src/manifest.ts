@@ -43,6 +43,32 @@ export const PLUGIN_MANIFEST = definePluginManifest({
         kindVersion: 1,
         id: 'codex',
         runtime: { kind: 'custom' },
+        providerSupport: {
+          acceptsProtocols: ['openai-responses'],
+          required: { streaming: true, toolRoundTrips: true },
+          credentialSupport: {
+            supportsNoAuth: true,
+            apiKeyTransports: [{
+              protocol: 'openai-responses',
+              destination: {
+                kind: 'httpHeader',
+                names: 'anyValidated',
+                formats: ['raw', 'bearer'],
+              },
+            }],
+          },
+          authIsolation: {
+            suppressConnectedServiceIds: ['openai-codex', 'openai'],
+            ownedEnvKeys: [
+              'HAPPIER_CODEX_PROVIDER_API_KEY',
+              'OPENAI_API_KEY',
+              'CODEX_API_KEY',
+            ],
+          },
+          materialization: 'engineConfig',
+          applyPolicy: 'restart_session',
+          supportsFreeformModelIds: true,
+        },
         surfaceHandlers: [
           {
             surfaceApiVersion: 1,

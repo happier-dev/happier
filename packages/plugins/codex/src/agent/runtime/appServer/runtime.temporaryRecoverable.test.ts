@@ -29,12 +29,7 @@ const clientState = vi.hoisted(() => {
     },
     plan_type: 'pro',
   };
-  let accountReadResult: unknown = {
-    account: {
-      id: 'acct_default_live',
-      email: 'default-live@example.test',
-    },
-  };
+  let accountReadResult: unknown = { account: null };
 
   const createDeferred = (): {
     promise: Promise<unknown>;
@@ -82,12 +77,7 @@ const clientState = vi.hoisted(() => {
         },
         plan_type: 'pro',
       };
-      accountReadResult = {
-        account: {
-          id: 'acct_default_live',
-          email: 'default-live@example.test',
-        },
-      };
+      accountReadResult = { account: null };
     },
     failNextSteer() {
       failNextSteer = true;
@@ -131,6 +121,12 @@ const clientState = vi.hoisted(() => {
       }
       if (method === 'thread/start') {
         return { threadId: 'thread-1' };
+      }
+      if (method === 'thread/resume') {
+        const record = params && typeof params === 'object'
+          ? params as Readonly<Record<string, unknown>>
+          : {};
+        return { threadId: record.threadId ?? 'thread-resumed' };
       }
       if (method === 'thread/name/set') {
         return {};
@@ -210,16 +206,38 @@ import {
 } from './runtime.js';
 import { createCodexAppServerSessionRuntime } from './session.js';
 
+const providerBindingMaterialization = {
+  v: 1,
+  kind: 'engineConfig',
+  engineConfig: {
+    v: 1,
+    modelProvider: 'happier_0123456789abcdef0123456789abcdef',
+    config: {
+      'model_providers.happier_0123456789abcdef0123456789abcdef': {
+        name: 'Happier provider',
+        base_url: 'https://provider.example/v1',
+        wire_api: 'responses',
+        env_key: 'HAPPIER_CODEX_PROVIDER_API_KEY',
+        requires_openai_auth: false,
+        supports_websockets: false,
+      },
+    },
+  },
+} as const;
+
 function createRuntime(overrides: Readonly<{
   ctx?: Partial<PluginContextV1>;
+  accountUsage?: PluginContextV1['agentRuntime']['accountUsage'];
   happierSessionId?: string;
   processEnv?: Readonly<Record<string, string | undefined>>;
   initialModelId?: string;
 }> = {}) {
+  const fixtureContext = createPluginContextV1Fixture({
+    sessionId: overrides.happierSessionId ?? 'session-1',
+  }).ctx;
   return createCodexAppServerRuntime({
     ctx: {
-      env: { list: () => ({}) },
-      exec: {},
+      ...fixtureContext,
       logger: {
         debug: vi.fn(),
         info: vi.fn(),
@@ -227,7 +245,14 @@ function createRuntime(overrides: Readonly<{
         error: vi.fn(),
       },
       ...(overrides.ctx ?? {}),
-    } as unknown as PluginContextV1,
+      agentRuntime: {
+        ...fixtureContext.agentRuntime,
+        ...(overrides.ctx?.agentRuntime ?? {}),
+        accountUsage: overrides.accountUsage
+          ?? overrides.ctx?.agentRuntime?.accountUsage
+          ?? fixtureContext.agentRuntime.accountUsage,
+      },
+    },
     directory: '/workspace',
     happierSessionId: overrides.happierSessionId ?? 'session-1',
     processEnv: overrides.processEnv,
@@ -444,7 +469,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       agentTurnId: 'turn-1',
       issue: expect.objectContaining({
         code: 'codex_app_server_turn_failed',
-        provider: 'codex',
+        agentId: 'codex',
         agentTurnId: 'turn-1',
         sanitizedPreview: expect.stringContaining('Provider rejected'),
         source: 'agent_session_error',
@@ -554,6 +579,125 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     const turnCompleteIndex = events.findIndex((event) => event.kind === 'turn-complete');
     expect(assistantCommitIndex).toBeGreaterThanOrEqual(0);
     expect(turnCompleteIndex).toBeGreaterThan(assistantCommitIndex);
+  });
+
+  it.each([
+    ['turn-started first', false],
+    ['assistant stream first', true],
+  ])(
+    'hands off a terminal-settling turn to an immediate provider-started successor (%s)',
+    async (_notificationOrder, streamBeforeTurnStarted) => {
+      const runtime = createRuntime({
+        processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '25' },
+      });
+      const events: RuntimeEventV1[] = [];
+      runtime.events.subscribe((event) => {
+        events.push(event);
+      });
+
+      await runtime.send(
+        { v: 1, text: 'initial goal turn' },
+        { turnId: 'session-turn-initial' },
+      );
+      const initialCompletion = waitForCodexAppServerRuntimeTurnCompletion(runtime);
+      emitNotification('turn/completed', completedTurn('turn-1'));
+
+      const emitSuccessorAssistantDelta = () => {
+        emitNotification('item/agentMessage/delta', {
+          threadId: 'thread-1',
+          turnId: 'turn-native-goal-successor',
+          itemId: 'item-native-goal-successor',
+          delta: 'Native goal continuation',
+        });
+      };
+      if (streamBeforeTurnStarted) emitSuccessorAssistantDelta();
+      emitNotification('turn/started', {
+        threadId: 'thread-1',
+        turnId: 'turn-native-goal-successor',
+      });
+      if (!streamBeforeTurnStarted) emitSuccessorAssistantDelta();
+      emitNotification('turn/completed', completedTurn('turn-native-goal-successor'));
+
+      await initialCompletion;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (events.filter((event) => event.kind === 'turn-complete').length >= 2) break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+
+      const turnStarts = events.filter((event) => event.kind === 'turn-start');
+      const turnCompletions = events.filter((event) => event.kind === 'turn-complete');
+      expect(turnStarts).toHaveLength(2);
+      expect(turnStarts[0]).toMatchObject({
+        kind: 'turn-start',
+        turnId: 'session-turn-initial',
+        startedBy: 'user',
+      });
+      expect(turnStarts[1]).toMatchObject({
+        kind: 'turn-start',
+        agentTurnId: 'turn-native-goal-successor',
+        startedBy: 'provider',
+      });
+      expect(turnCompletions).toHaveLength(2);
+      expect(turnCompletions[0]).toMatchObject({
+        kind: 'turn-complete',
+        turnId: 'session-turn-initial',
+        agentTurnId: 'turn-1',
+      });
+      expect(turnCompletions[1]).toMatchObject({
+        kind: 'turn-complete',
+        turnId: turnStarts[1]?.turnId,
+        agentTurnId: 'turn-native-goal-successor',
+      });
+      expect(events).toContainEqual(expect.objectContaining({
+        kind: 'transcript-agent-message-committed',
+        body: { type: 'message', message: 'Native goal continuation' },
+      }));
+      expect(runtime.isTurnInFlight()).toBe(false);
+    },
+  );
+
+  it('adopts same-thread stream activity when a native turn starts after the predecessor settled', async () => {
+    const runtime = createRuntime({
+      processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '0' },
+    });
+    const events: RuntimeEventV1[] = [];
+    runtime.events.subscribe((event) => {
+      events.push(event);
+    });
+
+    await runtime.send(
+      { v: 1, text: 'turn before delayed native continuation' },
+      { turnId: 'session-turn-initial' },
+    );
+    const initialCompletion = waitForCodexAppServerRuntimeTurnCompletion(runtime);
+    emitNotification('turn/completed', completedTurn('turn-1'));
+    await initialCompletion;
+    expect(runtime.isTurnInFlight()).toBe(false);
+
+    emitNotification('item/agentMessage/delta', {
+      threadId: 'thread-1',
+      turnId: 'turn-native-stream-first-after-settle',
+      itemId: 'item-native-stream-first-after-settle',
+      delta: 'Stream arrived before native turn start',
+    });
+    emitNotification('turn/started', {
+      threadId: 'thread-1',
+      turnId: 'turn-native-stream-first-after-settle',
+    });
+    emitNotification('turn/completed', completedTurn('turn-native-stream-first-after-settle'));
+
+    expect(events.filter((event) => event.kind === 'turn-start')).toHaveLength(2);
+    expect(events.filter((event) => event.kind === 'turn-start')[1]).toMatchObject({
+      kind: 'turn-start',
+      agentTurnId: 'turn-native-stream-first-after-settle',
+      startedBy: 'provider',
+    });
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: 'transcript-agent-message-committed',
+      body: { type: 'message', message: 'Stream arrived before native turn start' },
+    }));
+    expect(events.filter((event) => event.kind === 'turn-complete')).toHaveLength(2);
+    expect(runtime.isTurnInFlight()).toBe(false);
   });
 
   it('publishes raw app-server function-call items as canonical runtime tool events', async () => {
@@ -918,21 +1062,70 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     await secondCompletion;
   });
 
-  it('settles the sole pending turn when a thread-less terminal notification carries a drifted provider id', async () => {
+  it('ignores an unknown mismatched terminal id until the owned provider turn completes', async () => {
     const runtime = createRuntime({
       processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '0' },
     });
-    await runtime.send({ v: 1, text: 'thread-less drift' });
+    const events: RuntimeEventV1[] = [];
+    runtime.events.subscribe((event) => {
+      events.push(event);
+    });
+    await runtime.send(
+      { v: 1, text: 'thread-less drift' },
+      { turnId: 'session-turn-owned' },
+    );
     const completion = waitForCodexAppServerRuntimeTurnCompletion(runtime);
-    // Thread-less terminal notifications have no child-thread evidence. This pins the current
-    // protocol choice: settle the one primary turn instead of leaving its thinking latch stuck.
     emitNotification('turn/completed', {
-      turn: { id: 'turn-1-drifted', status: 'completed' },
+      turn: { id: 'turn-unknown', status: 'completed' },
       status: 'completed',
     });
+    expect(runtime.isTurnInFlight()).toBe(true);
+    emitNotification('item/agentMessage/delta', {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: 'item-owned-after-mismatch',
+      delta: 'Still owned by the active turn',
+    });
+    emitNotification('turn/completed', completedTurn('turn-1'));
 
     await completion;
-    expect(runtime.canSteerPrompt()).toBe(false);
+    expect(events.filter((event) => event.kind === 'turn-start')).toHaveLength(1);
+    expect(events.filter((event) => event.kind === 'turn-complete')).toHaveLength(1);
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: 'transcript-agent-message-committed',
+      body: { type: 'message', message: 'Still owned by the active turn' },
+    }));
+    expect(runtime.isTurnInFlight()).toBe(false);
+  });
+
+  it('does not let a terminal id claim a pending turn before turn start is acknowledged', async () => {
+    const runtime = createRuntime({
+      processEnv: { HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS: '0' },
+    });
+    clientState.deferTurnStartForPrompt('delayed provider turn');
+
+    const send = runtime.send(
+      { v: 1, text: 'delayed provider turn' },
+      { turnId: 'session-turn-delayed' },
+    );
+    await waitForTurnStartCount(1);
+    emitNotification('turn/completed', {
+      threadId: 'thread-1',
+      turnId: 'turn-unknown-before-start-response',
+      status: 'completed',
+      turn: {
+        id: 'turn-unknown-before-start-response',
+        status: 'completed',
+      },
+    });
+
+    expect(runtime.isTurnInFlight()).toBe(true);
+
+    clientState.resolveDeferredTurnStart('turn-delayed-owned');
+    await send;
+    emitNotification('turn/completed', completedTurn('turn-delayed-owned'));
+    await waitForCodexAppServerRuntimeTurnCompletion(runtime);
+    expect(runtime.isTurnInFlight()).toBe(false);
   });
 
   it('rolls back the latest completed app-server turn through the native thread rollback RPC', async () => {
@@ -984,7 +1177,29 @@ describe('Codex app-server temporary recoverable turn failures', () => {
   });
 
   it('surfaces the original temporary failure when the host retry fails too', async () => {
-    const runtime = createRuntime();
+    const fixture = createPluginContextV1Fixture({ sessionId: 'session-1' });
+    const refreshRuntimeAuth = vi.fn(async () => ({
+      status: 'unavailable' as const,
+      reason: 'runtime_auth_selection_unavailable',
+    }));
+    const runtime = createRuntime({
+      ctx: {
+        ...fixture.ctx,
+        sessions: {
+          ...fixture.ctx.sessions,
+          current: {
+            ...fixture.ctx.sessions.current,
+            auth: {
+              services: {
+                refreshRuntimeAuth,
+              },
+            },
+          },
+        },
+      },
+    });
+    const events: RuntimeEventV1[] = [];
+    runtime.events.subscribe((event) => events.push(event));
 
     await runtime.send({ v: 1, text: 'original prompt' });
     emitNotification(
@@ -994,12 +1209,31 @@ describe('Codex app-server temporary recoverable turn failures', () => {
 
     const waitForCompletion = waitForCodexAppServerRuntimeTurnCompletion(runtime);
     await waitForTurnStartCount(2);
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (events.some((event) => event.kind === 'turn-agent-id-observed' && event.agentTurnId === 'turn-2')) break;
+      await Promise.resolve();
+    }
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: 'turn-agent-id-observed',
+      agentTurnId: 'turn-2',
+    }));
     emitNotification(
       'turn/completed',
       failedCapacityTurn('turn-2', 'RETRY_CAPACITY_FAILURE: Selected model is at capacity. Please try a different model.'),
     );
 
     await expect(waitForCompletion).rejects.toThrow('ORIGINAL_CAPACITY_FAILURE');
+    expect(refreshRuntimeAuth).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: 'codex',
+      serviceId: 'openai-codex',
+      targetId: 'session-1',
+      reason: 'provider_session_capacity_failure',
+      classification: expect.objectContaining({
+        kind: 'capacity',
+        limitCategory: 'capacity',
+        quotaScope: 'provider',
+      }),
+    }));
   });
 
   it('does not emit an undeliverable prompt while an unaccepted recoverable failure retries internally', async () => {
@@ -1079,6 +1313,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       sessionParams: {
         sessionId: 'session-1',
         directory: '/workspace',
+        providerBindingMaterialization,
         metadata: {
           modelSelectionIntentV1: {
             v: 1,
@@ -1097,6 +1332,67 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       method: 'thread/start',
       params: expect.objectContaining({
         model: 'gpt-5.4-mini',
+        modelProvider: 'happier_0123456789abcdef0123456789abcdef',
+        config: providerBindingMaterialization.engineConfig.config,
+      }),
+    });
+  });
+
+  it('fails closed when a provider-bound selection reaches Codex without materialization', async () => {
+    const fixture = createPluginContextV1Fixture({ sessionId: 'session-1' });
+
+    await expect(createCodexAppServerSessionRuntime({
+      ctx: fixture.ctx,
+      sessionParams: {
+        sessionId: 'session-1',
+        directory: '/workspace',
+        metadata: {
+          modelSelectionIntentV1: {
+            v: 1,
+            updatedAt: 123,
+            selection: {
+              agentTargetKey: 'backend:codex',
+              providerConnectionId: 'pc_work',
+              modelId: 'gpt-5.4-mini',
+            },
+          },
+        },
+      },
+    })).rejects.toThrow(/provider binding materialization/i);
+    expect(clientState.requests.some((request) => request.method === 'thread/start')).toBe(false);
+  });
+
+  it('reapplies the provider binding to cold resume before the first resumed turn', async () => {
+    const fixture = createPluginContextV1Fixture({ sessionId: 'session-1' });
+
+    await createCodexAppServerSessionRuntime({
+      ctx: fixture.ctx,
+      sessionParams: {
+        sessionId: 'session-1',
+        directory: '/workspace',
+        initialRuntimeState: { providerSessionId: 'codex-thread-1' },
+        providerBindingMaterialization,
+        metadata: {
+          modelSelectionIntentV1: {
+            v: 1,
+            updatedAt: 123,
+            selection: {
+              agentTargetKey: 'backend:codex',
+              providerConnectionId: 'pc_work',
+              modelId: 'gpt-5.4-mini',
+            },
+          },
+        },
+      },
+    });
+
+    expect(clientState.requests.find((request) => request.method === 'thread/resume')).toMatchObject({
+      method: 'thread/resume',
+      params: expect.objectContaining({
+        threadId: 'codex-thread-1',
+        model: 'gpt-5.4-mini',
+        modelProvider: 'happier_0123456789abcdef0123456789abcdef',
+        config: providerBindingMaterialization.engineConfig.config,
       }),
     });
   });
@@ -1269,8 +1565,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
 
       const runtime = createRuntime({
         processEnv: { CODEX_HOME: codexHome },
-        ctx: {
-          accountUsage: createAccountUsageService({
+        accountUsage: createAccountUsageService({
             recordSnapshot: async (input: unknown) => {
               records.push(input);
               return { status: 'recorded', recordId: 'paug_v1_test' };
@@ -1280,7 +1575,6 @@ describe('Codex app-server temporary recoverable turn failures', () => {
               return { status: 'adopted', fromRecordId: 'paug_v1_from', toRecordId: 'paug_v1_to' };
             },
           }),
-        },
       });
 
       await startCodexAppServerRuntime(runtime);
@@ -1331,8 +1625,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
 
       const runtime = createRuntime({
         processEnv: { CODEX_HOME: codexHome },
-        ctx: {
-          accountUsage: createAccountUsageService({
+        accountUsage: createAccountUsageService({
             resolveSourceContext: async (input: unknown) => {
               expect(input).toMatchObject({
                 serviceId: 'openai-codex',
@@ -1356,7 +1649,6 @@ describe('Codex app-server temporary recoverable turn failures', () => {
               return { status: 'adopted', fromRecordId: 'paug_v1_from', toRecordId: 'paug_v1_to' };
             },
           }),
-        },
       });
 
       await startCodexAppServerRuntime(runtime);
@@ -1412,8 +1704,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
 
       const runtime = createRuntime({
         processEnv: { CODEX_HOME: codexHome },
-        ctx: {
-          accountUsage: createAccountUsageService({
+        accountUsage: createAccountUsageService({
             resolveSourceContext: async () => ({
               serviceId: 'openai-codex',
               profileId: 'team',
@@ -1425,7 +1716,6 @@ describe('Codex app-server temporary recoverable turn failures', () => {
               return { status: 'recorded', recordId: 'paug_v1_test' };
             },
           }),
-        },
       });
 
       await runtime.send({ v: 1, text: 'use the current account' });
@@ -1468,14 +1758,12 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     const runtime = createRuntime({
       happierSessionId: 'session-provisional',
       processEnv: { CODEX_HOME: '/missing/codex-home' },
-      ctx: {
-        accountUsage: createAccountUsageService({
+      accountUsage: createAccountUsageService({
           recordSnapshot: async (input: unknown) => {
             records.push(input);
             return { status: 'recorded', recordId: 'paug_v1_test' };
           },
         }),
-      },
     });
 
     await startCodexAppServerRuntime(runtime);
@@ -1537,14 +1825,12 @@ describe('Codex app-server temporary recoverable turn failures', () => {
             generation: 12,
           }]),
         },
-        ctx: {
-          accountUsage: createAccountUsageService({
+        accountUsage: createAccountUsageService({
             recordSnapshot: async (input: unknown) => {
               records.push(input);
               return { status: 'recorded', recordId: 'paug_v1_live' };
             },
           }),
-        },
       }));
 
       await runtime.send({ v: 1, text: 'quota failure prompt' }, { turnId: 'codex-turn-1' });

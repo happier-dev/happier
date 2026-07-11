@@ -12,6 +12,7 @@ import type {
 
 import { readCodexMcpConfigServers } from './agent/mcp/configServers.js';
 import { createCodexBackendEngine } from './agent/engine/createCodexBackendEngine.js';
+import { CODEX_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
 import {
   augmentCodexDaemonSpawnEnv,
   resolveCodexDaemonSpawnPrerequisites,
@@ -65,6 +66,7 @@ function readCodexConfigDiscoveryProvider(): typeof PLUGIN_MANIFEST.contributes.
 export function activate(api: PluginApi): void {
   api.registerAgentRuntime({
     agentId: 'codex',
+    providerBinding: CODEX_PROVIDER_BINDING_ADAPTER_V1,
     create: createCodexBackendEngine,
   });
   api.registerDaemonAuthBridge({

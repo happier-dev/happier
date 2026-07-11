@@ -212,7 +212,7 @@ describe('checkCodexUsageLimitRecoveryNow', () => {
       status: 200,
       statusText: 'OK',
       headers: new Headers(),
-      json: async () => ({ ok: true }),
+      json: async () => ({ code: 'reset', windows_reset: 2 }),
       text: async () => '',
       arrayBuffer: async () => new ArrayBuffer(0),
     } as Response));
@@ -245,10 +245,9 @@ describe('checkCodexUsageLimitRecoveryNow', () => {
         headers: expect.objectContaining({
           Authorization: expect.stringMatching(/^Bearer /),
           'ChatGPT-Account-Id': 'acct-chatgpt',
-          'Idempotency-Key': expectedIdempotencyKey,
         }),
         body: JSON.stringify({
-          idempotency_key: expectedIdempotencyKey,
+          redeem_request_id: expectedIdempotencyKey,
         }),
       }),
     );
@@ -281,7 +280,7 @@ describe('checkCodexUsageLimitRecoveryNow', () => {
       status: 200,
       statusText: 'OK',
       headers: new Headers(),
-      json: async () => ({ ok: true }),
+      json: async () => ({ code: 'reset', windows_reset: 2 }),
       text: async () => '',
       arrayBuffer: async () => new ArrayBuffer(0),
     } as Response));
@@ -322,12 +321,14 @@ describe('checkCodexUsageLimitRecoveryNow', () => {
       },
     })).resolves.toMatchObject({ ok: true });
 
-    const firstKey = (fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.headers?.[
-      'Idempotency-Key' as keyof HeadersInit
-    ];
-    const secondKey = (fetchMock.mock.calls[1]?.[1] as RequestInit | undefined)?.headers?.[
-      'Idempotency-Key' as keyof HeadersInit
-    ];
+    const firstBody = JSON.parse(String(
+      (fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body,
+    )) as Readonly<{ redeem_request_id?: string }>;
+    const secondBody = JSON.parse(String(
+      (fetchMock.mock.calls[1]?.[1] as RequestInit | undefined)?.body,
+    )) as Readonly<{ redeem_request_id?: string }>;
+    const firstKey = firstBody.redeem_request_id;
+    const secondKey = secondBody.redeem_request_id;
     expect(firstKey).toContain('turn-1');
     expect(secondKey).toContain('turn-2');
     expect(secondKey).not.toBe(firstKey);

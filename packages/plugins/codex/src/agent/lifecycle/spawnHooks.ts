@@ -1,4 +1,5 @@
 import { validateCodexAcpSpawnAvailability } from '../acp/availability.js';
+import { resolveCodexProviderBindingRuntimeVersionV1 } from '../providerBinding/version.js';
 
 import { resolveCodexAcpSpawnPrerequisiteFailure } from './acpSpawnPrerequisites.js';
 import { resolveCanonicalCodexBackendMode } from './backendMode.js';
@@ -20,6 +21,19 @@ type CodexDaemonSpawnToolResolutionContext = Readonly<{
     sourcePreference?: 'system-first' | 'managed-first';
     reason: string;
   }>): Promise<CodexDaemonResolvedTool>;
+  runSystemTool?(input: Readonly<{
+    toolId: string;
+    sourcePreference?: 'system-first' | 'managed-first';
+    args?: readonly string[];
+    timeoutMs?: number;
+    maxStdoutBytes?: number;
+    maxStderrBytes?: number;
+    reason: string;
+  }>): Promise<Readonly<{
+    ok: boolean;
+    stdout?: string;
+    stderr?: string;
+  }>>;
 }>;
 
 type CodexDaemonSpawnHookContext = Readonly<{
@@ -55,10 +69,43 @@ function resolveCodexDaemonBackendMode(event: CodexDaemonHookEvent): 'acp' | 'ap
   }) ?? null;
 }
 
+function hasCodexProviderBinding(event: CodexDaemonHookEvent): boolean {
+  return readRecord(readCodexRuntimeSelection(event).providerBinding)?.agentTargetKey === 'codex';
+}
+
 export async function resolveCodexDaemonSpawnPrerequisites(
   event: CodexDaemonHookEvent,
   context?: CodexDaemonSpawnHookContext,
 ): Promise<CodexDaemonSpawnPrerequisiteResult> {
+  if (hasCodexProviderBinding(event)) {
+    const runSystemTool = context?.tools?.runSystemTool;
+    if (!runSystemTool) {
+      return {
+        allowed: false,
+        reasonCode: 'codex_provider_runtime_unsupported',
+        errorMessage: 'External providers require an installed Codex CLI version check before launch.',
+      };
+    }
+    const command = await runSystemTool({
+      toolId: 'codex',
+      sourcePreference: 'system-first',
+      args: ['--version'],
+      timeoutMs: 5_000,
+      maxStdoutBytes: 4_096,
+      maxStderrBytes: 4_096,
+      reason: 'External providers require a verified Codex CLI version.',
+    });
+    const version = resolveCodexProviderBindingRuntimeVersionV1(
+      command.ok ? `${command.stdout ?? ''}\n${command.stderr ?? ''}` : '',
+    );
+    if (!version.ok) {
+      return {
+        allowed: false,
+        reasonCode: version.reasonCode,
+        errorMessage: version.errorMessage,
+      };
+    }
+  }
   if (resolveCodexDaemonBackendMode(event) !== 'acp') {
     return { allowed: true };
   }
