@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { WebView } from 'react-native-webview';
+
+import { LocalPreviewTarget } from '@/components/browser/adapters/LocalPreviewTarget.native';
 
 export function LocalServicePreviewFrame(props: Readonly<{
     title: string;
@@ -7,9 +8,9 @@ export function LocalServicePreviewFrame(props: Readonly<{
     testID: string;
 }>): React.ReactElement {
     return (
-        <WebView
-            accessibilityLabel={props.title}
-            source={{ uri: props.url }}
+        <LocalPreviewTarget
+            title={props.title}
+            url={props.url}
             testID={props.testID}
         />
     );
