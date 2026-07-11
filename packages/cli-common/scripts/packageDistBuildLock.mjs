@@ -3,6 +3,11 @@ import { closeSync, mkdirSync, openSync, readFileSync, rmSync, statSync, unlinkS
 import { dirname } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
+import {
+    createWorkspaceLockLeaseValue,
+    workspaceLockLeaseMatchesOwner,
+} from '../workspaceLockLease.mjs';
+
 function parsePositiveEnvInt(value, fallback) {
     const parsed = Number.parseInt(String(value ?? '').trim(), 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -72,7 +77,11 @@ function describeLockOwner(lockPath, nowMs) {
 }
 
 function callerAlreadyHoldsLock(lockPath, env) {
-    return String(env?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD ?? '') === lockPath;
+    return workspaceLockLeaseMatchesOwner({
+        lockPath,
+        leaseValue: env?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD,
+        owner: parseLockOwner(lockPath),
+    });
 }
 
 export function deleteLockIfOwnerMatches(lockPath, expectedOwner, {
@@ -103,7 +112,11 @@ export async function withPackageDistBuildLock(fn, {
     }
 
     if (callerAlreadyHoldsLock(lockPath, env)) {
-        return await fn({ alreadyHeld: true, waited: false });
+        return await fn({
+            alreadyHeld: true,
+            waited: false,
+            heldLockValue: env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD,
+        });
     }
 
     mkdirSync(dirname(lockPath), { recursive: true });
@@ -169,7 +182,11 @@ export async function withPackageDistBuildLock(fn, {
                 // ignore heartbeat write races during teardown
             }
         }, Math.max(500, Math.min(5_000, Math.floor(staleAfterMs / 4))));
-        return await fn({ alreadyHeld: false, waited });
+        return await fn({
+            alreadyHeld: false,
+            waited,
+            heldLockValue: createWorkspaceLockLeaseValue({ lockPath, ownerToken }),
+        });
     } finally {
         if (heartbeat) clearInterval(heartbeat);
         if (acquired) {

@@ -197,12 +197,20 @@ export async function buildCliBinaryArtifactPayload({
     hostPackageDir: cliDir,
   });
   const snapshotDistDir = await withCliDistBuildLock<string>(
-    async () => {
+    async ({ heldLockValue }) => {
+      const runCommandWithHeldDistLock: RunCommand = (cmd, args, options = {}) => runCommand(cmd, args, {
+        ...options,
+        env: {
+          ...process.env,
+          ...(options.env ?? {}),
+          HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldLockValue,
+        },
+      });
       await ensureBundledWorkspacePackagesBuilt({
         repoRoot,
         bundles: workspaceBundles.map(({ packageName, srcDir }) => ({ packageName, srcDir })),
         yarn,
-        runCommand,
+        runCommand: runCommandWithHeldDistLock,
       });
       syncCliBundledWorkspacePackagesForCompile(cliDir, workspaceBundles);
 
@@ -224,7 +232,7 @@ export async function buildCliBinaryArtifactPayload({
         distEntrypointPath: entrypoint,
         reuseExistingDistSnapshot,
         buildDist: async () => {
-          await runCommand(yarn.cmd, [...yarn.args, '--cwd', 'apps/cli', 'build'], { cwd: repoRoot });
+          await runCommandWithHeldDistLock(yarn.cmd, [...yarn.args, '--cwd', 'apps/cli', 'build'], { cwd: repoRoot });
           await ensureFileExists(entrypoint);
         },
       });

@@ -1,9 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { setTimeout as delay } from 'node:timers/promises';
 
+import { withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
 import { createPackageDistBuildPlan } from './packageDistBuildPlan.mjs';
 import {
   cleanupPackageDistBuildArtifacts,
@@ -44,106 +44,24 @@ export function resolveCliCommonDistBuildLockPath(packageDir) {
   return join(repoRoot, '.project', 'tmp', 'workspace-dist-builds', `${workspacePackageLockSlug(resolvedPackageDir, packageJson)}.lock`);
 }
 
-function parseLockOwner(lockPath) {
-  try {
-    const raw = readFileSync(lockPath, 'utf8').trim();
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function isPidAlive(pid) {
-  const n = Number(pid);
-  if (!Number.isInteger(n) || n <= 0) return false;
-  try {
-    process.kill(n, 0);
-    return true;
-  } catch (error) {
-    return error?.code === 'EPERM';
-  }
-}
-
-function shouldReclaimLock(lockPath, staleAfterMs, nowMs) {
-  const owner = parseLockOwner(lockPath);
-  if (!owner) return true;
-  if (owner.pid && !isPidAlive(owner.pid)) return true;
-  const updatedAtMs = Number(owner.updatedAtMs ?? owner.createdAtMs ?? 0);
-  return Boolean(updatedAtMs && nowMs - updatedAtMs > staleAfterMs);
-}
-
-function serializeLockOwner(nowMs) {
-  return JSON.stringify({ pid: process.pid, createdAtMs: nowMs, updatedAtMs: nowMs });
-}
-
 export async function withWorkspaceDistBuildLock(fn, options) {
   const lockPath = options?.lockPath;
   if (!lockPath) throw new Error('withWorkspaceDistBuildLock requires lockPath');
 
   const env = options?.env ?? process.env;
-  if (String(env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD ?? '').trim() === lockPath) {
-    return await fn({ waited: false });
-  }
-
-  mkdirSync(dirname(lockPath), { recursive: true });
-
   const timeoutMs = options?.timeoutMs ?? 240_000;
   const pollIntervalMs = options?.pollIntervalMs ?? 250;
   const staleAfterMs = options?.staleAfterMs ?? timeoutMs;
-  const startedAt = Date.now();
-  let fd = null;
-  let heartbeat = null;
-  let waited = false;
-
-  while (true) {
-    try {
-      fd = openSync(lockPath, 'wx');
-      writeFileSync(fd, serializeLockOwner(Date.now()), 'utf8');
-      closeSync(fd);
-      break;
-    } catch (error) {
-      if (fd !== null) {
-        try {
-          closeSync(fd);
-        } catch {
-          // best-effort cleanup
-        }
-        fd = null;
-      }
-      if (error?.code !== 'EEXIST') throw error;
-      if (shouldReclaimLock(lockPath, staleAfterMs, Date.now())) {
-        rmSync(lockPath, { force: true });
-        continue;
-      }
-      if (Date.now() - startedAt > timeoutMs) {
-        throw new Error(`Timed out waiting for workspace dist build lock: ${lockPath}`);
-      }
-      waited = true;
-      await delay(pollIntervalMs);
-    }
-  }
-
-  try {
-    heartbeat = setInterval(() => {
-      try {
-        writeFileSync(lockPath, serializeLockOwner(Date.now()), 'utf8');
-      } catch {
-        // best-effort heartbeat
-      }
-    }, Math.max(500, Math.min(5_000, Math.floor(staleAfterMs / 4))));
-    return await fn({ waited });
-  } finally {
-    if (heartbeat) clearInterval(heartbeat);
-    if (fd !== null) {
-      try {
-        unlinkSync(lockPath);
-      } catch {
-        // best-effort cleanup
-      }
-    }
-  }
+  return await withWorkspaceBundleLock(
+    ({ waited, heldLockValue, inherited }) => fn({ waited, heldLockValue, inherited }),
+    {
+      lockPath,
+      heldLockValue: env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD,
+      timeoutMs,
+      pollIntervalMs,
+      staleAfterMs,
+    },
+  );
 }
 
 function runChecked(command, args, options, runCommandImpl) {
@@ -233,7 +151,7 @@ export async function buildPackageDistAtomically(options = {}) {
   const lockPollMs = options.lockPollMs
     ?? parsePositiveInteger(commandEnv.HAPPIER_PACKAGE_DIST_BUILD_LOCK_POLL_MS, 250);
 
-  return await withWorkspaceDistBuildLock(async () => {
+  return await withWorkspaceDistBuildLock(async ({ heldLockValue }) => {
     let stageRoot = null;
     let distMovedToBackup = false;
 
@@ -248,7 +166,7 @@ export async function buildPackageDistAtomically(options = {}) {
         })),
         env: {
           ...commandEnv,
-          HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: lockPath,
+          HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldLockValue,
         },
       });
       stageRoot = stagedBuild.stageRoot;

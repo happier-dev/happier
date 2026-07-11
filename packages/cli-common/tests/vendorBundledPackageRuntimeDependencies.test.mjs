@@ -16,8 +16,14 @@ test('vendorBundledPackageRuntimeDependencies vendors transitive external depend
 
     mkdirSync(srcPackageDir, { recursive: true });
     mkdirSync(destPackageDir, { recursive: true });
+    mkdirSync(join(destPackageDir, 'node_modules', 'legacy-dependency'), { recursive: true });
     mkdirSync(depADir, { recursive: true });
     mkdirSync(depBDir, { recursive: true });
+    writeFileSync(
+      join(destPackageDir, 'node_modules', 'legacy-dependency', 'index.js'),
+      'module.exports = { legacy: true };\n',
+      'utf8',
+    );
 
     writeFileSync(
       srcPackageJsonPath,
@@ -77,6 +83,11 @@ test('vendorBundledPackageRuntimeDependencies vendors transitive external depend
         readFileSync(join(destPackageDir, 'node_modules', 'dep-a', 'node_modules', 'dep-b', 'package.json'), 'utf8'),
       ).name,
       'dep-b',
+    );
+    assert.equal(
+      existsSync(join(destPackageDir, 'node_modules', 'legacy-dependency', 'index.js')),
+      true,
+      'live vendoring must retain prior dependency targets for in-flight resolvers',
     );
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });

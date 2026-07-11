@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { buildCliBinaryArtifactPayload } from './buildCliBinaryArtifactPayload.js';
+import { parseWorkspaceLockLeaseValue } from '../../workspaceLockLease.mjs';
 
 const tempDirs: string[] = [];
 
@@ -399,15 +400,19 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             }
         }
 
-        const runCommandCalls: Array<{ cmd: string; args: string[] }> = [];
+        const runCommandCalls: Array<{
+            cmd: string;
+            args: string[];
+            options?: { env?: NodeJS.ProcessEnv };
+        }> = [];
         const compiledEntrypoints: string[] = [];
 
         await buildCliBinaryArtifactPayload({
             repoRoot,
             payloadDir,
             commandProbe: (command) => command === 'bun' || command === 'yarn',
-            runCommand: async (cmd, args) => {
-                runCommandCalls.push({ cmd, args });
+            runCommand: async (cmd, args, options) => {
+                runCommandCalls.push({ cmd, args, options });
                 await writeRepoFile(join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs'), rebuiltEntrypointContent, newer);
             },
             compileBinary: async ({ entrypoint, outfile }) => {
@@ -417,6 +422,13 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
         });
 
         expect(runCommandCalls).toHaveLength(1);
+        expect(
+            parseWorkspaceLockLeaseValue(
+                runCommandCalls[0]?.options?.env?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD,
+            ),
+        ).toMatchObject({
+            path: join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock'),
+        });
         expect(compiledEntrypoints).toEqual([rebuiltEntrypointContent]);
     });
 });

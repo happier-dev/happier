@@ -16,6 +16,22 @@
       "require": "./jsonOwnerBuildLockState.cjs",
       "default": "./jsonOwnerBuildLockState.cjs"
     },
+    "./cliDistBuildManifest": {
+      "types": "./cliDistBuildManifest.d.cts",
+      "import": "./cliDistBuildManifest.cjs",
+      "require": "./cliDistBuildManifest.cjs",
+      "default": "./cliDistBuildManifest.cjs"
+    },
+    "./workspaceBundleLock": {
+      "types": "./workspaceBundleLock.d.mts",
+      "import": "./workspaceBundleLock.mjs",
+      "default": "./workspaceBundleLock.mjs"
+    },
+    "./workspaceLockLease": {
+      "types": "./workspaceLockLease.d.mts",
+      "import": "./workspaceLockLease.mjs",
+      "default": "./workspaceLockLease.mjs"
+    },
     "./links": {
       "types": "./dist/links.d.ts",
       "import": "./dist/links.js",

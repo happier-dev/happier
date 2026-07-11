@@ -12,6 +12,36 @@ function writeLockOwner(lockPath: string, owner: { pid: number; createdAtMs: num
 }
 
 describe('withCliDistBuildLock', () => {
+    it('permits reentry only with the current owner lease', async () => {
+        const repoRoot = mkdtempSync(join(tmpdir(), 'cli-common-dist-lock-reentry-'));
+        const lockPath = join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
+        try {
+            const result = await withCliDistBuildLock(
+                async ({ heldLockValue }) =>
+                    await withCliDistBuildLock(
+                        async () => 'nested',
+                        {
+                            lockPath,
+                            heldLockValue,
+                            timeoutMs: 60,
+                            pollIntervalMs: 10,
+                            staleAfterMs: 1_000,
+                        },
+                    ),
+                {
+                    lockPath,
+                    timeoutMs: 1_000,
+                    pollIntervalMs: 10,
+                    staleAfterMs: 1_000,
+                },
+            );
+
+            expect(result).toBe('nested');
+        } finally {
+            rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('reclaims a lock from a dead owner immediately', async () => {
         const repoRoot = mkdtempSync(join(tmpdir(), 'cli-common-dist-lock-'));
         const lockPath = join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');

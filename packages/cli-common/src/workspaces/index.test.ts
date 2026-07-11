@@ -2,6 +2,7 @@ import {
   atomicReplaceDirSync,
   bundleWorkspacePackage,
   bundleWorkspacePackageWithRuntimeDependencies,
+  bundleWorkspacePackagesWithRuntimeDependencies,
   copyDirSafeSync,
   hasBundledWorkspacePackagesHealthy,
   resolveWorkspaceBundlesFromPackageJson,
@@ -15,6 +16,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -126,6 +128,86 @@ describe('bundleWorkspacePackage', () => {
     expect(readFileSync(resolve(destPackageDir, 'releaseRings.cjs'), 'utf8')).toContain('releaseRings');
   });
 
+  it('can reconcile a complete workspace package while keeping its live directory mounted', () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-live-workspace-package-'));
+
+    const srcPackageDir = resolve(rootDir, 'packages/cli-common');
+    const srcDistDir = resolve(srcPackageDir, 'dist');
+    mkdirSync(srcDistDir, { recursive: true });
+    writeFileSync(
+      resolve(srcPackageDir, 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/cli-common',
+        version: '0.0.0',
+        type: 'module',
+        exports: { './publication-test': './dist/next.js' },
+      }),
+    );
+    writeFileSync(resolve(srcDistDir, 'next.js'), 'export const version = "next";\n');
+
+    const destPackageDir = resolve(rootDir, 'apps/cli/node_modules/@happier-dev/cli-common');
+    mkdirSync(resolve(destPackageDir, 'dist'), { recursive: true });
+    writeFileSync(
+      resolve(destPackageDir, 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/cli-common',
+        version: '0.0.0',
+        type: 'module',
+        exports: { './publication-test': './dist/previous.js' },
+      }),
+    );
+    writeFileSync(resolve(destPackageDir, 'dist/previous.js'), 'export const version = "previous";\n');
+    const liveDirectoryInode = statSync(destPackageDir).ino;
+
+    bundleWorkspacePackage({
+      packageName: '@happier-dev/cli-common',
+      srcDir: srcPackageDir,
+      destDir: destPackageDir,
+      preserveDestinationPath: true,
+    });
+
+    expect(statSync(destPackageDir).ino).toBe(liveDirectoryInode);
+    expect(existsSync(resolve(destPackageDir, 'dist/previous.js'))).toBe(false);
+    expect(readFileSync(resolve(destPackageDir, 'dist/next.js'), 'utf8')).toBe('export const version = "next";\n');
+  });
+
+  it('can repair a mounted workspace package without pruning existing files', () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-presence-workspace-package-'));
+
+    const srcPackageDir = resolve(rootDir, 'packages/protocol');
+    const srcDistDir = resolve(srcPackageDir, 'dist');
+    mkdirSync(srcDistDir, { recursive: true });
+    writeFileSync(
+      resolve(srcPackageDir, 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/protocol',
+        version: '0.0.0',
+        type: 'module',
+        exports: { '.': './dist/index.js' },
+      }),
+    );
+    writeFileSync(resolve(srcDistDir, 'index.js'), 'export const version = "next";\n');
+
+    const destPackageDir = resolve(rootDir, 'apps/cli/node_modules/@happier-dev/protocol');
+    mkdirSync(resolve(destPackageDir, 'dist'), { recursive: true });
+    writeFileSync(resolve(destPackageDir, 'package.json'), '{}\n');
+    writeFileSync(resolve(destPackageDir, 'dist/index.js'), 'export const version = "previous";\n');
+    writeFileSync(resolve(destPackageDir, 'dist/legacy.js'), 'export const legacy = true;\n');
+    const liveDirectoryInode = statSync(destPackageDir).ino;
+
+    bundleWorkspacePackage({
+      packageName: '@happier-dev/protocol',
+      srcDir: srcPackageDir,
+      destDir: destPackageDir,
+      preserveDestinationPath: true,
+      pruneStale: false,
+    });
+
+    expect(statSync(destPackageDir).ino).toBe(liveDirectoryInode);
+    expect(readFileSync(resolve(destPackageDir, 'dist/index.js'), 'utf8')).toBe('export const version = "next";\n');
+    expect(readFileSync(resolve(destPackageDir, 'dist/legacy.js'), 'utf8')).toBe('export const legacy = true;\n');
+  });
+
   it('bundles external runtime dependencies inside the same workspace replacement', async () => {
     rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundle-workspace-'));
 
@@ -176,6 +258,89 @@ describe('bundleWorkspacePackage', () => {
     expect(readFileSync(resolve(destPackageDir, 'node_modules/zod/v4/core/schemas.js'), 'utf8')).toBe(
       'export const schemas = {};\n',
     );
+  });
+
+  it('refreshes complete workspace bundles while keeping existing package directories mounted', () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-complete-workspace-bundles-'));
+
+    const srcPackageDir = resolve(rootDir, 'packages/protocol');
+    mkdirSync(resolve(srcPackageDir, 'dist'), { recursive: true });
+    writeFileSync(
+      resolve(srcPackageDir, 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/protocol',
+        version: '0.0.0',
+        type: 'module',
+        exports: { '.': './dist/index.js' },
+      }),
+    );
+    writeFileSync(resolve(srcPackageDir, 'dist/index.js'), 'export const version = "next";\n');
+
+    const destPackageDir = resolve(rootDir, 'apps/stack/node_modules/@happier-dev/protocol');
+    mkdirSync(resolve(destPackageDir, 'dist'), { recursive: true });
+    writeFileSync(
+      resolve(destPackageDir, 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/protocol',
+        exports: { './legacy': './dist/legacy.js' },
+      }),
+    );
+    writeFileSync(resolve(destPackageDir, 'dist/index.js'), 'export const version = "previous";\n');
+    writeFileSync(resolve(destPackageDir, 'dist/legacy.js'), 'export const legacy = true;\n');
+    const liveDirectoryInode = statSync(destPackageDir).ino;
+
+    bundleWorkspacePackagesWithRuntimeDependencies({
+      bundles: [{
+        packageName: '@happier-dev/protocol',
+        srcDir: srcPackageDir,
+        destDir: destPackageDir,
+      }],
+    });
+
+    expect(statSync(destPackageDir).ino).toBe(liveDirectoryInode);
+    expect(readFileSync(resolve(destPackageDir, 'dist/index.js'), 'utf8')).toBe(
+      'export const version = "next";\n',
+    );
+    expect(readFileSync(resolve(destPackageDir, 'dist/legacy.js'), 'utf8')).toBe(
+      'export const legacy = true;\n',
+    );
+  });
+
+  it('prunes retained live targets when preparing an exact artifact bundle', () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-artifact-workspace-bundles-'));
+
+    const srcPackageDir = resolve(rootDir, 'packages/protocol');
+    mkdirSync(resolve(srcPackageDir, 'dist'), { recursive: true });
+    writeFileSync(
+      resolve(srcPackageDir, 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/protocol',
+        version: '0.0.0',
+        type: 'module',
+        exports: { '.': './dist/index.js' },
+      }),
+    );
+    writeFileSync(resolve(srcPackageDir, 'dist/index.js'), 'export const version = "next";\n');
+
+    const destPackageDir = resolve(rootDir, 'apps/stack/node_modules/@happier-dev/protocol');
+    mkdirSync(resolve(destPackageDir, 'dist'), { recursive: true });
+    writeFileSync(resolve(destPackageDir, 'package.json'), '{}\n');
+    writeFileSync(resolve(destPackageDir, 'dist/index.js'), 'export const version = "previous";\n');
+    writeFileSync(resolve(destPackageDir, 'dist/legacy.js'), 'export const legacy = true;\n');
+
+    bundleWorkspacePackagesWithRuntimeDependencies({
+      publicationMode: 'artifact',
+      bundles: [{
+        packageName: '@happier-dev/protocol',
+        srcDir: srcPackageDir,
+        destDir: destPackageDir,
+      }],
+    });
+
+    expect(readFileSync(resolve(destPackageDir, 'dist/index.js'), 'utf8')).toBe(
+      'export const version = "next";\n',
+    );
+    expect(existsSync(resolve(destPackageDir, 'dist/legacy.js'))).toBe(false);
   });
 });
 
@@ -252,9 +417,9 @@ describe('resolveWorkspaceBundlesFromPackageJson', () => {
       });
 
       expect(bundles.map((bundle) => bundle.packageName)).toEqual([
+        '@happier-dev/protocol',
         '@happier-dev/agents',
         '@happier-dev/cli-common',
-        '@happier-dev/protocol',
       ]);
     } finally {
       rmSync(rootDir, { recursive: true, force: true });
@@ -604,6 +769,64 @@ describe('hasBundledWorkspacePackagesHealthy', () => {
     ).toBe(true);
   });
 
+  it('treats retained targets from the previous live generation as healthy', () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundled-health-retained-target-'));
+
+    const workspacePackageDir = resolve(rootDir, 'packages/protocol');
+    mkdirSync(resolve(workspacePackageDir, 'dist'), { recursive: true });
+    writeFileSync(
+      resolve(workspacePackageDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/protocol',
+          version: '0.0.0',
+          type: 'module',
+          exports: { '.': { default: './dist/index.js' } },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    writeFileSync(resolve(workspacePackageDir, 'dist/index.js'), 'export const version = "source";\n', 'utf8');
+
+    const hostPackageDir = resolve(rootDir, 'apps/cli');
+    const destPackageDir = resolve(hostPackageDir, 'node_modules', '@happier-dev', 'protocol');
+    mkdirSync(resolve(destPackageDir, 'dist'), { recursive: true });
+    writeFileSync(
+      resolve(hostPackageDir, 'package.json'),
+      JSON.stringify(
+        {
+          name: '@happier-dev/cli',
+          version: '0.0.0',
+          bundledDependencies: ['@happier-dev/protocol'],
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    writeFileSync(resolve(destPackageDir, 'package.json'), '{}\n', 'utf8');
+    writeFileSync(resolve(destPackageDir, 'dist/index.js'), 'export const version = "previous";\n', 'utf8');
+    writeFileSync(resolve(destPackageDir, 'dist/retained.js'), 'export const retained = true;\n', 'utf8');
+
+    bundleWorkspacePackage({
+      packageName: '@happier-dev/protocol',
+      srcDir: workspacePackageDir,
+      destDir: destPackageDir,
+      preserveDestinationPath: true,
+      pruneStale: false,
+    });
+
+    expect(existsSync(resolve(destPackageDir, 'dist/retained.js'))).toBe(true);
+    expect(
+      hasBundledWorkspacePackagesHealthy({
+        repoRoot: rootDir,
+        hostPackageDir,
+      }),
+    ).toBe(true);
+  });
+
   it('returns false when bundled workspace dist content is stale', () => {
     rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-bundled-health-stale-'));
 
@@ -905,6 +1128,212 @@ describe('atomicReplaceDirSync', () => {
       rmSync(rootDir, { recursive: true, force: true });
       rootDir = undefined;
     }
+  });
+
+  it('keeps a live runtime dependency path readable while replacing its contents', () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-atomic-replace-'));
+
+    const destDir = resolve(rootDir, 'apps/cli/node_modules/@happier-dev/protocol/node_modules');
+    const liveFile = resolve(destDir, '@noble/hashes/esm/sha512.js');
+    mkdirSync(resolve(destDir, '@noble/hashes/esm'), { recursive: true });
+    writeFileSync(liveFile, 'export const version = "old";\n');
+
+    let observedMissingLiveFile = false;
+
+    atomicReplaceDirSync({
+      destDir,
+      preserveDestinationPath: true,
+      buildInto(tempDir) {
+        mkdirSync(resolve(tempDir, '@noble/hashes/esm'), { recursive: true });
+        writeFileSync(resolve(tempDir, '@noble/hashes/esm/sha512.js'), 'export const version = "new";\n');
+      },
+      fsOps: {
+        renameSync(source, target) {
+          const result = renameSync(source, target);
+          if (!existsSync(liveFile)) observedMissingLiveFile = true;
+          return result;
+        },
+      },
+    });
+
+    expect(observedMissingLiveFile).toBe(false);
+    expect(readFileSync(liveFile, 'utf8')).toBe('export const version = "new";\n');
+  });
+
+  it('retries transient Windows-style failures while replacing a live file', () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-atomic-live-file-retry-'));
+
+    const destDir = resolve(rootDir, 'apps/cli/node_modules/@happier-dev/protocol');
+    const liveFile = resolve(destDir, 'dist/index.js');
+    mkdirSync(resolve(destDir, 'dist'), { recursive: true });
+    writeFileSync(liveFile, 'export const version = "old";\n');
+
+    let replacementAttempts = 0;
+    atomicReplaceDirSync({
+      destDir,
+      preserveDestinationPath: true,
+      pruneStale: false,
+      buildInto(tempDir) {
+        mkdirSync(resolve(tempDir, 'dist'), { recursive: true });
+        writeFileSync(resolve(tempDir, 'dist/index.js'), 'export const version = "new";\n');
+      },
+      fsOps: {
+        renameSync(source, target) {
+          if (target === liveFile) {
+            replacementAttempts += 1;
+            if (replacementAttempts < 3) {
+              expect(readFileSync(liveFile, 'utf8')).toBe('export const version = "old";\n');
+              const error = new Error('EPERM');
+              Reflect.set(error, 'code', 'EPERM');
+              throw error;
+            }
+          }
+          return renameSync(source, target);
+        },
+      },
+    });
+
+    expect(replacementAttempts).toBe(3);
+    expect(readFileSync(liveFile, 'utf8')).toBe('export const version = "new";\n');
+  });
+
+  it('does not republish unchanged live files', () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-atomic-live-file-noop-'));
+
+    const destDir = resolve(rootDir, 'apps/cli/node_modules/@happier-dev/protocol');
+    const liveFile = resolve(destDir, 'dist/index.js');
+    mkdirSync(resolve(destDir, 'dist'), { recursive: true });
+    writeFileSync(liveFile, 'export const version = "same";\n');
+    const previousInode = statSync(liveFile).ino;
+
+    let liveReplacementAttempts = 0;
+    atomicReplaceDirSync({
+      destDir,
+      preserveDestinationPath: true,
+      pruneStale: false,
+      buildInto(tempDir) {
+        mkdirSync(resolve(tempDir, 'dist'), { recursive: true });
+        writeFileSync(resolve(tempDir, 'dist/index.js'), 'export const version = "same";\n');
+      },
+      fsOps: {
+        renameSync(source, target) {
+          if (target === liveFile) liveReplacementAttempts += 1;
+          return renameSync(source, target);
+        },
+      },
+    });
+
+    expect(liveReplacementAttempts).toBe(0);
+    expect(statSync(liveFile).ino).toBe(previousInode);
+  });
+
+  it('rolls back files already published when a later live replacement fails persistently', () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-atomic-live-file-rollback-'));
+
+    const destDir = resolve(rootDir, 'apps/cli/node_modules/@happier-dev/protocol');
+    const firstLiveFile = resolve(destDir, 'dist/a.js');
+    const failingLiveFile = resolve(destDir, 'dist/b.js');
+    const packageJsonPath = resolve(destDir, 'package.json');
+    mkdirSync(resolve(destDir, 'dist'), { recursive: true });
+    writeFileSync(firstLiveFile, 'export const version = "old-a";\n');
+    writeFileSync(failingLiveFile, 'export const version = "old-b";\n');
+    writeFileSync(packageJsonPath, JSON.stringify({ version: 'old' }));
+
+    let failingReplacementAttempts = 0;
+    let failingTargetRemovalAttempts = 0;
+    expect(() =>
+      atomicReplaceDirSync({
+        destDir,
+        preserveDestinationPath: true,
+        pruneStale: false,
+        buildInto(tempDir) {
+          mkdirSync(resolve(tempDir, 'dist'), { recursive: true });
+          writeFileSync(resolve(tempDir, 'dist/a.js'), 'export const version = "new-a";\n');
+          writeFileSync(resolve(tempDir, 'dist/b.js'), 'export const version = "new-b";\n');
+          writeFileSync(resolve(tempDir, 'package.json'), JSON.stringify({ version: 'new' }));
+        },
+        fsOps: {
+          renameSync(source, target) {
+            if (target === failingLiveFile && String(source).includes('.__sync_tmp__.')) {
+              failingReplacementAttempts += 1;
+              const error = new Error('EPERM');
+              Reflect.set(error, 'code', 'EPERM');
+              throw error;
+            }
+            return renameSync(source, target);
+          },
+          rmSync(path, options) {
+            if (path === failingLiveFile) {
+              failingTargetRemovalAttempts += 1;
+              const error = new Error('EPERM');
+              Reflect.set(error, 'code', 'EPERM');
+              throw error;
+            }
+            return rmSync(path, options);
+          },
+        },
+      }),
+    ).toThrow(/EPERM/);
+
+    expect(failingReplacementAttempts).toBe(6);
+    expect(failingTargetRemovalAttempts).toBe(0);
+    expect(readFileSync(firstLiveFile, 'utf8')).toBe('export const version = "old-a";\n');
+    expect(readFileSync(failingLiveFile, 'utf8')).toBe('export const version = "old-b";\n');
+    expect(JSON.parse(readFileSync(packageJsonPath, 'utf8')).version).toBe('old');
+  });
+
+  it('publishes a new package manifest after its targets exist and before prior targets are pruned', () => {
+    rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-common-atomic-package-publication-'));
+
+    const destDir = resolve(rootDir, 'apps/cli/node_modules/@happier-dev/cli-common');
+    const packageJsonPath = resolve(destDir, 'package.json');
+    const previousTarget = resolve(destDir, 'dist/previous.js');
+    const nextTarget = resolve(destDir, 'dist/next.js');
+    mkdirSync(resolve(destDir, 'dist'), { recursive: true });
+    writeFileSync(
+      packageJsonPath,
+      JSON.stringify({
+        name: '@happier-dev/cli-common',
+        exports: { './publication-test': './dist/previous.js' },
+      }),
+    );
+    writeFileSync(previousTarget, 'export const version = "previous";\n');
+
+    let observedManifestPublication = false;
+
+    atomicReplaceDirSync({
+      destDir,
+      preserveDestinationPath: true,
+      buildInto(tempDir) {
+        mkdirSync(resolve(tempDir, 'dist'), { recursive: true });
+        writeFileSync(resolve(tempDir, 'dist/next.js'), 'export const version = "next";\n');
+        writeFileSync(
+          resolve(tempDir, 'package.json'),
+          JSON.stringify({
+            name: '@happier-dev/cli-common',
+            exports: { './publication-test': './dist/next.js' },
+          }),
+        );
+      },
+      fsOps: {
+        renameSync(source, target) {
+          if (target === packageJsonPath) {
+            observedManifestPublication = true;
+            expect(existsSync(nextTarget)).toBe(true);
+            expect(existsSync(previousTarget)).toBe(true);
+            expect(JSON.parse(readFileSync(packageJsonPath, 'utf8')).exports['./publication-test']).toBe(
+              './dist/previous.js',
+            );
+          }
+          return renameSync(source, target);
+        },
+      },
+    });
+
+    expect(observedManifestPublication).toBe(true);
+    expect(existsSync(previousTarget)).toBe(false);
+    expect(readFileSync(nextTarget, 'utf8')).toBe('export const version = "next";\n');
+    expect(JSON.parse(readFileSync(packageJsonPath, 'utf8')).exports['./publication-test']).toBe('./dist/next.js');
   });
 
   it('retries a staged swap when the destination briefly reappears during the rename', () => {
