@@ -1,15 +1,9 @@
-import { summarizePiConnectedServiceActiveProfiles } from './activeProfiles.js';
+import {
+  classifyProviderLimitEvidence,
+  type ProviderLimitCategory as RuntimeLimitCategory,
+} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
-type RuntimeLimitCategory =
-  | 'usage_limit'
-  | 'rate_limit'
-  | 'capacity'
-  | 'temporary_throttle'
-  | 'auth_invalid'
-  | 'plan_invalid'
-  | 'validation_failed'
-  | 'disabled'
-  | 'unknown';
+import { summarizePiConnectedServiceActiveProfiles } from './activeProfiles.js';
 
 type RuntimeAuthFailureKind =
   | 'usage_limit'
@@ -61,7 +55,13 @@ function readAssistantContentText(value: unknown): string | null {
 
 function normalizeErrorEvidence(error: unknown): unknown {
   if (typeof error === 'string') return { message: error };
-  if (error instanceof Error) return { name: error.name, message: error.message };
+  if (error instanceof Error) {
+    return {
+      ...(readRecord(error) ?? {}),
+      name: error.name,
+      message: error.message,
+    };
+  }
   const record = readRecord(error);
   const message = readRecord(record?.message);
   const errorMessage = readString(message?.errorMessage ?? message?.error_message ?? record?.errorMessage ?? record?.error_message)
@@ -151,28 +151,6 @@ function chooseSelection(params: Readonly<{
     if (match) return match;
   }
   return selections[0] ?? null;
-}
-
-function classifyProviderLimitEvidence(value: unknown): RuntimeLimitCategory {
-  const textParts: string[] = [];
-  collectEvidenceText(value, textParts);
-  const text = textParts.join(' ').toLowerCase();
-  const record = readRecord(value);
-  const status = readNonNegativeNumber(record?.status ?? record?.statusCode ?? readRecord(record?.error)?.status);
-  const code = readString(record?.code ?? record?.type ?? record?.reason ?? record?.name)?.toLowerCase() ?? '';
-  const evidenceText = `${code} ${text}`;
-
-  if (/\b(account|user)\s+(disabled|banned|suspended|deactivated)\b/u.test(text)) return 'disabled';
-  if (/\b(usage_limit_reached|usage_limit_exceeded|usagelimitreached|usagelimitexceeded|freeusagelimiterror)\b/u.test(code)) return 'usage_limit';
-  if (/\b(go_usage_limit|gousagelimiterror|account_rate_limit|rate_limit|rate_limit_error|ratelimit|ratelimiterror|rate limit|too many requests)\b/u.test(evidenceText)) return 'rate_limit';
-  if (/\b(resource_exhausted|usage limit|limit reached|out of credits|credits exhausted)\b|\bquota(?:[_\s-]*(?:exceeded|exhausted|reached)|[_\s-]*limit[_\s-]*(?:exceeded|exhausted|reached))\b/u.test(evidenceText)) return 'usage_limit';
-  if (status === 401 || /\b(unauthorized|unauthenticated|authentication|invalid api key|invalid token|login required|not logged in)\b/u.test(text)) return 'auth_invalid';
-  if (status === 403 && /\b(scope|permission|auth|token|credential)\b/u.test(text)) return 'auth_invalid';
-  if (status === 402 || /\b(upgrade|plan|billing|payment required|subscription|permission denied|not entitled|entitlement)\b/u.test(text)) return 'plan_invalid';
-  if (/\b(capacity|overloaded|server[_\s-]*(?:is[_\s-]*)?overloaded|model[_\s-]*(?:is[_\s-]*)?overloaded|capacity[_\s-]*(?:exceeded|unavailable)|unavailable)\b/u.test(evidenceText)) return 'capacity';
-  if (status === 400 || /\b(validation|invalid request|bad request|malformed)\b/u.test(text)) return 'validation_failed';
-  if (status === 429) return 'rate_limit';
-  return 'unknown';
 }
 
 function parseCompactDurationMs(value: unknown): number | null {

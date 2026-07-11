@@ -11,11 +11,10 @@ import {
 import {
   PI_BROKER_DAEMON_STATE_PATH_ENV,
   PI_BROKER_LOAD_NONCE_ENV,
-  PI_BROKER_REFRESH_TOKEN_ENV,
+  PI_BROKER_REFRESH_TOKEN_PATH_ENV,
   PI_BROKER_SELECTIONS_ENV,
   PI_BROKER_SELECTION_IDENTITY_ENV,
   buildPiBrokerExtensionSource,
-  derivePiBrokerRefreshToken,
   isPiBrokerMarker,
   serializePiBrokerSelections,
 } from './index.js';
@@ -54,8 +53,16 @@ async function writeDaemonStateFile(token: string): Promise<string> {
   return file;
 }
 
-function setScopedTokenFromMaster(masterControlToken: string): void {
-  process.env[PI_BROKER_REFRESH_TOKEN_ENV] = derivePiBrokerRefreshToken(masterControlToken);
+async function setCapabilityToken(token: string): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), 'happier-pi-broker-capability-'));
+  const path = join(dir, 'capability.json');
+  await writeFile(path, JSON.stringify({
+    v: 1,
+    materializationId: 'mat-pi',
+    selectionIdentityDigest: 'selection-digest',
+    capability: token,
+  }), { mode: 0o600 });
+  process.env[PI_BROKER_REFRESH_TOKEN_PATH_ENV] = path;
 }
 
 describe('buildPiBrokerExtensionSource (generated artifact, exercised live)', () => {
@@ -64,7 +71,7 @@ describe('buildPiBrokerExtensionSource (generated artifact, exercised live)', ()
   const clearEnv = () => {
     delete process.env[PI_BROKER_SELECTIONS_ENV];
     delete process.env[PI_BROKER_DAEMON_STATE_PATH_ENV];
-    delete process.env[PI_BROKER_REFRESH_TOKEN_ENV];
+    delete process.env[PI_BROKER_REFRESH_TOKEN_PATH_ENV];
     delete process.env[PI_BROKER_SELECTION_IDENTITY_ENV];
     delete process.env[PI_BROKER_LOAD_NONCE_ENV];
   };
@@ -73,6 +80,12 @@ describe('buildPiBrokerExtensionSource (generated artifact, exercised live)', ()
   afterEach(() => {
     globalThis.fetch = originalFetch;
     clearEnv();
+  });
+
+  it('embeds only the file-path capability contract, never the raw-token env contract', () => {
+    const source = buildPiBrokerExtensionSource();
+    expect(source).toContain('HAPPIER_CONNECTED_SERVICE_BROKER_REFRESH_TOKEN_PATH');
+    expect(source).not.toContain('HAPPIER_CONNECTED_SERVICE_BROKER_REFRESH_TOKEN"');
   });
 
   it('registers an OAuth override ONLY for brokered providers present in the selections env', async () => {
@@ -97,7 +110,7 @@ describe('buildPiBrokerExtensionSource (generated artifact, exercised live)', ()
 
   it('Claude: refreshToken brokers the access token with the SCOPED token, returns a marker refresh (no leak)', async () => {
     process.env[PI_BROKER_DAEMON_STATE_PATH_ENV] = await writeDaemonStateFile(MASTER_CONTROL_TOKEN_SENTINEL);
-    setScopedTokenFromMaster(MASTER_CONTROL_TOKEN_SENTINEL);
+    await setCapabilityToken('random-independent-broker-capability');
     process.env[PI_BROKER_SELECTIONS_ENV] = serializePiBrokerSelections({
       anthropic: { serviceId: 'claude-subscription', profileId: 'claude-pro', accountId: null, planType: null },
     });
@@ -126,7 +139,7 @@ describe('buildPiBrokerExtensionSource (generated artifact, exercised live)', ()
     const bridgeCall = calls.find((c) => c.url.includes(CONNECTED_SERVICE_BROKER_DAEMON_AUTH_BRIDGE_REFRESH_PATH));
     expect(bridgeCall).toBeDefined();
     expect(bridgeCall!.url).toBe('http://127.0.0.1:52777/connected-service-auth/broker/daemon-auth-bridge/refresh');
-    expect(bridgeCall!.headers.get('x-happier-daemon-token')).toBe(derivePiBrokerRefreshToken(MASTER_CONTROL_TOKEN_SENTINEL));
+    expect(bridgeCall!.headers.get('x-happier-daemon-token')).toBe('random-independent-broker-capability');
     expect(bridgeCall!.headers.get('x-happier-daemon-token')).not.toBe(MASTER_CONTROL_TOKEN_SENTINEL);
     expect(JSON.parse(bridgeCall!.body)).toMatchObject({
       selection: { kind: 'profile', serviceId: 'claude-subscription', profileId: 'claude-pro' },
@@ -146,7 +159,7 @@ describe('buildPiBrokerExtensionSource (generated artifact, exercised live)', ()
 
   it('Codex: refreshToken targets the chatgpt bridge and forwards the plan type', async () => {
     process.env[PI_BROKER_DAEMON_STATE_PATH_ENV] = await writeDaemonStateFile('tok');
-    setScopedTokenFromMaster('tok');
+    await setCapabilityToken('random-independent-broker-capability');
     process.env[PI_BROKER_SELECTIONS_ENV] = serializePiBrokerSelections({
       openai: { serviceId: 'openai-codex', profileId: 'codex-pro', accountId: 'acct_z', planType: 'pro' },
     });
@@ -177,7 +190,7 @@ describe('buildPiBrokerExtensionSource (generated artifact, exercised live)', ()
 
   it('pings the SHARED daemon load-handshake endpoint with the scoped token on activation', async () => {
     process.env[PI_BROKER_DAEMON_STATE_PATH_ENV] = await writeDaemonStateFile(MASTER_CONTROL_TOKEN_SENTINEL);
-    setScopedTokenFromMaster(MASTER_CONTROL_TOKEN_SENTINEL);
+    await setCapabilityToken('random-independent-broker-capability');
     process.env[PI_BROKER_SELECTIONS_ENV] = serializePiBrokerSelections({
       anthropic: { serviceId: 'claude-subscription', profileId: 'claude-pro', accountId: null, planType: null },
     });
@@ -196,7 +209,7 @@ describe('buildPiBrokerExtensionSource (generated artifact, exercised live)', ()
     const handshake = calls.find((c) => c.url.includes('/connected-service-auth/broker/loaded'));
     expect(handshake).toBeDefined();
     expect(handshake!.url).toBe('http://127.0.0.1:52777/connected-service-auth/broker/loaded');
-    expect(handshake!.headers.get('x-happier-daemon-token')).toBe(derivePiBrokerRefreshToken(MASTER_CONTROL_TOKEN_SENTINEL));
+    expect(handshake!.headers.get('x-happier-daemon-token')).toBe('random-independent-broker-capability');
     const body = JSON.parse(handshake!.body);
     expect(body.selectionIdentity).toBe('pi|connected|broker:1|anthropic:claude-pro:');
     expect(body.loadNonce).toBe('pi-spawn-1');

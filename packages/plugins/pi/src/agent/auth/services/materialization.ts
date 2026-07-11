@@ -12,6 +12,11 @@ import {
   type ConnectedServiceOauthCredentialRecordWithExpiryV1,
 } from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 import { writeAtomicJsonFile } from '@happier-dev/plugin-sdk/experimental/fs';
+import {
+  buildConnectedServiceBrokerSelectionIdentity,
+  writeConnectedServiceBrokerCapabilityFile,
+  type ConnectedServiceBrokerSelectionIdentityMember,
+} from '@happier-dev/plugin-sdk/experimental/cloud/broker';
 import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 import { formatPiSessionDirectoryForCwd } from '../../sessionFiles.js';
@@ -21,7 +26,7 @@ import {
   PI_BROKER_EXTENSION_VERSION_ENV,
   PI_BROKER_SELECTIONS_ENV,
   PI_BROKER_SELECTION_IDENTITY_ENV,
-  applyPiBrokerRefreshTokenEnv,
+  PI_BROKER_REFRESH_TOKEN_PATH_ENV,
   buildPiBrokerMarker,
   ensurePiBrokerExtensionAsset,
   piBrokerServiceId,
@@ -246,7 +251,7 @@ export async function materializePiAuthEnvironment(input: Readonly<Record<string
   // + shared bridge-call source; the `auth.json` entry + marker use Pi's own provider id.
   const brokerSelections: { -readonly [K in PiBrokerProvider]?: PiBrokerProviderSelection } = {};
   const brokeredProviders: PiBrokerProvider[] = [];
-  const identityFragments: string[] = [];
+  const identityMembers: ConnectedServiceBrokerSelectionIdentityMember[] = [];
   // R4-4/F3: serviceId → groupId for GROUP-bound selections (host-provided). Scopes the identity by
   // pool WITHOUT generation: two pools sharing one active profile never collapse to one identity,
   // while a generation-only bump keeps the identity stable (consumers treat it as an opaque key).
@@ -266,9 +271,12 @@ export async function materializePiAuthEnvironment(input: Readonly<Record<string
     };
     brokeredProviders.push(provider);
     const groupId = groupIdsByServiceId[piBrokerServiceId(provider)];
-    identityFragments.push(
-      `${provider}:${record.profileId}:${record.oauth.providerAccountId ?? ''}${groupId ? `:group:${groupId}` : ''}`,
-    );
+    identityMembers.push({
+      serviceId: piBrokerServiceId(provider),
+      profileId: record.profileId,
+      providerAccountId: record.oauth.providerAccountId ?? null,
+      groupId: groupId ?? null,
+    });
   };
 
   // OpenAI: Codex subscription is OAuth-only ⇒ always brokered. A platform API key is direct.
@@ -315,6 +323,7 @@ export async function materializePiAuthEnvironment(input: Readonly<Record<string
   const env: Record<string, string> = {
     PI_CODING_AGENT_DIR: agentDir,
   };
+  let brokerCapability: Awaited<ReturnType<typeof writeConnectedServiceBrokerCapabilityFile>> | undefined;
 
   // Brokered sessions: write the broker extension + emit the broker env (selections, daemon-state path,
   // version, stable selection identity, and the SCOPED refresh token). Direct-API-key / native Pi
@@ -328,15 +337,21 @@ export async function materializePiAuthEnvironment(input: Readonly<Record<string
     }
     env[PI_BROKER_EXTENSION_VERSION_ENV] = PI_BROKER_EXTENSION_VERSION;
     // Stable selection identity (keys the broker load handshake + preflight match).
-    env[PI_BROKER_SELECTION_IDENTITY_ENV] = [
-      'pi',
-      'connected',
-      `broker:${PI_BROKER_EXTENSION_VERSION}`,
-      ...identityFragments.slice().sort(),
-    ].join('|');
-    // Inject ONLY the derived scoped broker-refresh token (never the master control token). Fail-closed:
-    // if the control token is unavailable the token is not injected and the preflight reports it.
-    applyPiBrokerRefreshTokenEnv(env, readString(input.daemonControlToken));
+    env[PI_BROKER_SELECTION_IDENTITY_ENV] = buildConnectedServiceBrokerSelectionIdentity({
+      brokerId: 'pi',
+      brokerVersion: PI_BROKER_EXTENSION_VERSION,
+      members: identityMembers,
+    });
+    const materializationId = readString(input.materializationId);
+    if (materializationId) {
+      const capability = await writeConnectedServiceBrokerCapabilityFile({
+        rootDir,
+        materializationId,
+        selectionIdentity: env[PI_BROKER_SELECTION_IDENTITY_ENV],
+      });
+      env[PI_BROKER_REFRESH_TOKEN_PATH_ENV] = capability.path;
+      brokerCapability = capability;
+    }
   }
 
   const requestedStateMode = resolvePiStateSharingMode(input.accountSettings);
@@ -359,5 +374,6 @@ export async function materializePiAuthEnvironment(input: Readonly<Record<string
 
   return {
     env,
+    ...(brokerCapability ? { brokerCapability } : {}),
   };
 }

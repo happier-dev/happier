@@ -19,10 +19,7 @@ export {
   type PiBrokerSelections,
 } from './env.js';
 export {
-  PI_BROKER_REFRESH_TOKEN_ENV,
-  PI_BROKER_REFRESH_SCOPE_LABEL,
-  derivePiBrokerRefreshToken,
-  isValidPiBrokerRefreshToken,
+  PI_BROKER_REFRESH_TOKEN_PATH_ENV,
 } from './capabilityToken.js';
 export {
   PI_BROKER_EXTENSION_VERSION,
@@ -33,9 +30,6 @@ export {
   resolvePiBrokerExtensionPath,
   ensurePiBrokerExtensionAsset,
 } from './assets.js';
-export {
-  applyPiBrokerRefreshTokenEnv,
-} from './inject.js';
 export {
   verifyPiBrokerReadyForConnectedSession,
   type PiBrokerReadiness,

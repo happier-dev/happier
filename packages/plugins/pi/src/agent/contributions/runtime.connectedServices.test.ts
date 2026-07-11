@@ -11,10 +11,9 @@ import {
   PI_BROKER_DAEMON_STATE_PATH_ENV,
   PI_BROKER_EXTENSION_VERSION,
   PI_BROKER_EXTENSION_VERSION_ENV,
-  PI_BROKER_REFRESH_TOKEN_ENV,
+  PI_BROKER_REFRESH_TOKEN_PATH_ENV,
   PI_BROKER_SELECTIONS_ENV,
   PI_BROKER_SELECTION_IDENTITY_ENV,
-  derivePiBrokerRefreshToken,
   resolvePiBrokerExtensionPath,
 } from '../auth/services/broker/index.js';
 import { PI_AGENT_RUNTIME_CONTRIBUTION } from './runtime.js';
@@ -167,6 +166,7 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service materialization', () =
       const input = connectedServices?.createAuthMaterializationInput?.('claude-subscription', record);
       const materialized = await connectedServices?.materializeAuthEnvironment?.({
         rootDir: root,
+        materializationId: 'mat-pi-claude',
         daemonControlToken: DAEMON_CONTROL_TOKEN,
         daemonStateFilePath: DAEMON_STATE_FILE_PATH,
         ...(input ?? {}),
@@ -201,10 +201,19 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service materialization', () =
       });
       expect(env[PI_BROKER_DAEMON_STATE_PATH_ENV]).toBe(DAEMON_STATE_FILE_PATH);
       expect(env[PI_BROKER_EXTENSION_VERSION_ENV]).toBe(PI_BROKER_EXTENSION_VERSION);
-      expect(env[PI_BROKER_SELECTION_IDENTITY_ENV]).toBe(`pi|connected|broker:${PI_BROKER_EXTENSION_VERSION}|anthropic:claude-oauth:claude-account`);
+      expect(env[PI_BROKER_SELECTION_IDENTITY_ENV]).toMatch(/^happier-broker-selection:v1:sha256:[a-f0-9]{64}$/);
       // F2: the SCOPED broker-refresh token (NOT the master) is injected for the broker to present.
-      expect(env[PI_BROKER_REFRESH_TOKEN_ENV]).toBe(derivePiBrokerRefreshToken(DAEMON_CONTROL_TOKEN));
-      expect(env[PI_BROKER_REFRESH_TOKEN_ENV]).not.toBe(DAEMON_CONTROL_TOKEN);
+      expect(env[PI_BROKER_REFRESH_TOKEN_PATH_ENV]).toBe(join(root, 'broker', 'capability.json'));
+      expect((materialized as { brokerCapability?: unknown } | null | undefined)?.brokerCapability).toMatchObject({
+        path: join(root, 'broker', 'capability.json'),
+        materializationId: 'mat-pi-claude',
+        selectionIdentityDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        capabilityDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      expect(JSON.parse(await readFile(join(root, 'broker', 'capability.json'), 'utf8'))).toMatchObject({
+        v: 1,
+        materializationId: 'mat-pi-claude',
+      });
 
       // No-leak: neither the provider refresh token nor the master control token appear anywhere.
       await expectNoProviderRefreshTokenLeak({
@@ -242,6 +251,7 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service materialization', () =
       const input = connectedServices?.createAuthMaterializationInput?.('openai-codex', record);
       const materialized = await connectedServices?.materializeAuthEnvironment?.({
         rootDir: root,
+        materializationId: 'mat-pi-codex',
         daemonControlToken: DAEMON_CONTROL_TOKEN,
         daemonStateFilePath: DAEMON_STATE_FILE_PATH,
         ...(input ?? {}),
@@ -263,8 +273,8 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service materialization', () =
       expect(JSON.parse(env[PI_BROKER_SELECTIONS_ENV]!)).toEqual({
         openai: { serviceId: 'openai-codex', profileId: 'codex-pro', accountId: 'chatgpt-account', planType: null },
       });
-      expect(env[PI_BROKER_SELECTION_IDENTITY_ENV]).toBe(`pi|connected|broker:${PI_BROKER_EXTENSION_VERSION}|openai:codex-pro:chatgpt-account`);
-      expect(env[PI_BROKER_REFRESH_TOKEN_ENV]).toBe(derivePiBrokerRefreshToken(DAEMON_CONTROL_TOKEN));
+      expect(env[PI_BROKER_SELECTION_IDENTITY_ENV]).toMatch(/^happier-broker-selection:v1:sha256:[a-f0-9]{64}$/);
+      expect(env[PI_BROKER_REFRESH_TOKEN_PATH_ENV]).toBe(join(root, 'broker', 'capability.json'));
       await expectNoProviderRefreshTokenLeak({
         agentDir: join(root, 'pi-agent-dir'),
         authJson,
@@ -316,12 +326,15 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service materialization', () =
 
     const identityPoolA = await materializeForGroup({ 'claude-subscription': 'pool-A' });
     const identityPoolB = await materializeForGroup({ 'claude-subscription': 'pool-B' });
-    expect(identityPoolA).toBe(`pi|connected|broker:${PI_BROKER_EXTENSION_VERSION}|anthropic:claude-oauth:claude-account:group:pool-A`);
-    expect(identityPoolB).toBe(`pi|connected|broker:${PI_BROKER_EXTENSION_VERSION}|anthropic:claude-oauth:claude-account:group:pool-B`);
+    expect(identityPoolA).toMatch(/^happier-broker-selection:v1:sha256:[a-f0-9]{64}$/);
+    expect(identityPoolB).toMatch(/^happier-broker-selection:v1:sha256:[a-f0-9]{64}$/);
+    expect(identityPoolA).not.toBe(identityPoolB);
 
-    // Profile-only selection stays byte-for-byte unchanged (no ':group:' fragment).
+    // Profile-only selection remains stable but distinct from either group tuple.
     const profileOnly = await materializeForGroup(null);
-    expect(profileOnly).toBe(`pi|connected|broker:${PI_BROKER_EXTENSION_VERSION}|anthropic:claude-oauth:claude-account`);
+    expect(profileOnly).toMatch(/^happier-broker-selection:v1:sha256:[a-f0-9]{64}$/);
+    expect(profileOnly).not.toBe(identityPoolA);
+    expect(profileOnly).not.toBe(identityPoolB);
   });
 
   it('omits the scoped broker token (fail-closed) when no daemon control token is available', async () => {
@@ -356,7 +369,7 @@ describe('PI_AGENT_RUNTIME_CONTRIBUTION connected-service materialization', () =
       // Broker env is still emitted, but the scoped token is omitted (the preflight reports it; the
       // broker fails closed at request time rather than presenting any token).
       expect(env[PI_BROKER_SELECTION_IDENTITY_ENV]).toBeDefined();
-      expect(env[PI_BROKER_REFRESH_TOKEN_ENV]).toBeUndefined();
+      expect(env[PI_BROKER_REFRESH_TOKEN_PATH_ENV]).toBeUndefined();
       const authJson = await readFile(join(root, 'pi-agent-dir', 'auth.json'), 'utf8');
       await expectNoProviderRefreshTokenLeak({
         agentDir: join(root, 'pi-agent-dir'),

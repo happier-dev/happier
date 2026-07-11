@@ -11,8 +11,8 @@ import {
   PI_BROKER_MARKER_PREFIX,
   PI_BROKER_SELECTIONS_ENV,
   PI_BROKER_SELECTION_IDENTITY_ENV,
+  PI_BROKER_REFRESH_TOKEN_PATH_ENV,
 } from './env.js';
-import { PI_BROKER_REFRESH_TOKEN_ENV } from './capabilityToken.js';
 
 /**
  * Version of the Happier Pi auth broker extension. Bump on any wire-shape change. Folded into the
@@ -42,7 +42,7 @@ function jsString(value: string): string {
  *     headers from the token value (`sk-ant-oat` → Bearer + Claude-Code identity; Codex JWT →
  *     `chatgpt-account-id` + Bearer) — so the broker needs no custom fetch / URL rewrite / model map;
  *   - `oauth.login` throws: login happens in Happier, never in the brokered runtime;
- *   - pings the daemon load-handshake once on activation (scoped token, bounded) so the preflight can
+ *   - pings the daemon load-handshake once on activation (per-materialization capability, bounded) so the preflight can
  *     confirm the extension actually loaded.
  *
  * A single extension file registers EVERY brokered provider present in the selections env (Pi loads it
@@ -59,7 +59,7 @@ export function buildPiBrokerExtensionSource(): string {
     resultAccountIdKeys: ['accountId'],
     selectionsEnv: PI_BROKER_SELECTIONS_ENV,
     daemonStatePathEnv: PI_BROKER_DAEMON_STATE_PATH_ENV,
-    refreshTokenEnv: PI_BROKER_REFRESH_TOKEN_ENV,
+    refreshTokenPathEnv: PI_BROKER_REFRESH_TOKEN_PATH_ENV,
     pluginVersionEnv: PI_BROKER_EXTENSION_VERSION_ENV,
     pluginVersion: PI_BROKER_EXTENSION_VERSION,
     sessionTag: 'pi-broker',
@@ -73,7 +73,7 @@ export function buildPiBrokerExtensionSource(): string {
     resultAccountIdKeys: ['accountId', 'chatgptAccountId'],
     selectionsEnv: PI_BROKER_SELECTIONS_ENV,
     daemonStatePathEnv: PI_BROKER_DAEMON_STATE_PATH_ENV,
-    refreshTokenEnv: PI_BROKER_REFRESH_TOKEN_ENV,
+    refreshTokenPathEnv: PI_BROKER_REFRESH_TOKEN_PATH_ENV,
     pluginVersionEnv: PI_BROKER_EXTENSION_VERSION_ENV,
     pluginVersion: PI_BROKER_EXTENSION_VERSION,
     sessionTag: 'pi-broker',
@@ -86,7 +86,7 @@ import { readFileSync } from "node:fs";
 
 const SELECTIONS_ENV = ${jsString(PI_BROKER_SELECTIONS_ENV)};
 const DAEMON_STATE_PATH_ENV = ${jsString(PI_BROKER_DAEMON_STATE_PATH_ENV)};
-const REFRESH_TOKEN_ENV = ${jsString(PI_BROKER_REFRESH_TOKEN_ENV)};
+const REFRESH_TOKEN_PATH_ENV = ${jsString(PI_BROKER_REFRESH_TOKEN_PATH_ENV)};
 const EXTENSION_VERSION_ENV = ${jsString(PI_BROKER_EXTENSION_VERSION_ENV)};
 const SELECTION_IDENTITY_ENV = ${jsString(PI_BROKER_SELECTION_IDENTITY_ENV)};
 const LOAD_NONCE_ENV = ${jsString(PI_BROKER_LOAD_NONCE_ENV)};
@@ -116,8 +116,16 @@ function registerProviderIdForTag(bridgeTag) {
 }
 
 function readScopedTokenForHandshake() {
-  const token = process.env[REFRESH_TOKEN_ENV];
-  return typeof token === "string" && token.trim().length > 0 ? token.trim() : null;
+  const path = process.env[REFRESH_TOKEN_PATH_ENV];
+  if (typeof path !== "string" || path.trim().length === 0) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(path.trim(), "utf8"));
+    return parsed && parsed.v === 1 && typeof parsed.capability === "string" && parsed.capability.trim().length > 0
+      ? parsed.capability.trim()
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function readDaemonHttpPortForHandshake() {

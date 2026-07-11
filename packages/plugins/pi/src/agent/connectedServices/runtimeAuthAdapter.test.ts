@@ -125,6 +125,30 @@ describe('createPiConnectedServiceRuntimeAuthAdapter', () => {
     });
   });
 
+  it('preserves structured fields attached to Pi Error instances', () => {
+    const adapter = createPiConnectedServiceRuntimeAuthAdapter();
+    const error = Object.assign(new Error('request failed'), {
+      status: 429,
+      provider: 'openai',
+      serviceId: 'openai',
+    });
+
+    expect(adapter.classifyRuntimeAuthFailure({
+      target: { agentId: 'pi' },
+      error,
+      selection: {
+        kind: 'profile',
+        serviceId: 'openai',
+        profileId: 'openai-work',
+      },
+    })).toMatchObject({
+      kind: 'rate_limit',
+      limitCategory: 'rate_limit',
+      serviceId: 'openai',
+      profileId: 'openai-work',
+    });
+  });
+
   it('classifies Pi compaction dependency failures separately from usage limits', () => {
     const adapter = createPiConnectedServiceRuntimeAuthAdapter();
 
