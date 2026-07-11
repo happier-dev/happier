@@ -62,41 +62,49 @@ describe('TranscriptRawRecordV1Schema', () => {
     expect(parsed.success).toBe(true);
   });
 
-  // Fail-soft: a known output `type` whose body does not match its known variant must NOT
-  // hard-fail the whole record (which renders as "[Unparsed agent message]" in the UI).
-  // It should fall through to the unknown-output catch-all instead. These shapes occur in
-  // real Claude transcripts for synthetic / API-error / interrupted rows.
-  describe('fail-soft malformed assistant/user output payloads', () => {
+  describe('fail-soft malformed known output payloads', () => {
     const wrap = (data: Record<string, unknown>) => ({
       role: 'agent',
       content: { type: 'output', data },
     });
 
-    it('accepts assistant row without a `message` field (synthetic/API-error row)', () => {
+    it.each([
+      [
+        'assistant row without a message',
+        { type: 'assistant', uuid: 'u1', isApiErrorMessage: true },
+      ],
+      [
+        'assistant row whose message role is missing',
+        { type: 'assistant', uuid: 'u2', message: { content: [{ type: 'text', text: 'hi' }] } },
+      ],
+      [
+        'assistant row with null content',
+        { type: 'assistant', uuid: 'u3', message: { role: 'assistant', content: null } },
+      ],
+      [
+        'user row without a message',
+        { type: 'user', uuid: 'u4' },
+      ],
+      [
+        'summary row without summary text',
+        { type: 'summary', uuid: 'u5' },
+      ],
+    ] satisfies ReadonlyArray<readonly [string, Record<string, unknown>]>)('accepts and preserves %s', (_name, data) => {
+      const parsed = TranscriptRawRecordV1Schema.safeParse(wrap(data));
+
+      expect(parsed.success).toBe(true);
+      if (!parsed.success) throw new Error('expected fail-soft parse success');
+      expect(parsed.data).toMatchObject(wrap(data));
+    });
+
+    it('still rejects malformed shared output envelope fields', () => {
       const parsed = TranscriptRawRecordV1Schema.safeParse(wrap({
         type: 'assistant',
-        uuid: 'u1',
+        uuid: 42,
         isApiErrorMessage: true,
       }));
-      expect(parsed.success).toBe(true);
-    });
 
-    it('accepts assistant row whose `message` is present but `role` is missing', () => {
-      const parsed = TranscriptRawRecordV1Schema.safeParse(wrap({
-        type: 'assistant',
-        uuid: 'u2',
-        message: { content: [{ type: 'text', text: 'hi' }] },
-      }));
-      expect(parsed.success).toBe(true);
-    });
-
-    it('accepts assistant row with null `content`', () => {
-      const parsed = TranscriptRawRecordV1Schema.safeParse(wrap({
-        type: 'assistant',
-        uuid: 'u3',
-        message: { role: 'assistant', content: null },
-      }));
-      expect(parsed.success).toBe(true);
+      expect(parsed.success).toBe(false);
     });
 
     it('still accepts well-formed assistant rows as the rich known variant (no regression)', () => {
@@ -110,6 +118,16 @@ describe('TranscriptRawRecordV1Schema', () => {
         },
       }));
       expect(parsed.success).toBe(true);
+      if (!parsed.success) throw new Error('expected well-formed parse success');
+      expect(parsed.data).toMatchObject(wrap({
+        type: 'assistant',
+        uuid: 'u4',
+        message: {
+          role: 'assistant',
+          model: 'claude-sonnet-4',
+          content: [{ type: 'text', text: 'hello' }],
+        },
+      }));
     });
   });
 

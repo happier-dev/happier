@@ -56,6 +56,22 @@ describe('session message role classifiers', () => {
         expect(resolveClaudeSessionMessageRole(body)).toBe('agent');
     });
 
+    it.each([
+        ['message-less API error', { type: 'assistant', uuid: 'assistant-api-error', isApiErrorMessage: true }, 'event'],
+        [
+            'missing nested role',
+            { type: 'assistant', uuid: 'assistant-missing-role', message: { content: [{ type: 'text', text: 'hello' }] } },
+            'agent',
+        ],
+        [
+            'null content',
+            { type: 'assistant', uuid: 'assistant-null-content', message: { role: 'assistant', content: null } },
+            'event',
+        ],
+    ] as const)('classifies Claude malformed assistant shape %s', (_name, body, expectedRole) => {
+        expect(resolveClaudeSessionMessageRole(body)).toBe(expectedRole);
+    });
+
     it('classifies Claude synthetic no-response rows as events', () => {
         const body = {
             type: 'assistant',
