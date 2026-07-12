@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "tiers": {
+    "smoke": [
+      "grok_acp_stub_auth_create_resume",
+      "grok_acp_stub_structured_question",
+      "grok_acp_stub_cancel_and_capabilities"
+    ],
+    "extended": []
+  }
+}

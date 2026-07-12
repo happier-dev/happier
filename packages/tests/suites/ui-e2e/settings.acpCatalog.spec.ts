@@ -119,6 +119,7 @@ test.describe('ui e2e: ACP catalog settings', () => {
 
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/acp`);
     await expect(page.getByTestId('settings.acpCatalog.builtIn.kiro')).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByTestId('settings.acpCatalog.builtIn.grok')).toHaveCount(0);
     await expect(page.getByTestId('settings.acpCatalog.addBackend')).toHaveCount(1, { timeout: 60_000 });
   });
 

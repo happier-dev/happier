@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { decryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { shouldAutoApprovePermissionRequest, autoResolvePendingPermissionRequests } from '../../src/testkit/providers/harness';
 
 describe('providers harness: yolo permission auto-approval guard', () => {
@@ -60,5 +61,40 @@ describe('providers harness: yolo permission auto-approval guard', () => {
     expect(result.approvedIds).toEqual(['perm-1']);
     expect(approvedIds.has('perm-1')).toBe(true);
     expect(rpcCalls).toEqual([{ method: 'sess-1:permission' }]);
+  });
+
+  it.each(['AskUserQuestion', 'ask_user_question'] as const)('answers %s structured questions through the receiver-enforced v1 method without legacy flattening', async (toolName) => {
+    const secret = new Uint8Array(32);
+    const rpcCalls: Array<{ method: string; payload: string }> = [];
+    const structuredAnswersV1 = Object.assign(Object.create(null), {
+      location: ['Washington, D.C.', '__proto__'],
+    });
+
+    const result = await autoResolvePendingPermissionRequests({
+      pendingPermissionIds: [{ id: 'question-1', toolName }],
+      approvedPermissionIds: new Set<string>(),
+      yolo: true,
+      allowPermissionAutoApproveInYolo: true,
+      decision: 'approved',
+      structuredAnswersV1,
+      sessionId: 'sess-1',
+      secret,
+      uiSocket: {
+        rpcCall: async <T = unknown>(method: string, payload: string) => {
+          rpcCalls.push({ method, payload });
+          return { ok: true } as T;
+        },
+      },
+    });
+
+    expect(result.approvedIds).toEqual(['question-1']);
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0]?.method).toBe('sess-1:session.structuredQuestion.respond.v1');
+    expect(decryptLegacyBase64(rpcCalls[0]!.payload, secret)).toEqual({
+      id: 'question-1',
+      structuredAnswersV1: {
+        location: ['Washington, D.C.', '__proto__'],
+      },
+    });
   });
 });

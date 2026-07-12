@@ -11,6 +11,7 @@ export const PROVIDER_ENV_FLAG_BY_PRESET_ID = Object.freeze({
   pi: 'HAPPIER_E2E_PROVIDER_PI',
   cursor: 'HAPPIER_E2E_PROVIDER_CURSOR',
   copilot: 'HAPPIER_E2E_PROVIDER_COPILOT',
+  grok: 'HAPPIER_E2E_PROVIDER_GROK',
 });
 
 export const PROVIDER_PRESET_IDS = Object.freeze(Object.keys(PROVIDER_ENV_FLAG_BY_PRESET_ID));

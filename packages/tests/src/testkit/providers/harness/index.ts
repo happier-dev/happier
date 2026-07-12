@@ -2,6 +2,11 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
+import {
+  isAskUserQuestionToolName,
+  SESSION_RPC_METHODS,
+  type StructuredQuestionAnswersV1,
+} from '@happier-dev/protocol';
 
 import { createRunDirs } from '../../runDir';
 import { startServerLight, type StartedServer } from '../../process/serverLight';
@@ -186,6 +191,7 @@ export async function autoResolvePendingPermissionRequests(params: {
   yolo: boolean;
   allowPermissionAutoApproveInYolo: boolean;
   decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
+  structuredAnswersV1?: StructuredQuestionAnswersV1;
   sessionId: string;
   secret: Uint8Array;
   uiSocket: PermissionRpcSocket;
@@ -216,10 +222,19 @@ export async function autoResolvePendingPermissionRequests(params: {
       continue;
     }
 
-    const payload = encryptLegacyBase64({ id: req.id, approved, decision: params.decision }, params.secret);
+    const isStructuredQuestion = isAskUserQuestionToolName(req.toolName) && params.structuredAnswersV1 !== undefined;
+    const payload = encryptLegacyBase64(
+      isStructuredQuestion
+        ? { id: req.id, structuredAnswersV1: params.structuredAnswersV1 }
+        : { id: req.id, approved, decision: params.decision },
+      params.secret,
+    );
+    const methodSuffix = isStructuredQuestion
+      ? SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1
+      : SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_LEGACY;
     try {
       const result = await Promise.race([
-        params.uiSocket.rpcCall<any>(`${params.sessionId}:permission`, payload),
+        params.uiSocket.rpcCall<any>(`${params.sessionId}:${methodSuffix}`, payload),
         sleep(rpcTimeoutMs).then(() => ({ ok: false, error: 'timeout' })),
       ]);
       if (result && typeof result === 'object' && (result as any).ok === true) {
@@ -770,6 +785,7 @@ async function runOneScenario(params: {
             yolo,
             allowPermissionAutoApproveInYolo,
             decision: permissionDecision,
+            structuredAnswersV1: scenario.permissionAutoStructuredAnswersV1,
             sessionId: params.sessionId,
             secret,
             uiSocket,
@@ -798,6 +814,7 @@ async function runOneScenario(params: {
               yolo,
               allowPermissionAutoApproveInYolo,
               decision: permissionDecision,
+              structuredAnswersV1: scenario.permissionAutoStructuredAnswersV1,
               sessionId: params.sessionId,
               secret,
               uiSocket,

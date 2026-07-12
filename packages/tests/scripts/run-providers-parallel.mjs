@@ -86,7 +86,7 @@ function usage(exitCode) {
       'Usage:',
       '  yarn providers:run:parallel <preset> <tier> [--max-parallel N] [--update-baselines] [--strict-keys] [--flake-retry|--no-flake-retry] [--no-retry-serial]',
       '',
-      'Presets: opencode | claude | codex | kilo | gemini | qwen | kimi | auggie | pi | cursor | all',
+      'Presets: opencode | claude | codex | kilo | gemini | qwen | kimi | auggie | pi | cursor | grok | all',
       'Tiers:   smoke | extended',
       '',
       'Notes:',

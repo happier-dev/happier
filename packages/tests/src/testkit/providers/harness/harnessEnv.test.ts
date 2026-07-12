@@ -15,8 +15,8 @@ describe('applyCliDevTsxTsconfigEnv', () => {
     expect(env.TSX_TSCONFIG_PATH).toBe('/repo/apps/cli/tsconfig.json');
   });
 
-  it('does not override an explicit TSX_TSCONFIG_PATH', () => {
+  it('overrides an inherited TSX_TSCONFIG_PATH so an isolated checkout cannot execute another checkout', () => {
     const env = applyCliDevTsxTsconfigEnv({ repoRootDir: '/repo', env: { TSX_TSCONFIG_PATH: '/custom/tsconfig.json' } });
-    expect(env.TSX_TSCONFIG_PATH).toBe('/custom/tsconfig.json');
+    expect(env.TSX_TSCONFIG_PATH).toBe('/repo/apps/cli/tsconfig.json');
   });
 });

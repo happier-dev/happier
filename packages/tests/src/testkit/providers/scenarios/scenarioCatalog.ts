@@ -62,6 +62,11 @@ import {
   makeCursorAcpStubModeConfigOptionScenario,
   makeCursorAcpStubModelConfigAliasScenario,
 } from './scenarios.cursor';
+import {
+  makeGrokAcpStubAuthCreateResumeScenario,
+  makeGrokAcpStubCancelAndCapabilitiesScenario,
+  makeGrokAcpStubStructuredQuestionScenario,
+} from './scenarios.grok';
 import { cleanupOutsideWorkspacePath, makeOutsideWorkspacePath } from '../harness/outsideWorkspacePath';
 
 type ScenarioFactory = (provider: ProviderUnderTest) => ProviderScenario;
@@ -775,6 +780,12 @@ await server.connect(new StdioServerTransport());
   cursor_acp_stub_mode_config_option: makeCursorAcpStubModeConfigOptionScenario,
 
   cursor_acp_stub_extension_plan_todos: makeCursorAcpStubExtensionPlanTodosScenario,
+
+  grok_acp_stub_auth_create_resume: makeGrokAcpStubAuthCreateResumeScenario,
+
+  grok_acp_stub_structured_question: makeGrokAcpStubStructuredQuestionScenario,
+
+  grok_acp_stub_cancel_and_capabilities: makeGrokAcpStubCancelAndCapabilitiesScenario,
 
   acp_probe_models: (provider) => {
     if (provider.protocol !== 'acp') {
