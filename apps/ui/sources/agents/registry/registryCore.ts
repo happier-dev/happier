@@ -29,6 +29,7 @@ import { CUSTOM_ACP_CORE } from '@/agents/providers/customAcp/core';
 import { PI_CORE } from '@/agents/providers/pi/core';
 import { COPILOT_CORE } from '@/agents/providers/copilot/core';
 import { CURSOR_CORE } from '@/agents/providers/cursor/core';
+import { GROK_CORE } from '@/agents/providers/grok/core';
 
 export type { AgentId };
 
@@ -223,6 +224,7 @@ export const AGENTS_CORE = Object.freeze({
     pi: PI_CORE,
     copilot: COPILOT_CORE,
     cursor: CURSOR_CORE,
+    grok: GROK_CORE,
 }) satisfies Readonly<Record<string, AgentCoreConfig>>;
 
 export const AGENT_IDS = Object.freeze(

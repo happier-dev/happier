@@ -3816,6 +3816,8 @@ export const pl: TranslationStructure = {
         logInSubtitle: "Otwórz terminal i uruchom logowanie dostawcy na tej maszynie.",
         reauthenticateTitle: "Uwierzytelnij ponownie",
         reauthenticateSubtitle: "Otwórz terminal i odśwież logowanie dostawcy na tej maszynie.",
+        deviceCodeTitle: "Użyj kodu urządzenia",
+        deviceCodeSubtitle: "Uwierzytelnij się na maszynie bez interfejsu lub zdalnej za pomocą kodu urządzenia.",
         checkNowTitle: "Sprawdź teraz",
         checkNowSubtitle: "Odśwież wykryty stan lokalnego uwierzytelniania.",
         statusTitle: "Stan",
@@ -4109,6 +4111,9 @@ export const pl: TranslationStructure = {
             },
             kiro: {
                 title: "Kiro"
+            },
+            grok: {
+                title: "Grok Build"
             },
             pi: {
                 title: "Pi"
@@ -5842,6 +5847,8 @@ export const pl: TranslationStructure = {
     kiloSessionIdCopied: "ID sesji Kilo skopiowane do schowka",
     kiroSessionId: "ID sesji Kiro",
     kiroSessionIdCopied: "ID sesji Kiro skopiowane do schowka",
+    grokSessionId: "ID sesji Grok",
+    grokSessionIdCopied: "ID sesji Grok skopiowane do schowka",
     customAcpSessionId: "ID sesji niestandardowego ACP",
     customAcpSessionIdCopied: "ID sesji niestandardowego ACP skopiowane do schowka",
     piSessionId: "ID sesji Pi",
@@ -6068,6 +6075,7 @@ export const pl: TranslationStructure = {
       kimi: "Kimi",
       kilo: "Kilo",
       kiro: "Kiro",
+      grok: "Grok",
       customAcp: "Custom ACP",
       pi: "Pi",
       copilot: "Copilot",
@@ -6385,6 +6393,7 @@ export const pl: TranslationStructure = {
       other: "Inne",
       otherDescription: "Wpisz własną odpowiedź",
       otherPlaceholder: "Wpisz swoją odpowiedź...",
+      selectionLimit: ({ count }: { count: number }) => `Wybierz maksymalnie ${count} odpowiedzi. Odznacz jedną, aby wybrać inną.`,
     },
     exitPlanMode: {
       approve: "Zatwierdź plan",
@@ -10065,6 +10074,7 @@ settingsSession: {
       kimiSubtitleExperimental: "Kimi CLI (eksperymentalne)",
       kiloSubtitleExperimental: "Kilo CLI (eksperymentalne)",
       kiroSubtitleExperimental: "Kiro CLI (eksperymentalne)",
+      grokSubtitleExperimental: "Grok Build CLI (eksperymentalne)",
       customAcpSubtitleExperimental: "Niestandardowy ACP CLI (eksperymentalne)",
       piSubtitleExperimental: "Pi CLI (eksperymentalne)",
       copilotSubtitleExperimental: "GitHub Copilot CLI (eksperymentalne)",

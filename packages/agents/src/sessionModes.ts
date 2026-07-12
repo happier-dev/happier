@@ -45,9 +45,9 @@ export const AGENT_SESSION_MODE_DESCRIPTORS: Readonly<Record<AgentId, AgentSessi
     acpModeSetMethod: 'config_option',
   },
   grok: {
-    source: 'acp',
-    semantics: 'agent-modes',
-    runtimeSwitch: 'acp-setSessionMode',
+    source: 'none',
+    semantics: 'none',
+    runtimeSwitch: 'none',
   },
 });
 

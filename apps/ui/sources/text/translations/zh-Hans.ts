@@ -3672,6 +3672,8 @@ export const zhHans: TranslationStructure = {
       logInSubtitle: "打开终端并在此机器上运行提供商登录流程。",
       reauthenticateTitle: "重新认证",
       reauthenticateSubtitle: "打开终端并在此机器上刷新提供商登录。",
+      deviceCodeTitle: "使用设备代码",
+      deviceCodeSubtitle: "在无界面或远程机器上使用设备代码进行身份验证。",
       checkNowTitle: "立即检查",
       checkNowSubtitle: "刷新检测到的本地认证状态。",
       statusTitle: "状态",
@@ -3965,6 +3967,9 @@ export const zhHans: TranslationStructure = {
             },
             kiro: {
                 title: "Kiro"
+            },
+            grok: {
+                title: "Grok Build"
             },
             pi: {
                 title: "Pi"
@@ -5625,6 +5630,8 @@ export const zhHans: TranslationStructure = {
     kiloSessionIdCopied: "Kilo 会话 ID 已复制到剪贴板",
     kiroSessionId: "Kiro 会话 ID",
     kiroSessionIdCopied: "Kiro 会话 ID 已复制到剪贴板",
+    grokSessionId: "Grok 会话 ID",
+    grokSessionIdCopied: "Grok 会话 ID 已复制到剪贴板",
     customAcpSessionId: "自定义 ACP 会话 ID",
     customAcpSessionIdCopied: "自定义 ACP 会话 ID 已复制到剪贴板",
     piSessionId: "Pi 会话 ID",
@@ -5845,6 +5852,7 @@ export const zhHans: TranslationStructure = {
       kimi: "Kimi",
       kilo: "Kilo",
       kiro: "Kiro",
+      grok: "Grok",
       customAcp: "Custom ACP",
       pi: "Pi",
       copilot: "Copilot",
@@ -6158,6 +6166,7 @@ export const zhHans: TranslationStructure = {
       other: "其他",
       otherDescription: "输入您自己的答案",
       otherPlaceholder: "输入您的答案...",
+      selectionLimit: ({ count }: { count: number }) => `最多可选择 ${count} 个答案。取消选择一个答案后可选择其他答案。`,
     },
     exitPlanMode: {
       approve: "批准计划",
@@ -9600,6 +9609,7 @@ settingsSession: {
       kimiSubtitleExperimental: "Kimi 命令行（实验）",
       kiloSubtitleExperimental: "Kilo 命令行（实验）",
       kiroSubtitleExperimental: "Kiro 命令行（实验）",
+      grokSubtitleExperimental: "Grok Build 命令行（实验）",
       customAcpSubtitleExperimental: "自定义 ACP 命令行（实验）",
       piSubtitleExperimental: "Pi 命令行（实验）",
       copilotSubtitleExperimental: "GitHub Copilot CLI（实验）",

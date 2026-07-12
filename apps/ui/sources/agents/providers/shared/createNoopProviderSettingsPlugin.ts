@@ -1,12 +1,16 @@
 import type { AgentId } from '@/agents/catalog/catalog';
 import * as React from 'react';
 
-import type { ProviderSettingsPlugin, TranslatableText } from './providerSettingsPlugin';
+import type {
+    ProviderSettingsIconColor,
+    ProviderSettingsPlugin,
+    TranslatableText,
+} from './providerSettingsPlugin';
 
 export function createNoopProviderSettingsPlugin<TProviderId extends AgentId>(params: Readonly<{
     providerId: TProviderId;
     title: TranslatableText;
-    icon: Readonly<{ ionName: string; color: string }>;
+    icon: Readonly<{ ionName: string; color: ProviderSettingsIconColor }>;
     ExtraSectionsComponent?: React.ComponentType<Readonly<{ providerId: TProviderId }>>;
 }>): ProviderSettingsPlugin {
     const ExtraSectionsComponent = params.ExtraSectionsComponent

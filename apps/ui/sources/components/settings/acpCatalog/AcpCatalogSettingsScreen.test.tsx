@@ -87,14 +87,6 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props, props.subtitle ?? null, props.rightElement ?? null),
 }));
 
-vi.mock('@happier-dev/agents', () => ({
-    getBuiltInAcpConfig: (agentId: string) => (
-        agentId === 'kiro'
-            ? { launcher: { command: 'kiro-cli', args: ['--acp'] } }
-            : null
-    ),
-}));
-
 vi.mock('@/agents/catalog/catalog', () => ({
     getAgentCore: (agentId: string) => ({ displayNameKey: `agents.${agentId}` }),
 }));

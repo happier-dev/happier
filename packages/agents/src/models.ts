@@ -370,21 +370,17 @@ export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = O
     allowedModes: ['default'],
   },
   grok: {
-    supportsSelection: true,
-    supportsFreeform: true,
+    supportsSelection: false,
+    supportsFreeform: false,
     nonAcpApplyScope: 'next_prompt',
-    acpApplyBehavior: 'set_model',
-    acpModelConfigOptionId: 'model',
     dynamicProbe: 'auto',
-    defaultMode: 'default',
-    // The shipping Grok Build CLI reports `grok-build` (its default is `grok-composer-2.5-fast`,
-    // reachable via the auto-injected 'default' mode). There is no `grok-build-0.1`.
+    defaultMode: 'grok-build',
     allowedModes: ['grok-build'],
     staticModels: [
       {
         id: 'grok-build',
         name: 'Grok Build',
-        description: 'xAI frontier agentic coding model.',
+        description: 'Current Grok Build model (selection is not advertised by the CLI).',
       },
     ],
   },

@@ -1,0 +1,77 @@
+---
+title: Grok Build (experimental)
+description: Configure the Grok Build CLI in Happier, including installation, authentication, resume, and current ACP limitations.
+---
+
+Happier can run **Grok Build** through the local `grok` CLI using the Agent Client Protocol (ACP).
+
+## Install Grok Build
+
+In Happier, open **Settings → AI provider settings → Grok Build** to check whether the CLI is available on the selected machine and run its vendor installer.
+
+For a manual installation, use xAI's current Grok Build CLI instructions, then verify:
+
+```bash
+grok --version
+```
+
+Happier checks `PATH` and common installation locations, including `~/.grok/bin`. If needed, set `HAPPIER_GROK_PATH` to the absolute path of the `grok` executable.
+
+Happier launches the provider in update-safe ACP mode, equivalent to:
+
+```bash
+grok --no-auto-update agent stdio
+```
+
+## Authenticate
+
+Grok Build supports either an xAI API key or its native cached login.
+
+### API key
+
+Set `XAI_API_KEY` in the environment used by the Happier CLI or daemon. Happier detects that variable without copying its value into session metadata or logs.
+
+### Native login
+
+From **Settings → AI provider settings → Grok Build**, start the normal login flow or the device-code flow for a headless or remote machine. The equivalent terminal commands are:
+
+```bash
+grok login
+grok login --device-auth
+```
+
+Grok Build does not currently provide Happier with a reliable non-interactive cached-login status check. The settings page therefore continues to show **Unknown** for cached login, while ACP startup independently validates that account for each session; **Unknown** does not by itself mean that you are logged out.
+
+## Sessions and questions
+
+- Happier stores the Grok session identity and can request an experimental resume after the provider process restarts.
+- Grok's structured questions support multiple questions and multiple selected options without comma-delimited encoding.
+- Cancellation uses the shared ACP lifecycle, so a cancelled prompt should not prevent a later prompt in the same Happier session.
+
+Resume and structured-question behavior depend on the installed Grok Build version. Use a current CLI release: Happier requires an authentication method advertised by Grok and separately validates every structured-question payload at the provider boundary.
+
+## Current capability limits
+
+- **Models:** Happier reports the active `grok-build` model. Model switching remains disabled until the CLI advertises and proves a distinct ACP selection contract.
+- **MCP tools:** native MCP delivery is experimental.
+- **Images and session media:** not currently advertised as supported through this integration.
+- **Session listing, forking, rollback, and vendor-state handoff:** not currently supported.
+- **Platforms:** the integration includes macOS, Linux, and Windows install/detection paths, but platform behavior still depends on the installed xAI CLI release.
+
+These limits are intentional capability declarations. Happier does not emulate unadvertised provider behavior or use private completion methods as a fallback.
+
+## Troubleshooting
+
+### “Grok Build not found”
+
+1. Verify `grok --version` works on the selected machine.
+2. Restart Happier after installing the CLI.
+3. If the binary is outside the usual locations, set `HAPPIER_GROK_PATH` to its absolute path.
+
+### Authentication is unavailable
+
+1. Confirm `XAI_API_KEY` is present in the Happier CLI or daemon environment, or run one of the native login commands above.
+2. Retry the session so Happier can re-run ACP initialization and select one of the authentication methods advertised by the CLI.
+3. If an older CLI silently drops ACP requests, update Grok Build and retry.
+
+For the shared authentication flow, see [Provider authentication](/docs/features/provider-authentication).

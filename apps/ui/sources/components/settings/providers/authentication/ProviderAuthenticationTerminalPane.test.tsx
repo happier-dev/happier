@@ -36,7 +36,8 @@ type ProviderAuthenticationTerminalPaneProps = Readonly<{
     providerId: 'claude';
     machineId: 'machine-1';
     machineHomeDir: '/Users/tester';
-    loginLaunch: Readonly<{
+    authLaunch: Readonly<{
+        kind: 'primary';
         initialCommand: 'claude';
         initialInput: '/login\r';
     }>;
@@ -60,7 +61,8 @@ const createTestProps = (): ProviderAuthenticationTerminalPaneProps => ({
     providerId: 'claude',
     machineId: 'machine-1',
     machineHomeDir: '/Users/tester',
-    loginLaunch: {
+    authLaunch: {
+        kind: 'primary',
         initialCommand: 'claude',
         initialInput: '/login\r',
     },

@@ -3748,6 +3748,8 @@ export const ru: TranslationStructure = {
       logInSubtitle: "Откройте терминал и запустите вход в провайдера на этой машине.",
       reauthenticateTitle: "Повторно войти",
       reauthenticateSubtitle: "Откройте терминал и обновите вход в провайдера на этой машине.",
+      deviceCodeTitle: "Использовать код устройства",
+      deviceCodeSubtitle: "Выполните вход на удалённой машине или машине без интерфейса с помощью кода устройства.",
       checkNowTitle: "Проверить сейчас",
       checkNowSubtitle: "Обновить обнаруженное локальное состояние аутентификации.",
       statusTitle: "Статус",
@@ -4041,6 +4043,9 @@ export const ru: TranslationStructure = {
             },
             kiro: {
                 title: "Kiro"
+            },
+            grok: {
+                title: "Grok Build"
             },
             pi: {
                 title: "Pi"
@@ -5174,6 +5179,8 @@ export const ru: TranslationStructure = {
     kiloSessionIdCopied: "ID сессии Kilo скопирован в буфер обмена",
     kiroSessionId: "ID сессии Kiro",
     kiroSessionIdCopied: "ID сессии Kiro скопирован в буфер обмена",
+    grokSessionId: "ID сессии Grok",
+    grokSessionIdCopied: "ID сессии Grok скопирован в буфер обмена",
     customAcpSessionId: "ID пользовательской ACP-сессии",
     customAcpSessionIdCopied: "ID пользовательской ACP-сессии скопирован в буфер обмена",
     piSessionId: "ID сессии Pi",
@@ -6054,6 +6061,7 @@ export const ru: TranslationStructure = {
       kimi: "Kimi",
       kilo: "Kilo",
       kiro: "Kiro",
+      grok: "Grok",
       customAcp: "Пользовательский АКП",
       pi: "Pi",
       copilot: "Copilot",
@@ -6371,6 +6379,7 @@ export const ru: TranslationStructure = {
       other: "Другое",
       otherDescription: "Введите свой ответ",
       otherPlaceholder: "Введите ваш ответ...",
+      selectionLimit: ({ count }: { count: number }) => `Можно выбрать до ${count} ответов. Снимите один выбор, чтобы выбрать другой.`,
     },
     exitPlanMode: {
       approve: "Одобрить план",
@@ -9979,6 +9988,7 @@ settingsSession: {
       kimiSubtitleExperimental: "Kimi CLI (экспериментально)",
       kiloSubtitleExperimental: "Kilo CLI (экспериментально)",
       kiroSubtitleExperimental: "Kiro CLI (экспериментально)",
+      grokSubtitleExperimental: "Grok Build CLI (экспериментально)",
       customAcpSubtitleExperimental: "Пользовательский ACP CLI (экспериментально)",
       piSubtitleExperimental: "Pi CLI (экспериментально)",
       copilotSubtitleExperimental: "GitHub Copilot CLI (экспериментально)",

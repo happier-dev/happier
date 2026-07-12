@@ -66,6 +66,16 @@ describe('sessionModes', () => {
     expect(getAgentAdvancedModeCapabilities(cursorAgentId).supportsRuntimeModeSwitch).toBe('acp-config-option');
   });
 
+  it('does not infer Grok agent modes from an empty ACP config-options list', () => {
+    expect(getAgentSessionModeDescriptor('grok')).toEqual({
+      source: 'none',
+      semantics: 'none',
+      runtimeSwitch: 'none',
+    });
+    expect(getAgentSessionModesKind('grok')).toBe('none');
+    expect(getAgentAdvancedModeCapabilities('grok').supportsRuntimeModeSwitch).toBe('none');
+  });
+
   it('keeps the structured descriptor defined for every canonical agent', () => {
     expect(Object.keys(AGENT_SESSION_MODE_DESCRIPTORS).sort()).toEqual([...AGENT_IDS].sort());
     expect(Object.keys(AGENT_SESSION_MODES).sort()).toEqual([...AGENT_IDS].sort());

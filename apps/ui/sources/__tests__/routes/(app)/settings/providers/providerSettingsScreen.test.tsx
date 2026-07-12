@@ -401,7 +401,7 @@ vi.mock('@/agents/providers/registry/providerLocalAuthRegistry', () => ({
         providerId: 'codex',
         support: 'login_terminal',
         docsUrl: 'https://example.com/codex',
-        buildLoginLaunch: () => ({ initialCommand: 'codex login' }),
+        buildAuthLaunches: () => [{ kind: 'primary', initialCommand: 'codex login' }],
     }),
 }));
 
@@ -462,10 +462,10 @@ vi.mock('@/components/settings/providers/authentication/useProviderAuthenticatio
         const providerId = params.providerId;
         const authStatus = cliDetectionState.authStatus?.[providerId] ?? null;
         return {
-            canLaunchLogin: true,
+            canLaunchAuth: true,
             machineId: null,
             machineHomeDir: null,
-            loginLaunch: null,
+            authLaunches: [{ kind: 'primary', initialCommand: 'codex login' }],
             authStatus,
             canCheckNow: true,
             loginActionKind: authStatus?.state === 'logged_in' ? 'reauthenticate' : 'login',

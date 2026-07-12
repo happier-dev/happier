@@ -473,7 +473,11 @@ export const AGENTS_CORE = {
         flavorAliases: ['grok-build', 'grok-cli'],
         cloudConnect: null,
         connectedServices: null,
-        resume: { vendorResume: 'supported', vendorResumeIdField: 'grokSessionId' },
+        resume: {
+            vendorResume: 'experimental',
+            vendorResumeIdField: 'grokSessionId',
+            experimentalResumePolicy: 'runtime_checked',
+        },
         sessionStorage: { direct: true, persisted: true },
         sessionCapabilities: {
             sessionListing: 'unsupported',
@@ -482,10 +486,10 @@ export const AGENTS_CORE = {
         },
         handoff: { vendorStateTransfer: 'unsupported' },
         localControl: { supported: true, topology: 'exclusive', attachStrategy: 'unsupported' },
-        tools: { delivery: 'native_mcp', support: 'supported' },
+        tools: { delivery: 'native_mcp', support: 'experimental' },
         media: {
-            acceptsImageInput: 'experimental',
-            emitsSessionMedia: GENERIC_SESSION_MEDIA_OUTPUT,
+            acceptsImageInput: 'unsupported',
+            emitsSessionMedia: 'unsupported',
             nativeImageGeneration: NO_NATIVE_IMAGE_GENERATION,
         },
     },

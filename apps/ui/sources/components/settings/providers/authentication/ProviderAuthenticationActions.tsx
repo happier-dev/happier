@@ -4,19 +4,23 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
+import type { ProviderLocalAuthLaunch } from '@/agents/providers/shared/providerLocalAuthPlugin';
 
 export const ProviderAuthenticationActions = React.memo(function ProviderAuthenticationActions(props: Readonly<{
     canCheckNow: boolean;
-    canLaunchLogin: boolean;
+    canLaunchAuth: boolean;
+    hasPrimaryLaunch: boolean;
+    hasDeviceCodeLaunch: boolean;
+    activeAuthLaunchKind?: ProviderLocalAuthLaunch['kind'] | null;
     loginActionKind: 'login' | 'reauthenticate';
     docsUrl?: string | null;
     onCheckNow: () => void;
-    onLaunchLogin: () => void;
+    onLaunchAuth: (kind: ProviderLocalAuthLaunch['kind']) => void;
 }>) {
     const { theme } = useUnistyles();
     return (
         <>
-            {props.canLaunchLogin ? (
+            {props.canLaunchAuth && props.hasPrimaryLaunch ? (
                 <Item
                     testID="settings-provider-auth-login"
                     title={props.loginActionKind === 'reauthenticate'
@@ -26,7 +30,18 @@ export const ProviderAuthenticationActions = React.memo(function ProviderAuthent
                         ? t('settingsProviders.authentication.reauthenticateSubtitle')
                         : t('settingsProviders.authentication.logInSubtitle')}
                     icon={<Ionicons name="log-in-outline" size={22} color={theme.colors.text.secondary} />}
-                    onPress={props.onLaunchLogin}
+                    disabled={props.activeAuthLaunchKind != null}
+                    onPress={() => props.onLaunchAuth('primary')}
+                />
+            ) : null}
+            {props.canLaunchAuth && props.hasDeviceCodeLaunch ? (
+                <Item
+                    testID="settings-provider-auth-device-code"
+                    title={t('settingsProviders.authentication.deviceCodeTitle')}
+                    subtitle={t('settingsProviders.authentication.deviceCodeSubtitle')}
+                    icon={<Ionicons name="key-outline" size={22} color={theme.colors.text.secondary} />}
+                    disabled={props.activeAuthLaunchKind != null}
+                    onPress={() => props.onLaunchAuth('device_code')}
                 />
             ) : null}
             {props.canCheckNow ? (

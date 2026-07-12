@@ -33,6 +33,12 @@ describe('agents/registryUi', () => {
         expect(getAgentPickerIconScale('pi')).toBe(0.9);
     });
 
+    it('does not substitute an altered or third-party Grok mark while official asset provenance is blocked', () => {
+        expect(AGENTS_UI.grok.svgIconXml).toBeNull();
+        expect(AGENTS_UI.grok.cliGlyph).toBe('GX');
+        expect(getAgentPickerIconScale('grok')).toBeGreaterThan(0);
+    });
+
     it('slightly enlarges the Claude picker icon to compensate for the logo silhouette', () => {
         expect(getAgentPickerIconScale('claude')).toBe(1.1);
     });

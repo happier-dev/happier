@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { StyleProp, ImageStyle } from 'react-native';
 import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
 import { SvgXml } from 'react-native-svg';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -10,6 +11,7 @@ import {
     getAgentIconSource,
     getAgentIconSvgXml,
     getAgentIconTintColor,
+    getAgentCore,
 } from '@/agents/catalog/catalog';
 
 type AgentIconProps = Readonly<{
@@ -55,7 +57,17 @@ export const AgentIcon = React.memo(function AgentIcon(props: AgentIconProps) {
 
     const source = getAgentIconSource(agentId);
     if (!source) {
-        return null;
+        // Core stores this as a Node-safe string; this UI boundary owns the Ionicons contract.
+        const fallbackIconName = getAgentCore(agentId).ui.agentPickerIconName as React.ComponentProps<typeof Ionicons>['name'];
+        return (
+            <Ionicons
+                name={fallbackIconName}
+                size={size}
+                color={color ?? getAgentIconTintColor(agentId, theme) ?? theme.colors.text.secondary}
+                style={style as React.ComponentProps<typeof Ionicons>['style']}
+                testID={testID}
+            />
+        );
     }
 
     return (

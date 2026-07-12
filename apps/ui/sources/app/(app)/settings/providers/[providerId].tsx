@@ -21,6 +21,7 @@ import { isAgentId, getAgentCore, type AgentId } from '@/agents/catalog/catalog'
 import { getProviderSettingsPlugin } from '@/agents/providers/registry/providerSettingsRegistry';
 import { getProviderLocalAuthPlugin } from '@/agents/providers/registry/providerLocalAuthRegistry';
 import type { ProviderSettingFieldDef } from '@/agents/providers/shared/providerSettingsPlugin';
+import type { ProviderLocalAuthLaunch } from '@/agents/providers/shared/providerLocalAuthPlugin';
 import { t } from '@/text';
 import {
     buildBackendTargetKey,
@@ -321,6 +322,7 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
         authPlugin,
         primaryMachine,
     });
+    const [selectedAuthLaunchKind, setSelectedAuthLaunchKind] = React.useState<ProviderLocalAuthLaunch['kind'] | null>(null);
     const providerCliAvailable = cliAvailability.available[providerId];
     const providerCliManagedInstalled = cliAvailability.resolutionSource[providerId] === 'managed';
     const providerCliCapabilityId = buildAgentCliCapabilityId(providerId);
@@ -402,6 +404,7 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
         });
     }, [cliAvailability, providerId]);
     const closeProviderAuthTerminal = React.useCallback(() => {
+        setSelectedAuthLaunchKind(null);
         pane.closeBottom();
         triggerProviderAuthRefreshes();
     }, [pane, triggerProviderAuthRefreshes]);
@@ -548,8 +551,12 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
                         state={providerAuthentication}
                         showActions={supportsDesktopControls}
                         onCheckNow={() => cliAvailability.refresh({ bypassCache: true, includeLoginStatusForAgentIds: [providerId] })}
-                        onLaunchLogin={() => {
-                            if (!providerAuthentication.canLaunchLogin || !supportsDesktopControls) return;
+                        activeAuthLaunchKind={authTerminalOpen ? selectedAuthLaunchKind : null}
+                        onLaunchAuth={(kind) => {
+                            if (!providerAuthentication.canLaunchAuth || !supportsDesktopControls) return;
+                            const launch = providerAuthentication.authLaunches.find((candidate) => candidate.kind === kind);
+                            if (!launch) return;
+                            setSelectedAuthLaunchKind(kind);
                             pane.openBottom({ tabId: PROVIDER_AUTH_TERMINAL_TAB_ID });
                         }}
                     />
@@ -725,7 +732,7 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
                             providerId={providerId}
                             machineId={providerAuthentication.machineId}
                             machineHomeDir={providerAuthentication.machineHomeDir}
-                            loginLaunch={providerAuthentication.loginLaunch}
+                            authLaunch={providerAuthentication.authLaunches.find((launch) => launch.kind === selectedAuthLaunchKind) ?? null}
                             onRequestClose={closeProviderAuthTerminal}
                             onTerminalExit={handleProviderAuthTerminalExit}
                         />

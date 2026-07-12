@@ -217,6 +217,8 @@ const providerAuthenticationTranslationExtension = {
     logInSubtitle: 'Open a terminal to authenticate this CLI on the machine.',
     reauthenticateTitle: 'Re-authenticate',
     reauthenticateSubtitle: 'Open a terminal to refresh this CLI login on the machine.',
+    deviceCodeTitle: 'Use device code',
+    deviceCodeSubtitle: 'Authenticate in a headless or remote terminal with a device code.',
     checkNowTitle: 'Check now',
     checkNowSubtitle: 'Refresh machine-local authentication details.',
     terminalTitle: 'Provider login terminal',
@@ -3551,6 +3553,8 @@ export const en = {
             logInSubtitle: 'Open a terminal and run the provider sign-in flow on this machine.',
             reauthenticateTitle: 'Reauthenticate',
             reauthenticateSubtitle: 'Open a terminal and refresh the provider sign-in on this machine.',
+            deviceCodeTitle: 'Use device code',
+            deviceCodeSubtitle: 'Authenticate from a headless or remote machine with a device code.',
             checkNowTitle: 'Check now',
             checkNowSubtitle: 'Refresh the detected local authentication state.',
             statusTitle: 'Status',
@@ -3844,6 +3848,9 @@ export const en = {
             },
             kiro: {
                 title: "Kiro"
+            },
+            grok: {
+                title: "Grok Build"
             },
             pi: {
                 title: "Pi"
@@ -5492,6 +5499,8 @@ export const en = {
         copilotSessionIdCopied: 'Copilot Session ID copied to clipboard',
         cursorSessionId: 'Cursor Session ID',
         cursorSessionIdCopied: 'Cursor Session ID copied to clipboard',
+        grokSessionId: 'Grok Session ID',
+        grokSessionIdCopied: 'Grok Session ID copied to clipboard',
         metadataCopied: 'Metadata copied to clipboard',
         failedToCopyMetadata: 'Failed to copy metadata',
         failedToKillSession: 'Failed to kill session',
@@ -5704,6 +5713,7 @@ export const en = {
             pi: 'Pi',
             copilot: 'Copilot',
             cursor: 'Cursor',
+            grok: 'Grok',
         },
         auggieIndexingChip: {
             on: 'Indexing on',
@@ -5961,6 +5971,7 @@ export const en = {
             other: 'Other',
             otherDescription: 'Type your own answer',
             otherPlaceholder: 'Type your answer...',
+            selectionLimit: ({ count }: { count: number }) => `Select up to ${count} answers. Deselect one to choose another.`,
         },
         exitPlanMode: {
             approve: 'Approve Plan',
@@ -9353,6 +9364,7 @@ settingsSession: {
             piSubtitleExperimental: 'Pi CLI (experimental)',
             copilotSubtitleExperimental: 'GitHub Copilot CLI (experimental)',
             cursorSubtitleExperimental: 'Cursor Agent CLI (experimental)',
+            grokSubtitleExperimental: 'Grok Build CLI (experimental)',
         },
         tmux: {
             title: 'Tmux',

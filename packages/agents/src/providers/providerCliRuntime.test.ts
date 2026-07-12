@@ -112,6 +112,28 @@ describe('PROVIDER_CLI_RUNTIME_SPECS', () => {
       { kind: 'homePath', relativePath: 'AppData/Roaming/npm/opencode.cmd' },
     ]);
     expect(getProviderCliRuntimeSpec('codex').knownCommandCandidates).toBeNull();
+    expect(getProviderCliRuntimeSpec('grok').knownCommandCandidates).toEqual([
+      { kind: 'homeBinDir', relativeDir: '.grok/bin' },
+      { kind: 'homePath', relativePath: '.grok/bin/grok.exe' },
+      { kind: 'homeBinDir', relativeDir: '.local/bin' },
+      { kind: 'absolutePath', path: '/opt/homebrew/bin/grok' },
+      { kind: 'absolutePath', path: '/usr/local/bin/grok' },
+    ]);
+  });
+
+  it('keeps Grok on the official vendor-install contract without an agent binary fallback', () => {
+    expect(getProviderCliRuntimeSpec('grok')).toMatchObject({
+      title: 'Grok Build CLI',
+      binaryName: 'grok',
+      sourcePreferenceDefault: 'system-first',
+      managedInstall: null,
+      manualInstallKind: 'vendor_recipe',
+      acceptsJavaScriptFileOverride: false,
+      installGuideUrl: 'https://x.ai/cli',
+    });
+    expect(getProviderCliRuntimeSpec('grok').alternativeBinaryNames).toBeUndefined();
+    expect(JSON.stringify(getProviderCliRuntimeSpec('grok').manualInstallRecipes)).toContain('x.ai/cli/install.sh');
+    expect(JSON.stringify(getProviderCliRuntimeSpec('grok').manualInstallRecipes)).toContain('x.ai/cli/install.ps1');
   });
 
   it('declares Cursor as a system-first CLI with identity-checked fallback candidates', () => {

@@ -6,12 +6,14 @@ import { t } from '@/text';
 import { ProviderAuthenticationActions } from './ProviderAuthenticationActions';
 import { ProviderAuthenticationStatusRows } from './ProviderAuthenticationStatusRows';
 import type { ProviderAuthenticationState } from './useProviderAuthenticationState';
+import type { ProviderLocalAuthLaunch } from '@/agents/providers/shared/providerLocalAuthPlugin';
 
 export const ProviderAuthenticationCard = React.memo(function ProviderAuthenticationCard(props: Readonly<{
     providerId: AgentId;
     state: ProviderAuthenticationState;
     onCheckNow: () => void;
-    onLaunchLogin: () => void;
+    onLaunchAuth: (kind: ProviderLocalAuthLaunch['kind']) => void;
+    activeAuthLaunchKind?: ProviderLocalAuthLaunch['kind'] | null;
     showActions?: boolean;
 }>) {
     const showActions = props.showActions !== false;
@@ -21,11 +23,14 @@ export const ProviderAuthenticationCard = React.memo(function ProviderAuthentica
             {showActions ? (
                 <ProviderAuthenticationActions
                     canCheckNow={props.state.canCheckNow}
-                    canLaunchLogin={props.state.canLaunchLogin}
+                    canLaunchAuth={props.state.canLaunchAuth}
+                    hasPrimaryLaunch={props.state.authLaunches.some((launch) => launch.kind === 'primary')}
+                    hasDeviceCodeLaunch={props.state.authLaunches.some((launch) => launch.kind === 'device_code')}
+                    activeAuthLaunchKind={props.activeAuthLaunchKind}
                     loginActionKind={props.state.loginActionKind}
                     docsUrl={props.state.docsUrl}
                     onCheckNow={props.onCheckNow}
-                    onLaunchLogin={props.onLaunchLogin}
+                    onLaunchAuth={props.onLaunchAuth}
                 />
             ) : null}
         </ItemGroup>

@@ -46,18 +46,6 @@ export const BUILT_IN_ACP_CONFIG: Readonly<Partial<Record<AgentId, BuiltInAcpCon
     supportsModels: 'yes',
     promptImageSupport: 'yes',
   },
-  grok: {
-    agentId: 'grok',
-    launcher: {
-      command: providerLauncherCommand('grok'),
-      args: ['agent', 'stdio'],
-    },
-    transportProfile: 'generic',
-    supportsLoadSession: true,
-    supportsModes: 'auto',
-    supportsModels: 'auto',
-    promptImageSupport: 'auto',
-  },
 });
 
 export function hasBuiltInAcpConfig(agentId: AgentId): boolean {

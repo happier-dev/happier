@@ -38,4 +38,10 @@ describe('agent tools delivery capability', () => {
     expect(usesShellBridgeTools('cursor')).toBe(true);
     expect(isAgentToolsUnsupported('cursor')).toBe(false);
   });
+
+  it('keeps observed Grok MCP negotiation experimental until authenticated tool QA passes', () => {
+    expect(getAgentToolsCapability('grok')).toEqual({ delivery: 'native_mcp', support: 'experimental' });
+    expect(usesNativeMcpTools('grok')).toBe(true);
+    expect(isAgentToolsUnsupported('grok')).toBe(false);
+  });
 });

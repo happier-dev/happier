@@ -131,19 +131,23 @@ describe('agent model config', () => {
     expect(codexModels.map((model) => model.id)).toContain('gpt-5.4');
   });
 
-  it('exposes grok’s real coding model id and keeps allowedModes aligned with its static models', () => {
+  it('uses the observed Grok current model only as a non-switchable fallback', () => {
     const grok = getAgentModelConfig('grok');
     const grokModels = getAgentStaticModels('grok');
 
-    // The shipping Grok Build CLI reports `grok-build` (and default `grok-composer-2.5-fast`);
-    // there is no `grok-build-0.1`, and 'default' is auto-injected by consumers so it is not listed here.
+    // Current/floor initialize payloads report the current `grok-build` id while advertising no
+    // selectable model list. Do not infer freeform or live switching from the current id.
+    expect(grok.supportsSelection).toBe(false);
+    expect(grok.supportsFreeform).toBe(false);
+    expect(grok.acpApplyBehavior).toBeUndefined();
+    expect(grok.acpModelConfigOptionId).toBeUndefined();
     expect(grokModels.map((model) => model.id)).toEqual(['grok-build']);
     expect(grok.allowedModes).toEqual(['grok-build']);
     expect(grok.staticModels?.map((model) => model.id)).toEqual(grok.allowedModes);
     expect(grokModels[0]).toMatchObject({
       id: 'grok-build',
       name: 'Grok Build',
-      description: expect.any(String),
+      description: 'Current Grok Build model (selection is not advertised by the CLI).',
     });
   });
 

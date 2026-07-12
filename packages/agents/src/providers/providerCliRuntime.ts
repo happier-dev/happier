@@ -322,6 +322,8 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
     title: 'Grok Build CLI',
     binaryName: 'grok',
     knownCommandCandidates: [
+      { kind: 'homeBinDir', relativeDir: '.grok/bin' },
+      { kind: 'homePath', relativePath: '.grok/bin/grok.exe' },
       { kind: 'homeBinDir', relativeDir: '.local/bin' },
       { kind: 'absolutePath', path: '/opt/homebrew/bin/grok' },
       { kind: 'absolutePath', path: '/usr/local/bin/grok' },

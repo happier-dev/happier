@@ -1,0 +1,66 @@
+{
+  "v": 1,
+  "id": "grok",
+  "enableEnvVar": "HAPPIER_E2E_PROVIDER_GROK",
+  "protocol": "acp",
+  "traceProvider": "grok",
+  "requiredBinaries": [
+    {
+      "bin": "grok",
+      "envOverride": "HAPPIER_E2E_PROVIDER_GROK_BIN",
+      "requireExists": true
+    }
+  ],
+  "auth": {
+    "mode": "auto",
+    "env": {
+      "requiredAnyOf": [["XAI_API_KEY"]]
+    }
+  },
+  "permissions": {
+    "v": 1,
+    "acp": {
+      "toolPermissionPromptsByMode": {
+        "default": true,
+        "safe-yolo": true,
+        "read-only": true,
+        "yolo": true,
+        "plan": true
+      },
+      "outsideWorkspaceWriteAllowedByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "outsideWorkspaceWriteMustCompleteByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "outsideWorkspaceRequireTaskCompleteByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "expectToolPermissionPrompts": true,
+      "permissionSurfaceOutsideWorkspaceYolo": false
+    }
+  },
+  "cli": {
+    "subcommand": "grok",
+    "extraArgs": ["--started-by", "terminal"],
+    "env": {
+      "HEADLESS": "1",
+      "HAPPIER_VARIANT": "dev"
+    },
+    "envFrom": {
+      "HAPPIER_GROK_PATH": "HAPPIER_E2E_PROVIDER_GROK_BIN"
+    }
+  }
+}

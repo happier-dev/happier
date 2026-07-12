@@ -3783,6 +3783,8 @@ export const es: TranslationStructure = {
         logInSubtitle: "Abre un terminal y ejecuta el flujo de inicio de sesión del proveedor en esta máquina.",
         reauthenticateTitle: "Volver a autenticar",
         reauthenticateSubtitle: "Abre un terminal y renueva el inicio de sesión del proveedor en esta máquina.",
+        deviceCodeTitle: "Usar código de dispositivo",
+        deviceCodeSubtitle: "Autentícate en una máquina remota o sin interfaz mediante un código de dispositivo.",
         checkNowTitle: "Comprobar ahora",
         checkNowSubtitle: "Actualiza el estado de autenticación local detectado.",
         statusTitle: "Estado",
@@ -4076,6 +4078,9 @@ export const es: TranslationStructure = {
             },
             kiro: {
                 title: "Kiro"
+            },
+            grok: {
+                title: "Grok Build"
             },
             pi: {
                 title: "Pi"
@@ -5829,6 +5834,8 @@ export const es: TranslationStructure = {
     kiloSessionIdCopied: "ID de sesión de Kilo copiado al portapapeles",
     kiroSessionId: "ID de sesión de Kiro",
     kiroSessionIdCopied: "ID de sesión de Kiro copiado al portapapeles",
+    grokSessionId: "ID de sesión de Grok",
+    grokSessionIdCopied: "ID de sesión de Grok copiado al portapapeles",
     customAcpSessionId: "ID de sesión de ACP personalizado",
     customAcpSessionIdCopied: "ID de sesión de ACP personalizado copiado al portapapeles",
     piSessionId: "ID de sesión de Pi",
@@ -6054,6 +6061,7 @@ export const es: TranslationStructure = {
       kimi: "Kimi",
       kilo: "Kilo",
       kiro: "Kiro",
+      grok: "Grok",
       customAcp: "ACP personalizado",
       pi: "Pi",
       copilot: "Copilot",
@@ -6369,6 +6377,7 @@ export const es: TranslationStructure = {
       other: "Otro",
       otherDescription: "Escribe tu propia respuesta",
       otherPlaceholder: "Escribe tu respuesta...",
+      selectionLimit: ({ count }: { count: number }) => `Selecciona hasta ${count} respuestas. Anula una selección para elegir otra.`,
     },
     exitPlanMode: {
       approve: "Aprobar plan",
@@ -10069,6 +10078,7 @@ settingsSession: {
       kimiSubtitleExperimental: "CLI de Kimi (experimental)",
       kiloSubtitleExperimental: "CLI de Kilo (experimental)",
       kiroSubtitleExperimental: "CLI de Kiro (experimental)",
+      grokSubtitleExperimental: "CLI de Grok Build (experimental)",
       customAcpSubtitleExperimental: "CLI de ACP personalizado (experimental)",
       piSubtitleExperimental: "CLI de Pi (experimental)",
       copilotSubtitleExperimental: "GitHub Copilot CLI (en pruebas)",
