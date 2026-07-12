@@ -1,5 +1,8 @@
 import type { Metadata } from '@/api/types';
-import { buildPiAgentRuntimeDescriptorV1 } from '@happier-dev/protocol';
+import {
+  buildPiAgentRuntimeDescriptorV1,
+  readAgentRuntimeDescriptorV1ForProvider,
+} from '@happier-dev/protocol';
 import { basename, isAbsolute } from 'node:path';
 
 import {
@@ -30,12 +33,81 @@ type PiSessionIdMetadataLastPublishedState = {
 
 const PI_SESSION_FILE_RESOLVE_RETRY_DELAYS_MS = [0, 250, 1_000, 2_500] as const;
 
-export function maybeUpdatePiSessionIdMetadata(params: {
+function readPiResumeSessionFileSurfaces(
+  metadata: Metadata,
+  vendorSessionId: string,
+): Readonly<{
+  coherent: boolean;
+  sessionFile: string | null;
+  metadataHasSessionFile: boolean;
+  descriptorHasSessionFile: boolean;
+}> {
+  const metadataHasSessionFile = Object.prototype.hasOwnProperty.call(metadata, 'piSessionFile');
+  const metadataSessionFile = normalizeOptionalAbsolutePath(
+    (metadata as Metadata & { piSessionFile?: unknown }).piSessionFile,
+  );
+  if (metadataHasSessionFile && metadataSessionFile === null) {
+    return { coherent: false, sessionFile: null, metadataHasSessionFile, descriptorHasSessionFile: false };
+  }
+
+  const descriptor = readAgentRuntimeDescriptorV1ForProvider(metadata.agentRuntimeDescriptorV1, 'pi');
+  const descriptorOwnsResumeIdentity = Boolean(
+    descriptor
+    && descriptor.provider.resumeStrategy === 'sessionFileAbsolutePreferred'
+    && normalizeOptionalString(descriptor.provider.vendorSessionId) === vendorSessionId,
+  );
+  const descriptorHasSessionFile = descriptorOwnsResumeIdentity
+    && Object.prototype.hasOwnProperty.call(descriptor?.provider, 'sessionFile');
+  const descriptorSessionFile = descriptorOwnsResumeIdentity
+    ? normalizeOptionalAbsolutePath(descriptor?.provider.sessionFile)
+    : null;
+  if (descriptorHasSessionFile && descriptorSessionFile === null) {
+    return { coherent: false, sessionFile: null, metadataHasSessionFile, descriptorHasSessionFile };
+  }
+  if (metadataSessionFile && descriptorSessionFile && metadataSessionFile !== descriptorSessionFile) {
+    return { coherent: false, sessionFile: null, metadataHasSessionFile, descriptorHasSessionFile };
+  }
+
+  return {
+    coherent: true,
+    sessionFile: metadataSessionFile ?? descriptorSessionFile,
+    metadataHasSessionFile,
+    descriptorHasSessionFile,
+  };
+}
+
+function readDurablePiResumeIdentity(
+  metadata: Metadata | null | undefined,
+  vendorSessionId: string,
+): Readonly<{ sessionFile: string | null }> | null {
+  if (!metadata || normalizeOptionalString(metadata.piSessionId) !== vendorSessionId) return null;
+
+  const descriptor = readAgentRuntimeDescriptorV1ForProvider(metadata.agentRuntimeDescriptorV1, 'pi');
+  if (
+    !descriptor
+    || descriptor.provider.resumeStrategy !== 'sessionFileAbsolutePreferred'
+    || normalizeOptionalString(descriptor.provider.vendorSessionId) !== vendorSessionId
+  ) {
+    return null;
+  }
+
+  const sessionFileSurfaces = readPiResumeSessionFileSurfaces(metadata, vendorSessionId);
+  if (
+    !sessionFileSurfaces.coherent
+    || sessionFileSurfaces.metadataHasSessionFile !== sessionFileSurfaces.descriptorHasSessionFile
+  ) {
+    return null;
+  }
+
+  return { sessionFile: sessionFileSurfaces.sessionFile };
+}
+
+export async function maybeUpdatePiSessionIdMetadata(params: {
   getPiSessionId: () => string | null;
   getPiSessionFile: () => string | null;
   updateHappySessionMetadata: (updater: (metadata: Metadata) => Metadata) => Promise<void> | void;
   lastPublished: PiSessionIdMetadataLastPublishedState;
-}): void {
+}): Promise<void> {
   const raw = params.getPiSessionId();
   const next = typeof raw === 'string' ? raw.trim() : '';
   const nextSessionFile = normalizeOptionalAbsolutePath(params.getPiSessionFile());
@@ -44,46 +116,30 @@ export function maybeUpdatePiSessionIdMetadata(params: {
   const lastPublishedSessionFile = normalizeOptionalAbsolutePath(params.lastPublished.sessionFile);
   if (params.lastPublished.value === next && lastPublishedSessionFile === nextSessionFile) return;
 
-  const prev = params.lastPublished.value;
-  const prevSessionFile = lastPublishedSessionFile;
+  await params.updateHappySessionMetadata((metadata) => {
+    const nextMetadata = {
+      ...metadata,
+      piSessionId: next,
+      agentRuntimeDescriptorV1: buildPiAgentRuntimeDescriptorV1({
+        resumeStrategy: 'sessionFileAbsolutePreferred',
+        vendorSessionId: next,
+        ...(nextSessionFile ? { sessionFile: nextSessionFile } : {}),
+      }),
+    };
+
+    if (nextSessionFile) {
+      return {
+        ...nextMetadata,
+        piSessionFile: nextSessionFile,
+      };
+    }
+
+    const withoutSessionFile = { ...nextMetadata } as Metadata & { piSessionFile?: string };
+    delete withoutSessionFile.piSessionFile;
+    return withoutSessionFile;
+  });
   params.lastPublished.value = next;
   params.lastPublished.sessionFile = nextSessionFile;
-
-  try {
-    const res = params.updateHappySessionMetadata((metadata) => {
-      const nextMetadata = {
-        ...metadata,
-        piSessionId: next,
-        agentRuntimeDescriptorV1: buildPiAgentRuntimeDescriptorV1({
-          resumeStrategy: 'sessionFileAbsolutePreferred',
-          vendorSessionId: next,
-          ...(nextSessionFile ? { sessionFile: nextSessionFile } : {}),
-        }),
-      };
-
-      if (nextSessionFile) {
-        return {
-          ...nextMetadata,
-          piSessionFile: nextSessionFile,
-        };
-      }
-
-      const withoutSessionFile = { ...nextMetadata } as Metadata & { piSessionFile?: string };
-      delete withoutSessionFile.piSessionFile;
-      return withoutSessionFile;
-    });
-    void Promise.resolve(res).catch(() => {
-      if (params.lastPublished.value === next && normalizeOptionalAbsolutePath(params.lastPublished.sessionFile) === nextSessionFile) {
-        params.lastPublished.value = prev;
-        params.lastPublished.sessionFile = prevSessionFile;
-      }
-    });
-  } catch {
-    if (params.lastPublished.value === next && normalizeOptionalAbsolutePath(params.lastPublished.sessionFile) === nextSessionFile) {
-      params.lastPublished.value = prev;
-      params.lastPublished.sessionFile = prevSessionFile;
-    }
-  }
 }
 
 export async function resolvePiSessionFileForRuntimeSession(params: Readonly<{
@@ -120,7 +176,8 @@ export async function resolvePiSessionFileForRuntimeSession(params: Readonly<{
   return await findPiSessionFileForId({ sessionId, roots });
 }
 
-export function publishPiSessionIdMetadata(params: Readonly<{
+export async function publishPiSessionIdMetadata(params: Readonly<{
+  operation: 'create' | 'resume';
   session: Readonly<{
     updateMetadata: (updater: (metadata: Metadata) => Metadata) => Promise<void> | void;
     getMetadataSnapshot?: () => Metadata | null;
@@ -129,15 +186,56 @@ export function publishPiSessionIdMetadata(params: Readonly<{
   cwd: string;
   processEnv?: NodeJS.ProcessEnv;
   lastPublished: PiSessionIdMetadataLastPublishedState;
-}>): void {
+}>): Promise<void> {
   const currentSessionReference = normalizeOptionalString(params.getPiSessionId());
+  const metadataSnapshot = params.operation === 'resume'
+    ? params.session.getMetadataSnapshot?.()
+    : null;
 
-  maybeUpdatePiSessionIdMetadata({
-    getPiSessionId: () => currentSessionReference,
-    getPiSessionFile: () => null,
-    updateHappySessionMetadata: (updater) => params.session.updateMetadata(updater),
-    lastPublished: params.lastPublished,
-  });
+  const candidateDurableResumeIdentity = currentSessionReference && params.operation === 'resume'
+    ? readDurablePiResumeIdentity(metadataSnapshot, currentSessionReference)
+    : null;
+  const durableResumeSessionId = currentSessionReference
+    ? resolvePiSessionIdFromResumeReference(currentSessionReference)
+    : null;
+  const durableResumeIdentity = candidateDurableResumeIdentity
+    && (
+      candidateDurableResumeIdentity.sessionFile === null
+      || (
+        durableResumeSessionId !== null
+        && doesPiSessionFileNameMatchSessionId(
+          basename(candidateDurableResumeIdentity.sessionFile),
+          durableResumeSessionId,
+        )
+        && await pathExistsAsFile(candidateDurableResumeIdentity.sessionFile)
+      )
+    )
+    ? candidateDurableResumeIdentity
+    : null;
+  if (currentSessionReference && durableResumeIdentity) {
+    params.lastPublished.value = currentSessionReference;
+    params.lastPublished.sessionFile = durableResumeIdentity.sessionFile;
+  } else {
+    const persistedSessionFileSurfaces = currentSessionReference && metadataSnapshot
+      ? readPiResumeSessionFileSurfaces(metadataSnapshot, currentSessionReference)
+      : null;
+    const persistedResumeSessionFile = currentSessionReference && params.operation === 'resume'
+      ? await resolvePiSessionFileForRuntimeSession({
+        vendorSessionReference: currentSessionReference,
+        cwd: params.cwd,
+        processEnv: params.processEnv,
+        candidatePersistedSessionFile: persistedSessionFileSurfaces?.coherent
+          ? persistedSessionFileSurfaces.sessionFile
+          : null,
+      })
+      : null;
+    await maybeUpdatePiSessionIdMetadata({
+      getPiSessionId: () => currentSessionReference,
+      getPiSessionFile: () => persistedResumeSessionFile,
+      updateHappySessionMetadata: (updater) => params.session.updateMetadata(updater),
+      lastPublished: params.lastPublished,
+    });
+  }
 
   if (!currentSessionReference) return;
 
@@ -161,11 +259,13 @@ export function publishPiSessionIdMetadata(params: Readonly<{
       }).then((resolvedSessionFile) => {
         if (resolvedSessionFile) {
           if (params.lastPublished.value !== currentSessionReference) return;
-          maybeUpdatePiSessionIdMetadata({
+          void maybeUpdatePiSessionIdMetadata({
             getPiSessionId: () => currentSessionReference,
             getPiSessionFile: () => resolvedSessionFile,
             updateHappySessionMetadata: (updater) => params.session.updateMetadata(updater),
             lastPublished: params.lastPublished,
+          }).catch(() => {
+            scheduleResolveAttempt(attemptIndex + 1);
           });
           return;
         }

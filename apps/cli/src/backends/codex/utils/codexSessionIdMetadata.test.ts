@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { join, resolve } from 'node:path';
 
 import type { Metadata } from '@/api/types';
@@ -600,15 +600,205 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
       },
     };
 
-    publishCodexSessionIdMetadata({ session: session as any, getCodexThreadId: () => 'thread-1', lastPublished });
-    await Promise.resolve();
-    await Promise.resolve();
+    await expect(publishCodexSessionIdMetadata({
+      session: session as any,
+      getCodexThreadId: () => 'thread-1',
+      lastPublished,
+    })).rejects.toThrow('update failed');
     expect(lastPublished.value).toBeNull();
 
-    publishCodexSessionIdMetadata({ session: session as any, getCodexThreadId: () => 'thread-1', lastPublished });
-    await Promise.resolve();
-    await Promise.resolve();
+    await publishCodexSessionIdMetadata({
+      session: session as any,
+      getCodexThreadId: () => 'thread-1',
+      lastPublished,
+    });
     expect(calls).toBe(2);
     expect(lastPublished.value).toBe('thread-1');
+  });
+
+  it('skips a redundant resume write only when the persisted Codex identity fingerprint is equivalent', async () => {
+    let metadata = createTestMetadata({ path: '/tmp', codexSessionId: 'stale' });
+    const seedSession = {
+      getMetadataSnapshot: () => metadata,
+      updateMetadata: async (updater: (current: Metadata) => Metadata) => {
+        metadata = updater(metadata);
+      },
+    };
+    await publishCodexSessionIdMetadata({
+      session: seedSession,
+      operation: 'create',
+      getCodexThreadId: () => 'thread-resume',
+      backendMode: 'acp',
+      transcriptStorage: 'persisted',
+      processEnv: TEST_CODEX_HOME_ENV,
+      lastPublished: { value: null },
+    });
+
+    const failingUpdate = vi.fn(async () => {
+      throw new Error('metadata unavailable');
+    });
+    await expect(publishCodexSessionIdMetadata({
+      session: {
+        getMetadataSnapshot: () => metadata,
+        updateMetadata: failingUpdate,
+      },
+      operation: 'resume',
+      getCodexThreadId: () => 'thread-resume',
+      backendMode: 'acp',
+      transcriptStorage: 'persisted',
+      processEnv: TEST_CODEX_HOME_ENV,
+      lastPublished: { value: null },
+    })).resolves.toBeUndefined();
+    expect(failingUpdate).not.toHaveBeenCalled();
+
+    const changedDescriptor = metadata.agentRuntimeDescriptorV1 as Record<string, unknown>;
+    metadata = {
+      ...metadata,
+      agentRuntimeDescriptorV1: {
+        ...changedDescriptor,
+        provider: {
+          ...(changedDescriptor.provider as Record<string, unknown>),
+          homePath: '/different/codex-home',
+        },
+      },
+    };
+    await expect(publishCodexSessionIdMetadata({
+      session: {
+        getMetadataSnapshot: () => metadata,
+        updateMetadata: failingUpdate,
+      },
+      operation: 'resume',
+      getCodexThreadId: () => 'thread-resume',
+      backendMode: 'acp',
+      transcriptStorage: 'persisted',
+      processEnv: TEST_CODEX_HOME_ENV,
+      lastPublished: { value: null },
+    })).rejects.toThrow('metadata unavailable');
+    expect(failingUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a trimmed persisted Codex id as the same durable resume identity', async () => {
+    let metadata = createTestMetadata({ path: '/tmp' });
+    await publishCodexSessionIdMetadata({
+      session: {
+        getMetadataSnapshot: () => metadata,
+        updateMetadata: async (updater) => {
+          metadata = updater(metadata);
+        },
+      },
+      operation: 'create',
+      getCodexThreadId: () => 'thread-trimmed-resume',
+      backendMode: 'acp',
+      transcriptStorage: 'persisted',
+      processEnv: TEST_CODEX_HOME_ENV,
+      lastPublished: { value: null },
+    });
+    metadata = { ...metadata, codexSessionId: '  thread-trimmed-resume  ' };
+
+    const failingUpdate = vi.fn(async () => {
+      throw new Error('metadata unavailable');
+    });
+    await expect(publishCodexSessionIdMetadata({
+      session: { getMetadataSnapshot: () => metadata, updateMetadata: failingUpdate },
+      operation: 'resume',
+      getCodexThreadId: () => 'thread-trimmed-resume',
+      backendMode: 'acp',
+      transcriptStorage: 'persisted',
+      processEnv: TEST_CODEX_HOME_ENV,
+      lastPublished: { value: null },
+    })).resolves.toBeUndefined();
+    expect(failingUpdate).not.toHaveBeenCalled();
+  });
+
+  it('keeps create and non-durable resume publication acknowledged even when the thread id matches', async () => {
+    let metadata = createTestMetadata({ codexSessionId: 'thread-resume' });
+    const failingUpdate = vi.fn(async () => {
+      throw new Error('metadata unavailable');
+    });
+    const common = {
+      session: {
+        getMetadataSnapshot: () => metadata,
+        updateMetadata: failingUpdate,
+      },
+      getCodexThreadId: () => 'thread-resume',
+      backendMode: 'acp' as const,
+      transcriptStorage: 'persisted' as const,
+      processEnv: TEST_CODEX_HOME_ENV,
+    };
+
+    await expect(publishCodexSessionIdMetadata({
+      ...common,
+      operation: 'resume',
+      lastPublished: { value: null },
+    })).rejects.toThrow('metadata unavailable');
+
+    metadata = createTestMetadata({ path: '/tmp' });
+    await publishCodexSessionIdMetadata({
+      ...common,
+      session: {
+        getMetadataSnapshot: () => metadata,
+        updateMetadata: async (updater) => {
+          metadata = updater(metadata);
+        },
+      },
+      operation: 'create',
+      lastPublished: { value: null },
+    });
+    await expect(publishCodexSessionIdMetadata({
+      ...common,
+      operation: 'create',
+      lastPublished: { value: null },
+    })).rejects.toThrow('metadata unavailable');
+    expect(failingUpdate).toHaveBeenCalledTimes(2);
+  });
+
+  it('requires an equivalent direct-session source and nested runtime descriptor before skipping resume publication', async () => {
+    let metadata = createTestMetadata({ machineId: 'machine-1', path: '/tmp' });
+    const seedSession = {
+      getMetadataSnapshot: () => metadata,
+      updateMetadata: async (updater: (current: Metadata) => Metadata) => {
+        metadata = updater(metadata);
+      },
+    };
+    const common = {
+      getCodexThreadId: () => 'thread-direct-resume',
+      backendMode: 'acp' as const,
+      transcriptStorage: 'direct' as const,
+      codexHome: '/Users/test/.codex',
+      activeServerDir: '/Users/test/.happier/servers/cloud',
+      processEnv: TEST_CODEX_HOME_ENV,
+    };
+    await publishCodexSessionIdMetadata({
+      ...common,
+      session: seedSession,
+      operation: 'create',
+      lastPublished: { value: null },
+    });
+
+    const failingUpdate = vi.fn(async () => {
+      throw new Error('metadata unavailable');
+    });
+    await expect(publishCodexSessionIdMetadata({
+      ...common,
+      session: { getMetadataSnapshot: () => metadata, updateMetadata: failingUpdate },
+      operation: 'resume',
+      lastPublished: { value: null },
+    })).resolves.toBeUndefined();
+    expect(failingUpdate).not.toHaveBeenCalled();
+
+    metadata = {
+      ...metadata,
+      directSessionV1: {
+        ...(metadata.directSessionV1 as Record<string, unknown>),
+        source: { kind: 'codexHome', home: 'user', homePath: '/different/codex-home' },
+      },
+    } as Metadata;
+    await expect(publishCodexSessionIdMetadata({
+      ...common,
+      session: { getMetadataSnapshot: () => metadata, updateMetadata: failingUpdate },
+      operation: 'resume',
+      lastPublished: { value: null },
+    })).rejects.toThrow('metadata unavailable');
+    expect(failingUpdate).toHaveBeenCalledTimes(1);
   });
 });

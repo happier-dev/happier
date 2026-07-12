@@ -5,7 +5,6 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 
-import { maybeUpdateCopilotSessionIdMetadata } from '@/backends/copilot/utils/copilotSessionIdMetadata';
 
 export function createCopilotAcpRuntime(params: {
   directory: string;
@@ -19,8 +18,6 @@ export function createCopilotAcpRuntime(params: {
   getPermissionMode?: () => PermissionMode | null | undefined;
   pendingQueueDrainMaxPopPerWake?: number;
 }) {
-  const lastPublishedCopilotSessionId = { value: null as string | null };
-
   return createCatalogProviderAcpRuntime({
     provider: 'copilot',
     loggerLabel: 'CopilotACP',
@@ -29,6 +26,7 @@ export function createCopilotAcpRuntime(params: {
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
+    sessionIdentity: { kind: 'manifest-metadata' },
     onThinkingChange: params.onThinkingChange,
     memoryRecallGuidance: {
       enabled: params.memoryRecallGuidanceEnabled === true,
@@ -36,12 +34,5 @@ export function createCopilotAcpRuntime(params: {
     },
     getPermissionMode: params.getPermissionMode,
     pendingQueueDrainMaxPopPerWake: params.pendingQueueDrainMaxPopPerWake,
-    onSessionIdChange: (nextSessionId) => {
-      maybeUpdateCopilotSessionIdMetadata({
-        getCopilotSessionId: () => nextSessionId,
-        updateHappySessionMetadata: (updater) => params.session.updateMetadata(updater),
-        lastPublished: lastPublishedCopilotSessionId,
-      });
-    },
   });
 }

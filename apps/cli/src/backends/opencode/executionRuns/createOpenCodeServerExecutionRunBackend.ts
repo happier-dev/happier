@@ -85,7 +85,7 @@ export function createOpenCodeServerExecutionRunBackend(args: Readonly<{
         handleToolCall: (toolCallId: string, toolName: string, input: unknown) => Promise<{
             decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
             execPolicyAmendment?: Readonly<{ command: string[] }>;
-            answers?: Record<string, string>;
+            answers?: Readonly<Record<string, readonly string[]>>;
         }>;
     }> | null;
 }>): AgentBackend {

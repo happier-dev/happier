@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { AgentMessage, ToolCallMessage, ToolResultMessage } from '@/agent/core/AgentMessage';
-import { createAcpRuntime, type AcpRuntimeBackend } from '../createAcpRuntime';
+import type { AcpRuntimeBackend } from '../createAcpRuntime';
+import { createTestAcpRuntime as createAcpRuntime } from '@/testkit/backends/acpRuntime';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createDeferred } from '@/testkit/async/deferred';
 import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';

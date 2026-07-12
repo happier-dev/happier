@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
-import { createAcpRuntime } from '../createAcpRuntime';
+import { createTestAcpRuntime as createAcpRuntime } from '@/testkit/backends/acpRuntime';
 import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 

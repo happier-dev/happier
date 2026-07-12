@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { EventMessage } from '@/agent/core/AgentMessage';
-import { createAcpRuntime } from '../createAcpRuntime';
+import { createTestAcpRuntime as createAcpRuntime } from '@/testkit/backends/acpRuntime';
 import type { Metadata } from '@/api/types';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createBasicSessionClient, createBasicSessionClientWithOverrides, createSessionClientWithMetadata } from '@/testkit/backends/sessionFixtures';

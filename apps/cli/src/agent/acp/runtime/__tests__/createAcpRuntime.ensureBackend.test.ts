@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createAcpRuntime } from '../createAcpRuntime';
+import { createTestAcpRuntime as createAcpRuntime } from '@/testkit/backends/acpRuntime';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createDeferred } from '@/testkit/async/deferred';
 import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';

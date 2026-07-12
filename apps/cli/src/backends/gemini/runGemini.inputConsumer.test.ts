@@ -327,9 +327,6 @@ vi.mock('@/backends/gemini/utils/config', () => ({
   getInitialGeminiModel: vi.fn(() => 'gemini-2.5-pro'),
 }));
 
-vi.mock('@/backends/gemini/utils/geminiSessionIdMetadata', () => ({
-  maybeUpdateGeminiSessionIdMetadata: vi.fn(),
-}));
 
 vi.mock('@/backends/gemini/runtime/createGeminiBackendMessageHandler', () => ({
   createGeminiBackendMessageHandler: vi.fn(() => vi.fn()),

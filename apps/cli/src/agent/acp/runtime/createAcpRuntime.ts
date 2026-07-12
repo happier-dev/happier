@@ -28,6 +28,12 @@ import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/sess
 import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 import type { TurnAssistantPreviewTracker } from '@/agent/runtime/turnAssistantPreviewTracker';
 import {
+  createAcpSessionIdentityBinding,
+  AcpSessionIdentityBindingError,
+  type AcpSessionIdentityPublication,
+  type AcpSessionOpenIntent,
+} from '@/agent/acp/runtime/sessionIdentityBinding';
+import {
   recordSessionTurnCompleted,
   surfacePrimarySessionRuntimeIssue,
 } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
@@ -392,10 +398,14 @@ export function createAcpRuntime(params: {
    * When omitted, a new catalog ACP backend is created on-demand.
    */
   createReplayBackend?: () => Promise<AcpRuntimeBackend>;
+  /** Explicit owner for vendor session identity persistence. */
+  sessionIdentity: AcpSessionIdentityPublication;
   /**
-   * Optional hook to publish vendor session id metadata after start/load/prompt.
+   * Provider-owned projection from an opaque resume reference to the vendor
+   * session id that a successful load must return. The provider still receives
+   * the original reference; the generic identity binder remains strict.
    */
-  onSessionIdChange?: (sessionId: string | null) => void;
+  resolveExpectedVendorSessionIdForResume?: (resumeReference: string) => string | null;
   /**
    * Optional in-flight steer support.
    *
@@ -496,6 +506,21 @@ export function createAcpRuntime(params: {
   let turnInFlight = false;
   let currentTurnId: string | null = null;
   let turnMediaGeneration = 0;
+  let startOrLoadFlight: Readonly<{ intentKey: string; promise: Promise<string> }> | null = null;
+  let postStartPendingDrainFlight: Promise<void> | null = null;
+  let startupDrainController: AbortController | null = null;
+  let postStartDrainController: AbortController | null = null;
+  let completedStartOrLoadIntentKey: string | null = null;
+  let resetInProgress = false;
+  let resetFlight: Promise<void> | null = null;
+  let runtimeGeneration = 0;
+  const assertRuntimeGeneration = (expectedGeneration: number): void => {
+    if (runtimeGeneration === expectedGeneration) return;
+    throw new AcpSessionIdentityBindingError(
+      'ACP_SESSION_IDENTITY_STALE_GENERATION',
+      'ACP session startup completed after the runtime generation was reset',
+    );
+  };
   const inFlightSteerEnabled = params.inFlightSteer?.enabled === true;
   const publishInFlightSteerCapabilities = (available: boolean): void => {
     const sessionWithAgentState = params.session as unknown as {
@@ -545,6 +570,11 @@ export function createAcpRuntime(params: {
   const persistedMediaDedupeKeys = new Set<string>();
   const pendingSessionMediaPersistPromises: Promise<void>[] = [];
   let persistedSessionMediaItems: SessionMediaItemV1[] = [];
+  const identityBinding = createAcpSessionIdentityBinding({
+    persistBound: params.sessionIdentity.kind === 'persist-bound'
+      ? params.sessionIdentity.persistBound
+      : async () => {},
+  });
 
   const stopPendingPump = () => {
     if (!pendingPumpController) return;
@@ -894,10 +924,6 @@ export function createAcpRuntime(params: {
         forward(msg);
       });
     pendingSessionMediaPersistPromises.push(forwardPromise);
-  };
-
-  const publishSessionId = () => {
-    params.onSessionIdChange?.(sessionId);
   };
 
   const surfaceStatusError = (detailRaw: unknown) => {
@@ -1737,85 +1763,185 @@ export function createAcpRuntime(params: {
     },
 
     async reset(): Promise<void> {
-      sessionId = null;
-      turnInFlight = false;
-      publishInFlightSteerCapabilities(false);
-      resetTurnState();
-      loadingSession = false;
-      clearToolCallCache();
-      stopPendingPump();
-      params.onThinkingChange(false);
-      params.session.keepAlive(false, 'remote');
-      publishSessionId();
+      if (resetFlight) return await resetFlight;
+      const operation = (async (): Promise<void> => {
+        resetInProgress = true;
+        const startupFlight = startOrLoadFlight?.promise ?? null;
+        const deferredDrainFlight = postStartPendingDrainFlight;
+        runtimeGeneration += 1;
+        const identityReset = identityBinding.reset();
+        startupDrainController?.abort('acp-runtime:generation-reset');
+        postStartDrainController?.abort('acp-runtime:generation-reset');
+        startOrLoadFlight = null;
+        postStartPendingDrainFlight = null;
+        completedStartOrLoadIntentKey = null;
+        sessionId = null;
+        turnInFlight = false;
+        publishInFlightSteerCapabilities(false);
+        resetTurnState();
+        loadingSession = false;
+        clearToolCallCache();
+        stopPendingPump();
+        params.onThinkingChange(false);
+        params.session.keepAlive(false, 'remote');
 
-      if (backend) {
         try {
-          await backend.dispose();
-        } catch (e) {
-          logger.debug(`[${params.provider}] Failed to dispose backend (non-fatal)`, e);
+          const backendCreation = backendPromise;
+          if (backendCreation) {
+            await backendCreation.catch(() => undefined);
+          }
+          if (backend) {
+            try {
+              await backend.dispose();
+            } catch (e) {
+              logger.debug(`[${params.provider}] Failed to dispose backend (non-fatal)`, e);
+            }
+            backend = null;
+          }
+          await identityReset;
+          await startupFlight?.catch(() => undefined);
+          await deferredDrainFlight?.catch(() => undefined);
+        } finally {
+          startupDrainController = null;
+          postStartDrainController = null;
+          resetInProgress = false;
         }
-        backend = null;
+      })();
+      resetFlight = operation;
+      try {
+        await operation;
+      } finally {
+        if (resetFlight === operation) resetFlight = null;
       }
     },
 
     async startOrLoad(opts: { resumeId?: string | null; importHistory?: boolean; deferPendingDrain?: boolean } = {}): Promise<string> {
-      const b = await ensureBackend();
+      if (resetInProgress) {
+        throw new AcpSessionIdentityBindingError(
+          'ACP_SESSION_IDENTITY_RESET_REQUIRED',
+          'Wait for the ACP runtime reset to complete before opening a session',
+        );
+      }
+      const hasResumeIntent = typeof opts.resumeId === 'string';
+      const resumeId = hasResumeIntent ? opts.resumeId!.trim() : '';
+      const intentKey = hasResumeIntent ? `resume:${resumeId}` : 'create';
+      if (startOrLoadFlight) {
+        if (startOrLoadFlight.intentKey === intentKey) return await startOrLoadFlight.promise;
+        throw new AcpSessionIdentityBindingError(
+          'ACP_SESSION_IDENTITY_INTENT_CONFLICT',
+          'A different ACP session open intent is already in progress',
+        );
+      }
+      if (completedStartOrLoadIntentKey) {
+        if (completedStartOrLoadIntentKey === intentKey && sessionId) return sessionId;
+        throw new AcpSessionIdentityBindingError(
+          'ACP_SESSION_IDENTITY_INTENT_CONFLICT',
+          'The ACP runtime generation is already bound to a different session open intent',
+        );
+      }
 
-      const resumeId = typeof opts.resumeId === 'string' ? opts.resumeId.trim() : '';
-      const importHistory = opts.importHistory === true;
-      if (resumeId) {
-        if (!b.loadSession && !b.loadSessionWithReplayCapture) {
-          throw new Error(`${params.provider} ACP backend does not support loading sessions`);
-        }
+      const operationPromise = (async (): Promise<string> => {
+        const operationGeneration = runtimeGeneration;
+        const importHistory = opts.importHistory === true;
+        const intent: AcpSessionOpenIntent = hasResumeIntent
+          ? {
+              kind: 'resume',
+              expectedVendorSessionId: params.resolveExpectedVendorSessionIdForResume
+                ? params.resolveExpectedVendorSessionIdForResume(resumeId) ?? ''
+                : resumeId,
+            }
+          : { kind: 'create' };
+        const opened = await identityBinding.open({
+          intent,
+          openSession: async (identityContext) => {
+            const b = await ensureBackend();
+            identityContext.assertCurrent();
+            if (!resumeId) return await b.startSession();
+            if (!b.loadSession && !b.loadSessionWithReplayCapture) {
+              throw new Error(`${params.provider} ACP backend does not support loading sessions`);
+            }
 
-        loadingSession = true;
-        let replay: unknown[] | null = null;
-        try {
-          if (b.loadSessionWithReplayCapture && importHistory) {
-            const loaded = await b.loadSessionWithReplayCapture(resumeId);
-            sessionId = loaded.sessionId ?? resumeId;
-            replay = Array.isArray(loaded.replay) ? loaded.replay : null;
-          } else if (b.loadSession) {
-            const loaded = await b.loadSession(resumeId);
-            sessionId = loaded.sessionId ?? resumeId;
-          } else if (b.loadSessionWithReplayCapture) {
-            const loaded = await b.loadSessionWithReplayCapture(resumeId);
-            sessionId = loaded.sessionId ?? resumeId;
-          } else {
-            throw new Error(`${params.provider} ACP backend does not support loading sessions`);
+            loadingSession = true;
+            try {
+              if (b.loadSessionWithReplayCapture && importHistory) {
+                const loaded = await b.loadSessionWithReplayCapture(resumeId);
+                return {
+                  sessionId: loaded.sessionId,
+                  replay: Array.isArray(loaded.replay) ? loaded.replay : null,
+                };
+              }
+              if (b.loadSession) return await b.loadSession(resumeId);
+              return await b.loadSessionWithReplayCapture!(resumeId);
+            } finally {
+              loadingSession = false;
+            }
+          },
+        });
+        assertRuntimeGeneration(operationGeneration);
+        sessionId = opened.identity.vendorSessionId;
+
+        if (resumeId) {
+          const replay = Array.isArray(opened.result.replay) ? opened.result.replay : null;
+          if (replay && importHistory) {
+            await importAcpReplayHistoryV1({
+              session: params.session,
+              provider: params.provider,
+              remoteSessionId: resumeId,
+              replay: replay as unknown[],
+              permissionHandler: params.permissionHandler,
+            }).catch((e) => {
+              logger.debug(`[${params.provider}] Failed to import replay history (non-fatal)`, e);
+            });
+            assertRuntimeGeneration(operationGeneration);
           }
-        } finally {
-          loadingSession = false;
         }
 
-        if (replay && importHistory) {
-          importAcpReplayHistoryV1({
-            session: params.session,
-            provider: params.provider,
-            remoteSessionId: resumeId,
-            replay: replay as unknown[],
-            permissionHandler: params.permissionHandler,
-          }).catch((e) => {
-            logger.debug(`[${params.provider}] Failed to import replay history (non-fatal)`, e);
-          });
+        await applyStartupModeOverride();
+        assertRuntimeGeneration(operationGeneration);
+        await applyStartupModelOverride();
+        assertRuntimeGeneration(operationGeneration);
+        if (params.pendingQueue?.drainAfterStartOrLoad === true && opts.deferPendingDrain !== true) {
+          const controller = new AbortController();
+          startupDrainController = controller;
+          try {
+            await drainPendingMessagesOnce(controller);
+            assertRuntimeGeneration(operationGeneration);
+          } finally {
+            if (startupDrainController === controller) startupDrainController = null;
+          }
         }
-      } else {
-        const started = await b.startSession();
-        sessionId = started.sessionId;
+        assertRuntimeGeneration(operationGeneration);
+        completedStartOrLoadIntentKey = intentKey;
+        return opened.identity.vendorSessionId;
+      })();
+      startOrLoadFlight = { intentKey, promise: operationPromise };
+      try {
+        return await operationPromise;
+      } finally {
+        if (startOrLoadFlight?.promise === operationPromise) startOrLoadFlight = null;
       }
-
-      publishSessionId();
-      await applyStartupModeOverride();
-      await applyStartupModelOverride();
-      if (params.pendingQueue?.drainAfterStartOrLoad === true && opts.deferPendingDrain !== true) {
-        await drainPendingMessagesOnce();
-      }
-      return sessionId!;
     },
 
     async drainPendingAfterStartOrLoad(): Promise<void> {
       if (params.pendingQueue?.drainAfterStartOrLoad !== true) return;
-      await drainPendingMessagesOnce();
+      if (postStartPendingDrainFlight) return await postStartPendingDrainFlight;
+      if (!completedStartOrLoadIntentKey || !sessionId) return;
+
+      const operationGeneration = runtimeGeneration;
+      const controller = new AbortController();
+      const operation = (async (): Promise<void> => {
+        assertRuntimeGeneration(operationGeneration);
+        await drainPendingMessagesOnce(controller);
+        assertRuntimeGeneration(operationGeneration);
+      })();
+      postStartDrainController = controller;
+      postStartPendingDrainFlight = operation;
+      try {
+        await operation;
+      } finally {
+        if (postStartDrainController === controller) postStartDrainController = null;
+        if (postStartPendingDrainFlight === operation) postStartPendingDrainFlight = null;
+      }
     },
 
     async setSessionMode(modeId: string): Promise<void> {
@@ -1890,7 +2016,6 @@ export function createAcpRuntime(params: {
       } else {
         throw new Error(`${params.provider} ACP backend does not support in-flight steer`);
       }
-      publishSessionId();
     },
 
     async sendPrompt(prompt: string): Promise<void> {
@@ -1907,7 +2032,6 @@ export function createAcpRuntime(params: {
       } catch (error) {
         rethrowPromptError(error);
       }
-      publishSessionId();
     },
 
     async compactContext(command: string): Promise<void> {
@@ -1928,7 +2052,6 @@ export function createAcpRuntime(params: {
       } catch (error) {
         rethrowPromptError(error);
       }
-      publishSessionId();
     },
 
     async flushTurn(): Promise<void> {

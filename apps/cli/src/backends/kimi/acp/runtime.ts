@@ -5,7 +5,6 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import type { KimiBackendOptions } from '@/backends/kimi/acp/backend';
 
-import { maybeUpdateKimiSessionIdMetadata } from '@/backends/kimi/utils/kimiSessionIdMetadata';
 import type { PermissionMode } from '@/api/types';
 import type { KimiAcpPythonSelector } from '@happier-dev/agents';
 
@@ -22,8 +21,6 @@ export function createKimiAcpRuntime(params: {
   kimiAcpPythonSelector?: KimiAcpPythonSelector;
   pendingQueueDrainMaxPopPerWake?: number;
 }) {
-  const lastPublishedKimiSessionId = { value: null as string | null };
-
   return createCatalogProviderAcpRuntime<KimiBackendOptions>({
     provider: 'kimi',
     loggerLabel: 'KimiACP',
@@ -32,6 +29,7 @@ export function createKimiAcpRuntime(params: {
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
+    sessionIdentity: { kind: 'manifest-metadata' },
     backendOptions: params.kimiAcpPythonSelector ? { kimiAcpPythonSelector: params.kimiAcpPythonSelector } : undefined,
     onThinkingChange: params.onThinkingChange,
     memoryRecallGuidance: {
@@ -42,12 +40,5 @@ export function createKimiAcpRuntime(params: {
     pendingQueueDrainMaxPopPerWake: params.pendingQueueDrainMaxPopPerWake,
     resolvePermissionMode: ({ getPermissionMode, session }) =>
       getPermissionMode?.() ?? session.getMetadataSnapshot?.()?.permissionMode,
-    onSessionIdChange: (nextSessionId) => {
-      maybeUpdateKimiSessionIdMetadata({
-        getKimiSessionId: () => nextSessionId,
-        updateHappySessionMetadata: (updater) => params.session.updateMetadata(updater),
-        lastPublished: lastPublishedKimiSessionId,
-      });
-    },
   });
 }

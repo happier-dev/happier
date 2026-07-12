@@ -8,7 +8,7 @@ import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { AcpBackend } from '@/agent/acp/AcpBackend';
 import type { ToolPattern, TransportHandler } from '@/agent/transport/TransportHandler';
 
-import { createAcpRuntime } from '../createAcpRuntime';
+import { createTestAcpRuntime as createAcpRuntime } from '@/testkit/backends/acpRuntime';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 
 function writeSteerableAcpAgentScript(params: { dir: string }): string {

@@ -5,6 +5,7 @@ import { importAcpReplayHistoryV1 } from '@/agent/acp/history/importAcpReplayHis
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
+import { validateAcpOpenedSessionIdentity } from '@/agent/acp/runtime/sessionIdentityBinding';
 
 function normalizeCurrentPromptBoundary(text: string): string {
   return text.replace(/\r\n/g, '\n').replace(/\s+/g, ' ').trim();
@@ -38,6 +39,28 @@ function createReplayImportSession(params: {
   };
 }
 
+export async function importGeminiAcpSessionReplay(params: Readonly<{
+  session: ApiSessionClient;
+  permissionHandler: ProviderEnforcedPermissionHandler;
+  remoteSessionId: string;
+  replay: ReadonlyArray<unknown>;
+  currentPromptText?: string | null;
+}>): Promise<void> {
+  const replayImportSession = typeof params.currentPromptText === 'string' && params.currentPromptText.trim()
+    ? createReplayImportSession({
+        session: params.session,
+        currentPromptText: params.currentPromptText,
+      })
+    : params.session;
+  await importAcpReplayHistoryV1({
+    session: replayImportSession,
+    provider: 'gemini',
+    remoteSessionId: params.remoteSessionId,
+    replay: [...params.replay],
+    permissionHandler: params.permissionHandler,
+  });
+}
+
 export async function ensureGeminiAcpSession(params: {
   backend: AgentBackend;
   session: ApiSessionClient;
@@ -45,11 +68,13 @@ export async function ensureGeminiAcpSession(params: {
   messageBuffer: MessageBuffer;
   storedResumeId: string | null;
   currentPromptText?: string | null;
+  deferReplayImport?: boolean;
   onDebug: (message: string) => void;
 }): Promise<{
   acpSessionId: string;
   storedResumeId: string | null;
   startedFreshSession: boolean;
+  deferredReplay?: ReadonlyArray<unknown>;
 }> {
   const resumeId = params.storedResumeId;
   if (resumeId) {
@@ -67,32 +92,37 @@ export async function ensureGeminiAcpSession(params: {
     if (loadWithReplay) {
       const loaded = await loadWithReplay(resumeId);
       replay = Array.isArray(loaded.replay) ? loaded.replay : null;
-      acpSessionId =
-        typeof loaded.sessionId === 'string' && loaded.sessionId.trim().length > 0
-          ? loaded.sessionId.trim()
-          : resumeId;
+      acpSessionId = validateAcpOpenedSessionIdentity(
+        { kind: 'resume', expectedVendorSessionId: resumeId },
+        loaded.sessionId,
+      );
     } else if (loadSession) {
       const loadExistingSession = loadSession;
-      await loadExistingSession(resumeId);
-      acpSessionId = resumeId;
+      const loaded = await loadExistingSession(resumeId);
+      acpSessionId = validateAcpOpenedSessionIdentity(
+        { kind: 'resume', expectedVendorSessionId: resumeId },
+        loaded.sessionId,
+      );
     }
 
     params.onDebug(`[gemini] ACP session loaded: ${acpSessionId}`);
 
     if (replay) {
+      if (params.deferReplayImport === true) {
+        return {
+          acpSessionId,
+          storedResumeId: nextStoredResumeId,
+          startedFreshSession: false,
+          deferredReplay: replay,
+        };
+      }
       try {
-        const replayImportSession = typeof params.currentPromptText === 'string' && params.currentPromptText.trim()
-          ? createReplayImportSession({
-              session: params.session,
-              currentPromptText: params.currentPromptText,
-            })
-          : params.session;
-        await importAcpReplayHistoryV1({
-          session: replayImportSession,
-          provider: 'gemini',
+        await importGeminiAcpSessionReplay({
+          session: params.session,
+          permissionHandler: params.permissionHandler,
           remoteSessionId: acpSessionId,
           replay,
-          permissionHandler: params.permissionHandler,
+          currentPromptText: params.currentPromptText,
         });
       } catch (error) {
         logger.debug('[gemini] Failed to import ACP replay history (non-fatal)', { error });

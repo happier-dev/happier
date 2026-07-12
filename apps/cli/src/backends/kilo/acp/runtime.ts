@@ -5,7 +5,6 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 
-import { maybeUpdateKiloSessionIdMetadata } from '@/backends/kilo/utils/kiloSessionIdMetadata';
 
 export function createKiloAcpRuntime(params: {
   directory: string;
@@ -19,8 +18,6 @@ export function createKiloAcpRuntime(params: {
   getPermissionMode?: () => PermissionMode | null | undefined;
   pendingQueueDrainMaxPopPerWake?: number;
 }) {
-  const lastPublishedKiloSessionId = { value: null as string | null };
-
   return createCatalogProviderAcpRuntime({
     provider: 'kilo',
     loggerLabel: 'KiloACP',
@@ -29,6 +26,7 @@ export function createKiloAcpRuntime(params: {
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
+    sessionIdentity: { kind: 'manifest-metadata' },
     onThinkingChange: params.onThinkingChange,
     memoryRecallGuidance: {
       enabled: params.memoryRecallGuidanceEnabled === true,
@@ -36,12 +34,5 @@ export function createKiloAcpRuntime(params: {
     },
     getPermissionMode: params.getPermissionMode,
     pendingQueueDrainMaxPopPerWake: params.pendingQueueDrainMaxPopPerWake,
-    onSessionIdChange: (nextSessionId) => {
-      maybeUpdateKiloSessionIdMetadata({
-        getKiloSessionId: () => nextSessionId,
-        updateHappySessionMetadata: (updater) => params.session.updateMetadata(updater),
-        lastPublished: lastPublishedKiloSessionId,
-      });
-    },
   });
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { EventMessage } from '@/agent/core/AgentMessage';
 import type { SessionConfigOption } from '@/agent/acp/AcpBackend';
-import { createAcpRuntime } from '../createAcpRuntime';
+import { createTestAcpRuntime as createAcpRuntime } from '@/testkit/backends/acpRuntime';
 import type { Metadata } from '@/api/types';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';

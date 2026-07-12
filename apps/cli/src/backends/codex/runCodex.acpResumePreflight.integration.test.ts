@@ -13,6 +13,7 @@ import {
 } from '@/agent/runtime/sessionInitialGoal';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { createCodexPermissionHandler } from './utils/createCodexPermissionHandler';
+import { createAcpSessionIdentityBinding } from '@/agent/acp/runtime/sessionIdentityBinding';
 
 const modelSyncFlushPendingAfterStartSpy = vi.fn(async () => {});
 const sessionModeSyncFlushPendingAfterStartSpy = vi.fn(async () => {});
@@ -713,6 +714,101 @@ describe('runCodex CodexACP resume behavior', () => {
     await expect(startOrLoad?.mock.results?.[0]?.value).rejects.toThrow(/startOrLoad-called/);
 
     expect(outcome.ok).toBe(false);
+  });
+
+  it('resets the identity-bound ACP runtime before a non-strict resume fallback creates a fresh session', async () => {
+    resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
+      happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
+      mcpServers: {},
+    }));
+    const calls: string[] = [];
+    // Reproduce the non-strict stored-resume path: an idle abort snapshots the
+    // runtime's current vendor id before this run has opened its generation.
+    let currentSessionId: string | null = 'stale-thread';
+    const identityBinding = createAcpSessionIdentityBinding({
+      persistBound: async (event) => {
+        currentSessionId = event.vendorSessionId;
+      },
+    });
+    const runtime = {
+      getSessionId: () => currentSessionId,
+      supportsInFlightSteer: () => false,
+      isTurnInFlight: () => false,
+      beginTurn: vi.fn(),
+      cancel: vi.fn(async () => {}),
+      reset: vi.fn(async () => {
+        calls.push('reset');
+        currentSessionId = null;
+        await identityBinding.reset();
+      }),
+      startOrLoad: vi.fn(async (input: { resumeId?: string | null }) => {
+        const resumeId = typeof input.resumeId === 'string' ? input.resumeId : null;
+        calls.push(resumeId ? `resume:${resumeId}` : 'create');
+        const opened = await identityBinding.open({
+          intent: resumeId
+            ? { kind: 'resume', expectedVendorSessionId: resumeId }
+            : { kind: 'create' },
+          openSession: async () => {
+            if (resumeId) throw new Error('stored session no longer exists');
+            return { sessionId: 'fresh-thread' };
+          },
+        });
+        return opened.identity.vendorSessionId;
+      }),
+      setSessionMode: vi.fn(async () => {}),
+      setSessionModel: vi.fn(async () => {}),
+      setSessionConfigOption: vi.fn(async () => {}),
+      steerPrompt: vi.fn(async () => {}),
+      sendPrompt: vi.fn(async () => {}),
+      compactContext: vi.fn(async () => {}),
+      flushTurn: vi.fn(),
+      rollbackConversation: vi.fn(async () => ({ ok: false, errorCode: 'unsupported_action', errorMessage: 'unsupported' })),
+    };
+    createCodexAcpRuntimeSpy.mockImplementationOnce(() => runtime);
+
+    const firstInputGateControl: { release: (() => void) | null } = { release: null };
+    const firstInputGate = new Promise<void>((resolve) => {
+      firstInputGateControl.release = resolve;
+    });
+    let waitCalls = 0;
+    sessionInputConsumerWaitForNextInputImpl = async () => {
+      waitCalls += 1;
+      if (waitCalls > 1) return null;
+      await firstInputGate;
+      return {
+        message: 'continue without stale context',
+        mode: { permissionMode: 'default', permissionModeUpdatedAt: 1 },
+        isolate: false,
+        hash: 'hash-fallback-reset',
+      };
+    };
+
+    const { runCodex } = await import('./runCodex');
+    const running = runCodex({
+      credentials: { token: 'test' } as Credentials,
+      startedBy: 'terminal',
+      startingMode: 'remote',
+      existingSessionId: 'existing-123',
+      codexBackendMode: 'acp',
+      permissionMode: 'default',
+      permissionModeUpdatedAt: 1,
+    } as any);
+
+    await vi.waitFor(() => {
+      expect(registerSessionRpcHandlerMock).toHaveBeenCalledWith('abort', expect.any(Function));
+    });
+    const abortHandler = registerSessionRpcHandlerMock.mock.calls.find(([method]) => method === 'abort')?.[1];
+    if (typeof abortHandler !== 'function') throw new Error('Expected abort handler');
+    await abortHandler({});
+    firstInputGateControl.release?.();
+
+    await expect(running).resolves.toBeUndefined();
+
+    expect(calls.slice(0, 3)).toEqual(['resume:stale-thread', 'reset', 'create']);
+    expect(runtime.sendPrompt).toHaveBeenCalledWith(
+      'continue without stale context',
+      expect.any(Object),
+    );
   });
 
   it('honors explicit experimentalCodexAcp when the env-backed experiment flag is off', async () => {

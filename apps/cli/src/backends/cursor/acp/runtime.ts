@@ -9,7 +9,6 @@ import {
   resolveCursorSessionConfigOptionUpdate,
   resolveCursorSessionModelConfigUpdate,
 } from '@/backends/cursor/acp/cursorModelConfig';
-import { maybeUpdateCursorSessionIdMetadata } from '@/backends/cursor/utils/cursorSessionIdMetadata';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 export function createCursorAcpRuntime(params: {
@@ -26,8 +25,6 @@ export function createCursorAcpRuntime(params: {
   startupOverrides?: Parameters<typeof createCatalogProviderAcpRuntime>[0]['startupOverrides'];
   pendingQueueDrainMaxPopPerWake?: number;
 }) {
-  const lastPublishedCursorSessionId = { value: null as string | null };
-
   return createCatalogProviderAcpRuntime<CursorBackendOptions>({
     provider: 'cursor',
     loggerLabel: 'CursorACP',
@@ -36,6 +33,7 @@ export function createCursorAcpRuntime(params: {
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
+    sessionIdentity: { kind: 'manifest-metadata' },
     backendOptions: params.env ? { env: params.env } : undefined,
     onThinkingChange: params.onThinkingChange,
     memoryRecallGuidance: {
@@ -48,12 +46,5 @@ export function createCursorAcpRuntime(params: {
     resolveSessionModelConfigUpdate: resolveCursorSessionModelConfigUpdate,
     deriveSessionModelsFromConfigOptions: buildCursorSessionModelsFromConfigOptions,
     resolveSessionConfigOptionUpdate: resolveCursorSessionConfigOptionUpdate,
-    onSessionIdChange: (nextSessionId) => {
-      maybeUpdateCursorSessionIdMetadata({
-        getCursorSessionId: () => nextSessionId,
-        updateHappySessionMetadata: (updater) => params.session.updateMetadata(updater),
-        lastPublished: lastPublishedCursorSessionId,
-      });
-    },
   });
 }

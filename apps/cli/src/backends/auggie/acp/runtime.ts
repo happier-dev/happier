@@ -6,7 +6,6 @@ import type { PermissionMode } from '@/api/types';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 import type { AuggieBackendOptions } from '@/backends/auggie/acp/backend';
-import { maybeUpdateAuggieSessionIdMetadata } from '@/backends/auggie/utils/auggieSessionIdMetadata';
 
 export function createAuggieAcpRuntime(params: {
   directory: string;
@@ -21,8 +20,6 @@ export function createAuggieAcpRuntime(params: {
   getPermissionMode?: () => PermissionMode | null | undefined;
   pendingQueueDrainMaxPopPerWake?: number;
 }) {
-  const lastPublishedAuggieSessionId = { value: null as string | null };
-
   return createCatalogProviderAcpRuntime<AuggieBackendOptions>({
     provider: 'auggie',
     loggerLabel: 'AuggieACP',
@@ -31,6 +28,7 @@ export function createAuggieAcpRuntime(params: {
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
+    sessionIdentity: { kind: 'manifest-metadata' },
     onThinkingChange: params.onThinkingChange,
     memoryRecallGuidance: {
       enabled: params.memoryRecallGuidanceEnabled === true,
@@ -40,13 +38,6 @@ export function createAuggieAcpRuntime(params: {
     pendingQueueDrainMaxPopPerWake: params.pendingQueueDrainMaxPopPerWake,
     backendOptions: {
       allowIndexing: params.allowIndexing,
-    },
-    onSessionIdChange: (nextSessionId) => {
-      maybeUpdateAuggieSessionIdMetadata({
-        getAuggieSessionId: () => nextSessionId,
-        updateHappySessionMetadata: (updater) => params.session.updateMetadata(updater),
-        lastPublished: lastPublishedAuggieSessionId,
-      });
     },
   });
 }

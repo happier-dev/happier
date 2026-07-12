@@ -6,6 +6,7 @@ import type { PermissionMode } from '@/api/types';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 import { publishPiSessionIdMetadata } from '@/backends/pi/utils/piSessionIdMetadata';
+import { resolvePiSessionIdFromResumeReference } from '@/backends/pi/utils/piSessionFiles';
 
 export function createPiAcpRuntime(params: {
   directory: string;
@@ -19,7 +20,8 @@ export function createPiAcpRuntime(params: {
   getPermissionMode?: () => PermissionMode | null | undefined;
   pendingQueueDrainMaxPopPerWake?: number;
 }) {
-  const lastPublishedPiSessionId = { value: null as string | null };
+  const lastPublishedPiSessionId: { value: string | null; sessionFile?: string | null } = { value: null };
+  let lastPiIdentityGeneration: number | null = null;
 
   return createCatalogProviderAcpRuntime({
     provider: 'pi',
@@ -29,6 +31,25 @@ export function createPiAcpRuntime(params: {
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
+    sessionIdentity: {
+      kind: 'custom',
+      persistBound: async (event) => {
+        if (lastPiIdentityGeneration !== event.generation) {
+          lastPublishedPiSessionId.value = null;
+          lastPublishedPiSessionId.sessionFile = null;
+          lastPiIdentityGeneration = event.generation;
+        }
+        await publishPiSessionIdMetadata({
+          operation: event.operation,
+          session: params.session,
+          getPiSessionId: () => event.vendorSessionId,
+          cwd: params.directory,
+          processEnv: process.env,
+          lastPublished: lastPublishedPiSessionId,
+        });
+      },
+    },
+    resolveExpectedVendorSessionIdForResume: resolvePiSessionIdFromResumeReference,
     onThinkingChange: params.onThinkingChange,
     memoryRecallGuidance: {
       enabled: params.memoryRecallGuidanceEnabled === true,
@@ -37,14 +58,5 @@ export function createPiAcpRuntime(params: {
     getPermissionMode: params.getPermissionMode,
     pendingQueueDrainMaxPopPerWake: params.pendingQueueDrainMaxPopPerWake,
     inFlightSteer: { enabled: true },
-    onSessionIdChange: (nextSessionId) => {
-      publishPiSessionIdMetadata({
-        session: params.session,
-        getPiSessionId: () => nextSessionId,
-        cwd: params.directory,
-        processEnv: process.env,
-        lastPublished: lastPublishedPiSessionId,
-      });
-    },
   });
 }
