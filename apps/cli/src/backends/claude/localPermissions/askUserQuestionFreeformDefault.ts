@@ -11,19 +11,12 @@
  * same escape hatch the terminal offers. The mobile UI provides its own
  * localized placeholder string when we pass an empty object.
  *
- * Applied only to the copy of `toolInput` that's published to agent state.
- * The hook-response path keeps the original `toolInput` intact so we never
- * echo the synthesized field back to Claude.
+ * Applied to the bounded coordinator/publication input so validation consumes
+ * the same semantic question the UI renders. The bridge retains the original
+ * provider input separately and never echoes the synthesized field to Claude.
  */
 
-const ASK_USER_QUESTION_TOOL_NAMES = new Set<string>([
-    'AskUserQuestion',
-    'ask_user_question',
-]);
-
-export function isAskUserQuestionToolName(toolName: string): boolean {
-    return ASK_USER_QUESTION_TOOL_NAMES.has(toolName);
-}
+import { isAskUserQuestionToolName } from '@happier-dev/protocol';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);

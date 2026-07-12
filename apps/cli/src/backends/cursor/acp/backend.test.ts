@@ -36,7 +36,10 @@ describe('buildCursorAcpBackendOptions', () => {
 
     const options = buildCursorAcpBackendOptions({ cwd: '/tmp', env: {} });
 
-    expect(options.authMethodId).toBe('cursor_login');
+    expect(options.authentication).toEqual({
+      kind: 'static',
+      methodId: 'cursor_login',
+    });
   });
 
   it('does not negotiate the Cursor parameterized model picker for normal runtime sessions', () => {

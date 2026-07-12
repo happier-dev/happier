@@ -288,11 +288,11 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
       id: 'ask-1',
       approved: true,
       decision: 'approved',
-      answers: { language: 'TypeScript' },
+      answers: { 'Which language?': 'TypeScript' },
     });
     await expect(pending).resolves.toEqual({
       decision: 'approved',
-      answers: { language: 'TypeScript' },
+      answers: { 'Which language?': ['TypeScript'] },
     });
     expect(session.agentState.requests['ask-1']).toBeFalsy();
   });

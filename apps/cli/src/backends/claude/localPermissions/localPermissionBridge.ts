@@ -29,7 +29,15 @@ import {
     isClaudeLocalPermissionBridgeAgentStateRequest,
 } from '@happier-dev/agents';
 import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
+import { isAskUserQuestionToolName } from '@happier-dev/protocol';
 import { withAskUserQuestionUiFreeformDefault } from './askUserQuestionFreeformDefault';
+import { buildAskUserQuestionAnswersForClaude } from '../utils/askUserQuestionAnswersForClaude';
+import {
+    normalizeLegacyStructuredQuestionAnswers,
+    normalizeStructuredQuestionAnswersV1,
+    type StructuredQuestionLike,
+} from '@/agent/questions/normalizeStructuredQuestionAnswersV1';
+import { normalizeAskUserQuestionInputForPublication } from '@/agent/questions/normalizeAskUserQuestionInput';
 
 type PendingPermissionRequest = {
     id: string;
@@ -225,7 +233,10 @@ export class ClaudeLocalPermissionBridge {
         }
 
         const toolName = this.resolveToolName(data);
-        const toolInput = this.resolveToolInput(data);
+        const toolInput = normalizeAskUserQuestionInputForPublication(
+            toolName,
+            this.resolveToolInput(data),
+        );
         const permissionSuggestions = this.resolvePermissionSuggestions(data);
         const existing = this.pendingRequests.get(requestId);
         const hookEventName = existing?.hookEventName ?? readPermissionHookEventName(data);
@@ -299,17 +310,18 @@ export class ClaudeLocalPermissionBridge {
             });
         }
 
+        const coordinatorToolInput = withAskUserQuestionUiFreeformDefault(toolName, toolInput);
         const waiter = this.createLocalWaiter({
             requestId,
             toolName,
-            toolInput,
+            toolInput: coordinatorToolInput,
             createdAt,
         });
 
         const coordinatorDecision = this.permissionCoordinator.requestDecision({
             requestId,
             toolName,
-            toolInput,
+            toolInput: coordinatorToolInput,
             createdAt,
             kind: resolveAgentRequestKind(toolName),
             source: CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
@@ -477,13 +489,13 @@ export class ClaudeLocalPermissionBridge {
             publishRequest: (params) => {
                 this.requestStore.publishRequest({
                     ...params,
-                    toolInput: withAskUserQuestionUiFreeformDefault(params.toolName, params.toolInput),
                     source: CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
                     updateState: (state) => ({
                         ...state,
                         capabilities: {
                             ...(state.capabilities ?? {}),
                             askUserQuestionAnswersInPermission: true,
+                            structuredQuestionAnswersV1Supported: true,
                             localPermissionBridgeInLocalMode: true,
                             permissionsInUiWhileLocal: true,
                         },
@@ -805,6 +817,25 @@ export class ClaudeLocalPermissionBridge {
             }
         }
 
+        const hasStructuredAnswers = payload.answers !== undefined || payload.structuredAnswersV1 !== undefined;
+        const structuredContext = hasStructuredAnswers
+            ? this.permissionCoordinator.getLocallyOwnedLiveResponseContext(requestId)
+            : null;
+        const isAskUserQuestion = isAskUserQuestionToolName(pending?.toolName);
+        if (hasStructuredAnswers && (!pending || !structuredContext || !isAskUserQuestion)) return false;
+        const structuredAnswersV1 = hasStructuredAnswers && structuredContext
+            ? payload.structuredAnswersV1 !== undefined
+                ? normalizeStructuredQuestionAnswersV1(
+                    payload.structuredAnswersV1,
+                    this.readStructuredQuestions(structuredContext.toolInput),
+                )
+                : normalizeLegacyStructuredQuestionAnswers({
+                    answers: payload.answers!,
+                    questions: this.readStructuredQuestions(structuredContext.toolInput),
+                })
+            : undefined;
+        const normalizedPayload = structuredAnswersV1 ? { ...payload, structuredAnswersV1 } : payload;
+
         const allowedTools = Array.isArray(payload.allowedTools ?? payload.allowTools)
             ? [...(payload.allowedTools ?? payload.allowTools)!]
             : undefined;
@@ -819,14 +850,14 @@ export class ClaudeLocalPermissionBridge {
             buildCompletion: (context) => {
                 resolvedToolName = context.toolName;
                 const updatedPermissions = this.resolveResponseUpdatedPermissions({
-                    payload,
+                    payload: normalizedPayload,
                     toolName: context.toolName,
                     resolvedMode,
                 });
                 const hookResponse = this.buildHookResponse({
-                    payload,
+                    payload: normalizedPayload,
                     toolName: context.toolName,
-                    toolInput: context.toolInput,
+                    toolInput: this.pendingRequests.get(requestId)?.toolInput ?? context.toolInput,
                     updatedPermissions,
                     hookEventName: this.pendingRequests.get(requestId)?.hookEventName ?? 'PermissionRequest',
                 });
@@ -840,6 +871,9 @@ export class ClaudeLocalPermissionBridge {
                         mode: resolvedMode,
                         allowedTools,
                         updatedPermissions,
+                        ...(normalizedPayload.structuredAnswersV1
+                            ? { extraCompletedFields: { structuredAnswersV1: normalizedPayload.structuredAnswersV1 } }
+                            : {}),
                     },
                 };
             },
@@ -849,7 +883,7 @@ export class ClaudeLocalPermissionBridge {
 
         this.pendingRequests.delete(requestId);
         if (shouldApplySideEffects) {
-            this.applyPermissionRpcState(payload, {
+            this.applyPermissionRpcState(normalizedPayload, {
                 allowedTools,
                 resolvedMode,
                 excludeRequestId: requestId,
@@ -857,6 +891,12 @@ export class ClaudeLocalPermissionBridge {
             });
         }
         return true;
+    }
+
+    private readStructuredQuestions(toolInput: unknown): readonly StructuredQuestionLike[] {
+        if (!toolInput || typeof toolInput !== 'object' || Array.isArray(toolInput)) return [];
+        const questions = (toolInput as { questions?: unknown }).questions;
+        return Array.isArray(questions) ? questions as readonly StructuredQuestionLike[] : [];
     }
 
     /**
@@ -965,15 +1005,13 @@ export class ClaudeLocalPermissionBridge {
         const { payload, toolName, toolInput, updatedPermissions } = params;
         if (payload.approved) {
             const updatedInput =
-                (toolName === 'AskUserQuestion' || toolName === 'ask_user_question')
-                && payload.answers
-                && typeof payload.answers === 'object'
-                && !Array.isArray(payload.answers)
+                isAskUserQuestionToolName(toolName)
+                && payload.structuredAnswersV1
                     ? {
                         ...(toolInput && typeof toolInput === 'object' && !Array.isArray(toolInput)
                             ? toolInput as Record<string, unknown>
                             : {}),
-                        answers: payload.answers,
+                        answers: buildAskUserQuestionAnswersForClaude(payload.structuredAnswersV1),
                     }
                     : undefined;
             return this.buildAllowHookResponse({
@@ -992,8 +1030,7 @@ export class ClaudeLocalPermissionBridge {
 
     private isInteractiveTool(toolName: string): boolean {
         return (
-            toolName === 'AskUserQuestion' ||
-            toolName === 'ask_user_question' ||
+            isAskUserQuestionToolName(toolName) ||
             toolName === 'ExitPlanMode' ||
             toolName === 'exit_plan_mode'
         );

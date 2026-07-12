@@ -12,17 +12,20 @@ type AgentState = {
 
 type Metadata = Record<string, unknown>;
 
-type PermissionRpcHandler = (payload: PermissionRpcPayload) => unknown | Promise<unknown>;
+type RpcHandler<TPayload, TResult = unknown> = (payload: TPayload) => TResult | Promise<TResult>;
 
 export class FakeRpcHandlerManager {
-  private readonly handlers = new Map<string, PermissionRpcHandler>();
+  private readonly handlers = new Map<string, unknown>();
 
-  registerHandler(name: string, handler: PermissionRpcHandler): void {
+  registerHandler<TPayload, TResult = unknown>(name: string, handler: RpcHandler<TPayload, TResult>): void {
     this.handlers.set(name, handler);
   }
 
-  getHandler(name: string): PermissionRpcHandler | undefined {
-    return this.handlers.get(name);
+  getHandler<TPayload = PermissionRpcPayload, TResult = unknown>(name: string): RpcHandler<TPayload, TResult> | undefined {
+    const handler = this.handlers.get(name);
+    if (typeof handler !== 'function') return undefined;
+    // Test registrations are keyed by method; callers select the method-specific payload at retrieval.
+    return handler as RpcHandler<TPayload, TResult>;
   }
 }
 

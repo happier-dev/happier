@@ -240,7 +240,7 @@ export type ActionExecutorDeps = Readonly<{
   sessionUserActionAnswer?: (args: Readonly<{
     sessionId: string;
     requestId?: string | null;
-    answers: readonly Readonly<{ question: string; answer: string }>[];
+    answers: readonly Readonly<{ question: string; values: readonly string[] }>[];
     decision?: 'approve' | 'reject' | 'request_changes';
     reason?: string;
     updatedPermissions?: unknown;
@@ -1810,7 +1810,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             requestId: Object.prototype.hasOwnProperty.call(parsed.data, 'requestId') ? (((parsed.data as any).requestId ?? null) as any) : null,
             answers: Array.isArray((parsed.data as any).answers) ? (((parsed.data as any).answers as unknown[]).map((entry: any) => ({
               question: String(entry?.question ?? ''),
-              answer: String(entry?.answer ?? ''),
+              values: Array.isArray(entry?.values)
+                ? entry.values.map((value: unknown) => String(value))
+                : typeof entry?.answer === 'string'
+                  ? [entry.answer]
+                  : [],
             }))) : [],
             ...(typeof (parsed.data as any).decision === 'string' ? { decision: (parsed.data as any).decision } : {}),
             ...(typeof (parsed.data as any).reason === 'string' ? { reason: (parsed.data as any).reason } : {}),

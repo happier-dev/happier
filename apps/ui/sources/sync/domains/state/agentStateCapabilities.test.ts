@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { getPermissionsInUiWhileLocal } from '@/sync/domains/state/agentStateCapabilities';
+import {
+    getPermissionsInUiWhileLocal,
+    getStructuredQuestionAnswersV1Supported,
+} from '@/sync/domains/state/agentStateCapabilities';
 
 describe('getPermissionsInUiWhileLocal', () => {
     it('returns true when permissionsInUiWhileLocal is true', () => {
@@ -18,3 +21,10 @@ describe('getPermissionsInUiWhileLocal', () => {
     });
 });
 
+describe('getStructuredQuestionAnswersV1Supported', () => {
+    it('treats only literal true as support', () => {
+        expect(getStructuredQuestionAnswersV1Supported({ structuredQuestionAnswersV1Supported: true })).toBe(true);
+        expect(getStructuredQuestionAnswersV1Supported({ structuredQuestionAnswersV1Supported: false })).toBe(false);
+        expect(getStructuredQuestionAnswersV1Supported(undefined)).toBe(false);
+    });
+});

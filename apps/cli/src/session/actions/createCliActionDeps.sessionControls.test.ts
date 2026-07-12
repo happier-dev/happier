@@ -1355,7 +1355,7 @@ describe('createCliActionDeps session controls', () => {
       sessionId: 'sess_1',
       requestId: 'ask_done_1',
       decision: 'approve',
-      answers: [{ question: 'Continue?', answer: 'Yes' }],
+      answers: [{ question: 'Continue?', values: ['Yes'] }],
     })).resolves.toEqual({
       ok: false,
       errorCode: 'permission_request_not_found',
@@ -1446,7 +1446,7 @@ describe('createCliActionDeps session controls', () => {
       sessionId: 'sess_1',
       requestId: 'perm_pending_1',
       decision: 'approve',
-      answers: [{ question: 'Continue?', answer: 'Yes' }],
+      answers: [{ question: 'Continue?', values: ['Yes'] }],
     })).resolves.toEqual({
       ok: false,
       errorCode: 'permission_request_not_found',
@@ -1497,6 +1497,40 @@ describe('createCliActionDeps session controls', () => {
     expect(mocks.callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
       method: 'sess_1:permission',
       request: { id: 'perm_pending_ok_1', approved: true },
+    }));
+  });
+
+  it('preserves exact nonblank question-key bytes through the CLI action adapter', async () => {
+    mocks.resolveSessionTransportContext.mockResolvedValueOnce({
+      ok: true as const,
+      sessionId: 'sess_1',
+      rawSession: {
+        active: true,
+        agentState: {
+          capabilities: { structuredQuestionAnswersV1Supported: true },
+          requests: { ask_exact_1: { kind: 'user_action', tool: 'AskUserQuestion', createdAt: 1 } },
+          completedRequests: {},
+        },
+      },
+      ctx: { encryptionKey: new Uint8Array(32).fill(3), encryptionVariant: 'legacy' as const },
+      mode: 'plain' as const,
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_1',
+      ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'legacy' },
+      mode: 'plain',
+      rawSession: { metadata: {} },
+    });
+
+    await expect(deps.sessionUserActionAnswer?.({
+      sessionId: 'sess_1',
+      requestId: 'ask_exact_1',
+      answers: [{ question: '  exact provider key  ', values: ['Yes'] }],
+    })).resolves.toEqual({ ok: true });
+    expect(mocks.callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
+      request: { id: 'ask_exact_1', structuredAnswersV1: { '  exact provider key  ': ['Yes'] } },
     }));
   });
 

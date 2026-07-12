@@ -161,6 +161,8 @@ export const RPC_ERROR_MESSAGES = {
 
 // Session-scoped RPC method names (used with `${sessionId}:${method}` over socket RPC).
 export const SESSION_RPC_METHODS = {
+  SESSION_PERMISSION_RESPOND_LEGACY: 'permission',
+  SESSION_STRUCTURED_QUESTION_RESPOND_V1: 'session.structuredQuestion.respond.v1',
   SESSION_USER_MESSAGE_SEND: 'session.userMessage.send',
   SESSION_PENDING_QUEUE_MATERIALIZE_NEXT: 'session.pendingQueue.materializeNext',
   SESSION_WORK_STATE_GET: 'session.workState.get',
@@ -191,6 +193,11 @@ export const SESSION_RPC_METHODS = {
   SESSION_ROLLBACK: 'session.rollback',
   EPHEMERAL_TASK_RUN: 'ephemeral.task.run',
 } as const;
+
+export function isDelegatedSessionApprovalRpcMethod(methodSuffix: string): boolean {
+  return methodSuffix === SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_LEGACY
+    || methodSuffix === SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1;
+}
 
 export function isRpcMethodNotFoundResult(value: unknown): value is { error: string; errorCode?: string } {
   if (!value || typeof value !== 'object') return false;

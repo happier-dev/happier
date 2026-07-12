@@ -7,6 +7,7 @@ import {
   parseBackendTargetKey,
   SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
   SessionUsageLimitRecoveryV1Schema,
+  buildStructuredQuestionAnswerPayload,
   type ActionExecutorDeps,
   type BackendTargetRefV1,
   type ConnectedServiceBindingsV1,
@@ -1621,34 +1622,57 @@ export function createCliActionDeps(params: Readonly<{
         return permissionRequestNotFoundResult(transport.sessionId);
       }
 
-      const normalizedAnswers = Object.fromEntries(
-        (Array.isArray(answers) ? answers : [])
-          .map((entry: any) => ({
-            question: String(entry?.question ?? '').trim(),
-            answer: String(entry?.answer ?? '').trim(),
-          }))
-          .filter((entry) => entry.question.length > 0 && entry.answer.length > 0)
-          .map((entry) => [entry.question, entry.answer] as const),
-      );
+      const normalizedAnswers = Object.create(null) as Record<string, readonly string[]>;
+      for (const entry of Array.isArray(answers) ? answers : []) {
+        const question = String(entry?.question ?? '');
+        if (question.trim()) normalizedAnswers[question] = [...entry.values];
+      }
       if (!decision && Object.keys(normalizedAnswers).length === 0) {
         return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters', sessionId: transport.sessionId };
       }
 
       const approved = decision ? decision === 'approve' : true;
+      const agentState = readSessionAgentState({
+        rawSession: transport.rawSession,
+        mode: transport.mode,
+        ctx: transport.ctx,
+      });
+      const capabilities = agentState?.capabilities;
+      const supportsV1 = Boolean(
+        capabilities
+        && typeof capabilities === 'object'
+        && !Array.isArray(capabilities)
+        && (capabilities as Record<string, unknown>).structuredQuestionAnswersV1Supported === true,
+      );
+      const answerPayload = Object.keys(normalizedAnswers).length > 0
+        ? buildStructuredQuestionAnswerPayload(normalizedAnswers, supportsV1)
+        : null;
+      if (answerPayload?.kind === 'requires_cli_update') {
+        return {
+          ok: false,
+          errorCode: 'cli_update_required',
+          errorMessage: 'cli_update_required',
+          sessionId: transport.sessionId,
+        };
+      }
       try {
         return await callSessionRpc({
           token: params.credentials.token,
           sessionId: transport.sessionId,
           ctx: transport.ctx,
           mode: transport.mode,
-          method: `${transport.sessionId}:permission`,
-          request: {
-            id: reqId,
-            approved,
-            ...(Object.keys(normalizedAnswers).length > 0 ? { answers: normalizedAnswers } : {}),
-            ...(typeof reason === 'string' && reason.trim().length > 0 ? { reason: reason.trim() } : {}),
-            ...(typeof updatedPermissions !== 'undefined' ? { updatedPermissions } : {}),
-          },
+          method: `${transport.sessionId}:${answerPayload?.send.protocol === 'structured-question-v1'
+            ? SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1
+            : SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_LEGACY}`,
+          request: answerPayload?.send.protocol === 'structured-question-v1'
+            ? { id: reqId, structuredAnswersV1: answerPayload.send.structuredAnswersV1 }
+            : {
+                id: reqId,
+                approved,
+                ...(answerPayload?.send.protocol === 'legacy-permission' ? { answers: answerPayload.send.answers } : {}),
+                ...(typeof reason === 'string' && reason.trim().length > 0 ? { reason: reason.trim() } : {}),
+                ...(typeof updatedPermissions !== 'undefined' ? { updatedPermissions } : {}),
+              },
         });
       } catch (error) {
         return {

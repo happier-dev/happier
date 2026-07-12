@@ -7,6 +7,7 @@ import {
   type ActionExecutorDeps,
   type ActionId,
   type ApprovalRequestV1,
+  buildStructuredQuestionAnswerPayload,
 } from '@happier-dev/protocol';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -32,6 +33,7 @@ import { voiceSessionManager } from '@/voice/session/voiceSession';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { teleportVoiceAgentToSessionRoot } from '@/voice/agent/teleportVoiceAgentToSessionRoot';
 import { storage } from '@/sync/domains/state/storage';
+import { getStructuredQuestionAnswersV1Supported } from '@/sync/domains/state/agentStateCapabilities';
 import { resetVoiceAgentPersistenceState } from '@/voice/persistence/resetVoiceAgentPersistenceState';
 import type { ArtifactHeader } from '@/sync/domains/artifacts/artifactTypes';
 import { openSessionForVoiceTool } from '@/voice/tools/actionImpl/openSession';
@@ -283,30 +285,41 @@ export function createDefaultActionExecutor(opts?: Readonly<{
       if (!reqId) {
         return { ok: false, errorCode: 'permission_request_not_found', errorMessage: 'permission_request_not_found', sessionId };
       }
-      const normalizedAnswers = Object.fromEntries(
-        (Array.isArray(answers) ? answers : [])
-          .map((entry: any) => ({
-            question: String(entry?.question ?? '').trim(),
-            answer: String(entry?.answer ?? '').trim(),
-          }))
-          .filter((entry) => entry.question.length > 0 && entry.answer.length > 0)
-          .map((entry) => [entry.question, entry.answer] as const),
-      );
+      const normalizedAnswers = Object.create(null) as Record<string, readonly string[]>;
+      for (const entry of Array.isArray(answers) ? answers : []) {
+        const question = String(entry?.question ?? '');
+        const values = Array.isArray(entry?.values) ? entry.values.map((value: unknown) => String(value)) : [];
+        if (question.trim()) normalizedAnswers[question] = values;
+      }
       if (!decision && Object.keys(normalizedAnswers).length === 0) {
         return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters', sessionId };
       }
       const approved = decision ? decision === 'approve' : true;
+      const snapshot = storage.getState().sessions[sessionId];
+      const answerPayload = Object.keys(normalizedAnswers).length > 0
+        ? buildStructuredQuestionAnswerPayload(
+            normalizedAnswers,
+            getStructuredQuestionAnswersV1Supported(snapshot?.agentState?.capabilities),
+          )
+        : null;
+      if (answerPayload?.kind === 'requires_cli_update') {
+        return { ok: false, errorCode: 'cli_update_required', errorMessage: 'cli_update_required', sessionId };
+      }
       return await sessionRpcWithServerScope({
         sessionId,
         serverId,
-        method: 'permission',
-        payload: {
-          id: reqId,
-          approved,
-          ...(Object.keys(normalizedAnswers).length > 0 ? { answers: normalizedAnswers } : {}),
-          ...(typeof reason === 'string' && reason.trim().length > 0 ? { reason: reason.trim() } : {}),
-          ...(typeof updatedPermissions !== 'undefined' ? { updatedPermissions } : {}),
-        },
+        method: answerPayload?.send.protocol === 'structured-question-v1'
+          ? SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1
+          : SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_LEGACY,
+        payload: answerPayload?.send.protocol === 'structured-question-v1'
+          ? { id: reqId, structuredAnswersV1: answerPayload.send.structuredAnswersV1 }
+          : {
+              id: reqId,
+              approved,
+              ...(answerPayload?.send.protocol === 'legacy-permission' ? { answers: answerPayload.send.answers } : {}),
+              ...(typeof reason === 'string' && reason.trim().length > 0 ? { reason: reason.trim() } : {}),
+              ...(typeof updatedPermissions !== 'undefined' ? { updatedPermissions } : {}),
+            },
       });
     },
     sessionTerminalComposerClear: async ({ sessionId, expectedStateAtMs, serverId }) =>

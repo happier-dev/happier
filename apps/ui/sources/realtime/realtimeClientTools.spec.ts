@@ -109,7 +109,7 @@ describe('realtimeClientTools permission handling', () => {
       'session.user_action.answer',
       expect.objectContaining({
         sessionId: 's1',
-        answers: [{ question: 'Continue?', answer: 'Yes' }],
+        answers: [{ question: 'Continue?', values: ['Yes'] }],
       }),
       expect.anything(),
     );

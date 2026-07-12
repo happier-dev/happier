@@ -33,6 +33,7 @@ installWorkflowRendererCommonModuleMocks({
                     sessions: {
                         s1: {
                             agentState: {
+                                capabilities: { structuredQuestionAnswersV1Supported: true },
                                 requests: {
                                     toolu_1: {
                                         tool: 'AskUserQuestion',
@@ -87,6 +88,9 @@ describe('AskUserQuestionView legacy request-kind fallback', () => {
         await pressTestInstanceAsync(submit, 'tools.askUserQuestion.submit');
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
-        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', { 'Pick one': 'A' });
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', {
+            protocol: 'structured-question-v1',
+            structuredAnswersV1: { 'Pick one': ['A'] },
+        });
     });
 });

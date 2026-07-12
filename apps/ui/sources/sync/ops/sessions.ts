@@ -29,6 +29,7 @@ import type {
     SessionRollbackTarget,
     SessionInitialGoalRequestV1,
     SpawnSessionResult,
+    SendableAskUserQuestionAnswerPayload,
 } from '@happier-dev/protocol';
 import type { AgentId } from '@/agents/catalog/catalog';
 import {
@@ -615,21 +616,26 @@ export async function sessionAllowWithPermissionUpdates(
 /**
  * Allow a permission request and attach structured answers (AskUserQuestion).
  *
- * This uses the existing `permission` RPC (no separate RPC required).
+ * Modern arrays use the receiver-enforced v1 method. The legacy method is used only for a payload
+ * already proven to round-trip through the deployed comma parser; this function never downgrades.
  */
 export async function sessionAllowWithAnswers(
     sessionId: string,
     id: string,
-    answers: Record<string, string>,
+    payload: SendableAskUserQuestionAnswerPayload,
 ): Promise<void> {
-    const request: SessionPermissionRequest = {
-        id,
-        approved: true,
-        answers,
-    };
+    if (payload.protocol === 'structured-question-v1') {
+        await sessionRpcWithPreferredSessionScope<void, { id: string; structuredAnswersV1: typeof payload.structuredAnswersV1 }>({
+            sessionId,
+            method: SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1,
+            payload: { id, structuredAnswersV1: payload.structuredAnswersV1 },
+        });
+        return;
+    }
+    const request: SessionPermissionRequest = { id, approved: true, answers: { ...payload.answers } };
     await sessionRpcWithPreferredSessionScope<void, SessionPermissionRequest>({
         sessionId,
-        method: 'permission',
+        method: SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_LEGACY,
         payload: request,
     });
 }

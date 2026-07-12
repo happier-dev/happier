@@ -2,6 +2,7 @@ import {
     PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
     PUSH_NOTIFICATION_CATEGORY_IDS,
     buildReadyNotificationContent,
+    isAskUserQuestionToolName,
 } from '@happier-dev/protocol';
 
 import { formatPermissionRequestSummary } from '@/components/tools/normalization/policy/permissionSummary';
@@ -53,7 +54,7 @@ function summarizePermissionBody(toolName: string, toolArgs: unknown): string {
 }
 
 function extractFirstUserActionQuestion(toolName: string, toolArgs: unknown): string | null {
-    if (toolName !== 'AskUserQuestion') return null;
+    if (!isAskUserQuestionToolName(toolName)) return null;
 
     const questions = Array.isArray((toolArgs as { questions?: unknown })?.questions)
         ? (toolArgs as { questions: ReadonlyArray<{ question?: unknown }> }).questions

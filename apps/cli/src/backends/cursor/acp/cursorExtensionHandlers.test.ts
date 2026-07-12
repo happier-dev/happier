@@ -19,7 +19,7 @@ class CapturingPermissionHandler implements AcpPermissionHandler {
 
   constructor(
     private readonly decision: Awaited<ReturnType<AcpPermissionHandler['handleToolCall']>> & {
-      answers?: Record<string, string>;
+      answers?: Readonly<Record<string, readonly string[]>>;
     } = { decision: 'approved' },
   ) {}
 
@@ -64,7 +64,7 @@ describe('Cursor ACP extension handlers', () => {
     const permissionHandler = new CapturingPermissionHandler({
       decision: 'approved',
       answers: {
-        language: 'TypeScript',
+        language: ['TypeScript'],
       },
     });
 
@@ -97,6 +97,22 @@ describe('Cursor ACP extension handlers', () => {
       },
     ]);
     expect(result).toEqual({ answers: { language: 'TypeScript' } });
+  });
+
+  it.each(['__proto__', 'constructor', 'prototype'])('round-trips the reserved Cursor question id %s as an own response key', async (questionId) => {
+    const answers = Object.create(null) as Record<string, readonly string[]>;
+    answers['Which value?'] = ['Exact'];
+    const permissionHandler = new CapturingPermissionHandler({ decision: 'approved', answers });
+
+    const result = await buildCursorExtensionHandlers({ permissionHandler }).requests!['cursor/ask_question']!({
+      toolCallId: 'ask-reserved',
+      questions: [{ id: questionId, prompt: 'Which value?', options: [{ label: 'Exact' }] }],
+    }, { method: 'cursor/ask_question', sessionId: 's1', signal: new AbortController().signal, agentName: 'cursor' });
+
+    const responseAnswers = result.answers as Record<string, string>;
+    expect(Object.getPrototypeOf(responseAnswers)).toBeNull();
+    expect(Object.prototype.hasOwnProperty.call(responseAnswers, questionId)).toBe(true);
+    expect(responseAnswers[questionId]).toBe('Exact');
   });
 
   it('normalizes create_plan payloads to ExitPlanMode and returns Cursor accepted state', async () => {

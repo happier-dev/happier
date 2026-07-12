@@ -128,7 +128,9 @@ describe('buildActivityLocalNotificationContent', () => {
         });
     });
 
-    it('extracts the first question for user-action notifications', async () => {
+    it.each(['AskUserQuestion', 'ask_user_question'] as const)(
+      'extracts the first question for %s user-action notifications',
+      async (toolName) => {
         const { buildActivityLocalNotificationContent } = await import('./buildActivityLocalNotificationContent');
 
         const notification = buildActivityLocalNotificationContent({
@@ -137,7 +139,7 @@ describe('buildActivityLocalNotificationContent', () => {
                 sessionId: 'session-3',
                 requestId: 'req-2',
                 requestKind: 'user_action',
-                toolName: 'AskUserQuestion',
+                toolName,
                 toolArgs: {
                     questions: [
                         {
@@ -167,5 +169,6 @@ describe('buildActivityLocalNotificationContent', () => {
                 channelId: PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.userActionRequestsV1,
             },
         });
-    });
+      },
+    );
 });

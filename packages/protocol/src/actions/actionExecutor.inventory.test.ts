@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { STRUCTURED_QUESTION_LIMITS } from '../tools/structuredQuestionAnswersV1.js';
 
 function createDeps(): ActionExecutorDeps {
   return {
@@ -418,8 +419,75 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(deps.sessionUserActionAnswer).toHaveBeenCalledWith({
       sessionId: 's1',
       requestId: 'req_1',
-      answers: [{ question: 'What next?', answer: 'Proceed' }],
+      answers: [{ question: 'What next?', values: ['Proceed'] }],
     });
+  });
+
+  it('preserves structured answer arrays and rejects conflicting legacy aliases', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('session.user_action.answer', {
+      sessionId: 's1',
+      requestId: 'req_1',
+      answers: [{ question: 'What next?', values: ['A, B', 'C'] }],
+    });
+    expect(res.ok).toBe(true);
+    expect(deps.sessionUserActionAnswer).toHaveBeenCalledWith({
+      sessionId: 's1',
+      requestId: 'req_1',
+      answers: [{ question: 'What next?', values: ['A, B', 'C'] }],
+    });
+
+    const conflict = await executor.execute('session.user_action.answer', {
+      sessionId: 's1',
+      answers: [{ question: 'What next?', answer: 'A', values: ['B'] }],
+    });
+    expect(conflict.ok).toBe(false);
+  });
+
+  it('preserves exact nonblank provider question-key bytes', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+    const res = await executor.execute('session.user_action.answer', {
+      sessionId: 's1',
+      answers: [{ question: '  exact provider key  ', values: ['Proceed'] }],
+    });
+
+    expect(res.ok).toBe(true);
+    expect(deps.sessionUserActionAnswer).toHaveBeenCalledWith(expect.objectContaining({
+      answers: [{ question: '  exact provider key  ', values: ['Proceed'] }],
+    }));
+    expect((await executor.execute('session.user_action.answer', {
+      sessionId: 's1',
+      answers: [{ question: '   ', values: ['Proceed'] }],
+    })).ok).toBe(false);
+  });
+
+  it('rejects an explicit empty structured answer array at the action boundary', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+    const res = await executor.execute('session.user_action.answer', {
+      sessionId: 's1',
+      answers: [{ question: 'Optional follow-up', values: [] }],
+    });
+    expect(res).toEqual({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
+    expect(deps.sessionUserActionAnswer).not.toHaveBeenCalled();
+  });
+
+  it('rejects structured answer collections above the shared question limit', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+    const res = await executor.execute('session.user_action.answer', {
+      sessionId: 's1',
+      answers: Array.from({ length: STRUCTURED_QUESTION_LIMITS.maxQuestions + 1 }, (_, index) => ({
+        question: `Question ${index}`,
+        values: ['Proceed'],
+      })),
+    });
+
+    expect(res).toEqual({ ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
+    expect(deps.sessionUserActionAnswer).not.toHaveBeenCalled();
   });
 
   it('routes session.user_action.answer decisions to deps.sessionUserActionAnswer', async () => {

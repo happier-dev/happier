@@ -5,3 +5,9 @@ export function getPermissionsInUiWhileLocal(capabilities: AgentState['capabilit
     return capabilities.permissionsInUiWhileLocal === true || capabilities.localPermissionBridgeInLocalMode === true;
 }
 
+export function getStructuredQuestionAnswersV1Supported(
+    capabilities: unknown,
+): boolean {
+    if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities)) return false;
+    return (capabilities as Readonly<Record<string, unknown>>).structuredQuestionAnswersV1Supported === true;
+}

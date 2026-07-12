@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { StructuredQuestionAnswersV1Schema } from '../structuredQuestionAnswersV1.js';
 import type { KnownCanonicalToolNameV2 } from './names.js';
 import { ToolHappyMetaV2Schema, ToolHappierMetaV2Schema } from './meta.js';
 
@@ -240,12 +241,15 @@ export const AskUserQuestionInputV2Schema = BaseEnvelopeSchema.extend({
     multiSelect: z.boolean(),
     options: z.array(z.object({
       label: z.string(),
+      value: z.string().optional(),
+      choice: z.string().optional(),
       description: z.string().optional(),
     }).passthrough()),
   }).passthrough()).optional(),
 }).passthrough();
 
 export const AskUserQuestionResultV2Schema = BaseEnvelopeSchema.extend({
+  structuredAnswersV1: StructuredQuestionAnswersV1Schema.optional(),
   answers: z.record(z.string(), z.string()).optional(),
 }).passthrough();
 

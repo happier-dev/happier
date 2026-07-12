@@ -7,6 +7,7 @@ import { redactVoicePathLikeData, redactVoicePathLikeString } from '@/voice/shar
 import { resolveVoiceSessionLabel } from "@/voice/context/resolveVoiceSessionLabel";
 import { resolveVoiceToolResultHumanSummary } from "@/voice/context/resolveVoiceToolResultHumanSummary";
 import { formatPermissionRequestSummary } from "@/components/tools/normalization/policy/permissionSummary";
+import { isAskUserQuestionToolName } from '@happier-dev/protocol';
 
 interface SessionMetadata {
     summary?: { text?: string };
@@ -65,7 +66,7 @@ function collectUserActionSummary(
     toolArgs: unknown,
     prefs: Readonly<{ voiceShareFilePaths: boolean }>,
 ): string | null {
-    if (toolName !== 'AskUserQuestion') return null;
+    if (!isAskUserQuestionToolName(toolName)) return null;
     const questions = Array.isArray((toolArgs as { questions?: unknown })?.questions)
         ? (toolArgs as { questions: ReadonlyArray<AskUserQuestionLike> }).questions
         : null;

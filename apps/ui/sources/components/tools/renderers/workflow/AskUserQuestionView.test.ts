@@ -5,6 +5,7 @@ import type { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { changeTextTestInstance, findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installWorkflowRendererCommonModuleMocks } from './workflowRendererTestHelpers';
+import { STRUCTURED_QUESTION_LIMITS } from '@happier-dev/protocol';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -14,6 +15,7 @@ const sendMessage = vi.fn();
 const sessionAllowWithAnswers = vi.fn();
 const modalAlert = vi.fn();
 let supportsAnswersInPermission = true;
+let structuredQuestionAnswersV1Supported = true;
 let activeAskUserQuestionRequest: { tool: string; kind?: 'user_action' } | null = null;
 let activeAskUserQuestionRequestId = 'toolu_1';
 
@@ -34,7 +36,10 @@ installWorkflowRendererCommonModuleMocks({
                     sessions: {
                         s1: {
                             agentState: {
-                                capabilities: { askUserQuestionAnswersInPermission: supportsAnswersInPermission },
+                                capabilities: {
+                                    askUserQuestionAnswersInPermission: supportsAnswersInPermission,
+                                    structuredQuestionAnswersV1Supported,
+                                },
                                 requests: activeAskUserQuestionRequest
                                     ? {
                                         [activeAskUserQuestionRequestId]: {
@@ -171,6 +176,7 @@ describe('AskUserQuestionView', () => {
         sessionAllowWithAnswers.mockReset();
         modalAlert.mockReset();
         supportsAnswersInPermission = true;
+        structuredQuestionAnswersV1Supported = true;
         activeAskUserQuestionRequestId = 'toolu_1';
         activeAskUserQuestionRequest = { tool: 'AskUserQuestion', kind: 'user_action' };
     });
@@ -182,9 +188,46 @@ describe('AskUserQuestionView', () => {
         await chooseOptionAndSubmit(screen, 'A');
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
-        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', { 'Pick one': 'A' });
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', {
+            protocol: 'structured-question-v1',
+            structuredAnswersV1: { 'Pick one': ['A'] },
+        });
         expect(sessionDeny).toHaveBeenCalledTimes(0);
         expect(sendMessage).toHaveBeenCalledTimes(0);
+    });
+
+    it('treats the snake-case AskUserQuestion alias as the same active request during submit revalidation', async () => {
+        activeAskUserQuestionRequest = { tool: 'ask_user_question', kind: 'user_action' };
+        sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
+        const screen = await renderView(makeTool());
+
+        await chooseOptionAndSubmit(screen, 'A');
+
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', {
+            protocol: 'structured-question-v1',
+            structuredAnswersV1: { 'Pick one': ['A'] },
+        });
+    });
+
+    it('renders the human label for a completed canonical option value', async () => {
+        const screen = await renderView(makeTool({
+            state: 'completed',
+            completedAt: 2,
+            input: {
+                questions: [{
+                    header: 'Q1',
+                    question: 'Pick one',
+                    multiSelect: false,
+                    options: [{ value: 'opaque-wire-id', label: 'Human A', description: '' }],
+                }],
+            },
+            result: {
+                structuredAnswersV1: { 'Pick one': ['opaque-wire-id'] },
+            },
+        }));
+
+        expect(screen.getTextContent()).toContain('Human A');
+        expect(screen.getTextContent()).not.toContain('opaque-wire-id');
     });
 
     it('exposes stable testIDs for native E2E (Maestro)', async () => {
@@ -196,6 +239,37 @@ describe('AskUserQuestionView', () => {
         expect(screen.findByProps({ testID: 'ask-user-question.submit' })).toBeTruthy();
     });
 
+    it('caps multi-select choices at the shared answer limit with visible guidance', async () => {
+        const screen = await renderView(makeTool({
+            input: {
+                questions: [{
+                    header: 'Q1',
+                    question: 'Pick many',
+                    multiSelect: true,
+                    options: Array.from(
+                        { length: STRUCTURED_QUESTION_LIMITS.maxAnswersPerQuestion + 1 },
+                        (_, index) => ({ label: `Option ${index}`, description: '' }),
+                    ),
+                }],
+            },
+        }));
+
+        for (let index = 0; index < STRUCTURED_QUESTION_LIMITS.maxAnswersPerQuestion; index += 1) {
+            await pressPressableByLabel(screen, `Option ${index}`);
+        }
+
+        expect(screen.findByProps({
+            testID: `ask-user-question.option:0:${STRUCTURED_QUESTION_LIMITS.maxAnswersPerQuestion}`,
+        })?.props.disabled).toBe(true);
+        expect(screen.getTextContent()).toContain('tools.askUserQuestion.selectionLimit');
+
+        await pressPressableByLabel(screen, 'Option 0');
+        expect(screen.findByProps({
+            testID: `ask-user-question.option:0:${STRUCTURED_QUESTION_LIMITS.maxAnswersPerQuestion}`,
+        })?.props.disabled).toBe(false);
+        expect(screen.getTextContent()).not.toContain('tools.askUserQuestion.selectionLimit');
+    });
+
     it('falls back to tool.id when permission metadata is missing but the matching request is still active', async () => {
         activeAskUserQuestionRequestId = 'toolu_reconnect';
         sessionAllowWithAnswers.mockResolvedValueOnce(undefined);
@@ -204,7 +278,10 @@ describe('AskUserQuestionView', () => {
         await chooseOptionAndSubmit(screen, 'A');
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
-        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_reconnect', { 'Pick one': 'A' });
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_reconnect', {
+            protocol: 'structured-question-v1',
+            structuredAnswersV1: { 'Pick one': ['A'] },
+        });
         expect(sessionDeny).toHaveBeenCalledTimes(0);
         expect(sendMessage).toHaveBeenCalledTimes(0);
         expect(modalAlert).toHaveBeenCalledTimes(0);
@@ -247,7 +324,10 @@ describe('AskUserQuestionView', () => {
         await chooseOptionAndSubmit(screen, 'A');
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
-        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', { 'Pick one': 'A' });
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', {
+            protocol: 'structured-question-v1',
+            structuredAnswersV1: { 'Pick one': ['A'] },
+        });
         expect(sessionDeny).toHaveBeenCalledTimes(0);
         expect(sendMessage).toHaveBeenCalledTimes(0);
     });
@@ -303,7 +383,10 @@ describe('AskUserQuestionView', () => {
         await fillFreeformAndSubmit(screen, 'README.md');
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
-        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', { 'Which file should I inspect?': 'README.md' });
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', {
+            protocol: 'structured-question-v1',
+            structuredAnswersV1: { 'Which file should I inspect?': ['README.md'] },
+        });
         expect(sessionDeny).toHaveBeenCalledTimes(0);
         expect(sendMessage).toHaveBeenCalledTimes(0);
     });
@@ -329,8 +412,71 @@ describe('AskUserQuestionView', () => {
         await pressTestInstanceAsync(submitAfter, 'tools.askUserQuestion.submit');
 
         expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
-        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', { 'What are you trying to achieve?': 'Custom goal, with commas' });
+        expect(sessionAllowWithAnswers).toHaveBeenCalledWith('s1', 'toolu_1', {
+            protocol: 'structured-question-v1',
+            structuredAnswersV1: { 'What are you trying to achieve?': ['Custom goal, with commas'] },
+        });
         expect(sessionDeny).toHaveBeenCalledTimes(0);
         expect(sendMessage).toHaveBeenCalledTimes(0);
     });
+
+    it('bounds freeform input with the protocol-owned string limit', async () => {
+        const screen = await renderView(makeSuggestionsWithFreeformTool());
+        expect(screen.findByType('TextInput' as any).props.maxLength).toBe(16_384);
+    });
+
+    it('keeps malformed older-CLI questions render-safe and disables submission with guidance', async () => {
+        const malformed = makeTool({
+            input: {
+                questions: [{
+                    header: ' ',
+                    question: undefined as any,
+                    multiSelect: false,
+                    options: [{ label: 'A', description: '' }],
+                }],
+            },
+        });
+        const screen = await renderView(malformed);
+
+        expect(screen.getTextContent()).toContain('errors.failedToSendMessage');
+        expect(findPressableByLabel(screen, 'tools.askUserQuestion.submit')).toBeUndefined();
+        expect(sessionAllowWithAnswers).not.toHaveBeenCalled();
+    });
+
+    it('keeps a non-object older-CLI question entry render-safe and non-interactive', async () => {
+        const screen = await renderView(makeTool({ input: { questions: [null as any] } }));
+        expect(screen.getTextContent()).toContain('errors.failedToSendMessage');
+        expect(findPressableByLabel(screen, 'tools.askUserQuestion.submit')).toBeUndefined();
+        expect(sessionAllowWithAnswers).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['a null option', { questions: [{ header: 'Q1', question: 'Pick one', multiSelect: false, options: [null] }] }],
+        [
+            'too many questions',
+            {
+                questions: Array.from(
+                    { length: STRUCTURED_QUESTION_LIMITS.maxQuestions + 1 },
+                    (_, index) => ({ header: `Q${index}`, question: `Question ${index}`, multiSelect: false, options: [] }),
+                ),
+            },
+        ],
+    ])('keeps older-CLI input with %s bounded and render-safe', async (_name, input) => {
+        const screen = await renderView(makeTool({ input: input as any }));
+        expect(screen.getTextContent()).toContain('errors.failedToSendMessage');
+        expect(sessionAllowWithAnswers).not.toHaveBeenCalled();
+    });
+
+    it.each(['RPC_METHOD_NOT_AVAILABLE', 'RPC_METHOD_NOT_FOUND'])(
+        'shows CLI update guidance after a modern %s failure while preserving the pending form',
+        async (errorCode) => {
+            sessionAllowWithAnswers.mockRejectedValueOnce(Object.assign(new Error('unavailable'), { rpcErrorCode: errorCode }));
+            const screen = await renderView(makeTool());
+            await chooseOptionAndSubmit(screen, 'A');
+
+            expect(screen.getTextContent()).toContain('deps.ui.notAvailableUpdateCli');
+            expect(modalAlert).not.toHaveBeenCalled();
+            expect(findPressableByLabel(screen, 'tools.askUserQuestion.submit')?.props.disabled).toBe(false);
+        },
+    );
 });

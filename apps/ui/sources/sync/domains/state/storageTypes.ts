@@ -348,6 +348,10 @@ const AgentStateObjectSchema = z.object({
      */
     capabilities: z.object({
         askUserQuestionAnswersInPermission: z.boolean().optional(),
+        structuredQuestionAnswersV1Supported: z.preprocess(
+            (value) => value === true ? true : undefined,
+            z.literal(true).optional(),
+        ),
         inFlightSteer: z.boolean().optional(),
         inFlightSteerSupported: z.boolean().optional(),
         inFlightSteerAvailable: z.boolean().optional(),

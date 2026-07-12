@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { BasePermissionHandler, type PermissionResult } from './BasePermissionHandler';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { PUBLIC_RPC_HANDLER_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 class FakeRpcHandlerManager {
   handlers = new Map<string, (payload: any) => any>();
@@ -60,7 +62,9 @@ describe('BasePermissionHandler allowlist', () => {
     const session = new FakeSession();
     const handler = new TestPermissionHandler(session as any);
 
-    const askPromise = handler.request('perm-ask', 'AskUserQuestion', { questions: [] });
+    const askPromise = handler.request('perm-ask', 'AskUserQuestion', {
+      questions: [{ question: 'Continue?', options: [{ label: 'Yes' }] }],
+    });
     expect(session.agentState.requests['perm-ask']).toEqual(
       expect.objectContaining({ tool: 'AskUserQuestion', kind: 'user_action' }),
     );
@@ -319,7 +323,119 @@ describe('BasePermissionHandler allowlist', () => {
 
     const result = await promise;
     expect(result.decision).toBe('approved');
-    expect((result as any).answers).toEqual({ q1: 'a' });
+    expect((result as any).answers).toEqual({ q1: ['a'] });
+  });
+
+  it('accepts exact arrays only on the v1 handler for the locally owned live request', async () => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as any);
+    const promise = handler.request('perm-v1', 'AskUserQuestion', {
+      questions: [{ question: 'q1', multiSelect: true, options: [{ label: 'A, B' }, { label: 'C' }] }],
+    });
+
+    const rpc = session.rpcHandlerManager.handlers.get(SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1);
+    expect(rpc).toBeDefined();
+    await rpc!({ id: 'perm-v1', structuredAnswersV1: { q1: ['A, B', 'C'] } });
+
+    await expect(promise).resolves.toEqual({ decision: 'approved', answers: { q1: ['A, B', 'C'] } });
+  });
+
+  it.each([
+    ['modern', SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1],
+    ['legacy', SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_LEGACY],
+  ] as const)('keeps a freeform request retryable after a whitespace-only %s answer', async (protocol, method) => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as any);
+    const requestId = `perm-whitespace-${protocol}`;
+    const promise = handler.request(requestId, 'AskUserQuestion', {
+      questions: [{ question: 'q1', multiSelect: false, options: [], freeform: {} }],
+    });
+    const rpc = session.rpcHandlerManager.handlers.get(method);
+    expect(rpc).toBeDefined();
+
+    const invalidPayload = protocol === 'modern'
+      ? { id: requestId, structuredAnswersV1: { q1: ['   '] } }
+      : { id: requestId, approved: true, answers: { q1: '   ' } };
+    await expect(rpc!(invalidPayload)).rejects.toMatchObject({
+      rpcErrorCode: protocol === 'modern'
+        ? PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_INVALID
+        : PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_LEGACY_INVALID,
+    });
+    expect(session.agentState.requests[requestId]).toBeDefined();
+    expect(session.agentState.completedRequests[requestId]).toBeUndefined();
+    expect(await settledState(promise)).toBe('pending');
+
+    const validPayload = protocol === 'modern'
+      ? { id: requestId, structuredAnswersV1: { q1: ['  exact value  '] } }
+      : { id: requestId, approved: true, answers: { q1: '  exact value  ' } };
+    await rpc!(validPayload);
+    await expect(promise).resolves.toEqual({ decision: 'approved', answers: { q1: ['  exact value  '] } });
+    expect(session.agentState.requests[requestId]).toBeUndefined();
+    expect(session.agentState.completedRequests[requestId]).toEqual(expect.objectContaining({
+      status: 'approved',
+      structuredAnswersV1: { q1: ['  exact value  '] },
+    }));
+  });
+
+  it('rejects structured answers on a receiver that has only shared agent state', async () => {
+    const session = new FakeSession();
+    session.agentState.requests['foreign-question'] = {
+      tool: 'AskUserQuestion',
+      kind: 'user_action',
+      arguments: { questions: [{ question: 'q1', options: [{ label: 'a' }] }] },
+      createdAt: Date.now(),
+    };
+    new TestPermissionHandler(session as any);
+
+    const legacyRpc = session.rpcHandlerManager.handlers.get(SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_LEGACY);
+    await expect(legacyRpc!({ id: 'foreign-question', approved: true, answers: { q1: 'a' } })).rejects.toMatchObject({
+      rpcErrorCode: PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_RECEIVER_NOT_OWNER,
+    });
+    expect(session.agentState.requests['foreign-question']).toBeTruthy();
+    expect(session.agentState.completedRequests['foreign-question']).toBeUndefined();
+  });
+
+  it.each(['denied', 'abort'] as const)(
+    'rejects an answerless AskUserQuestion %s on a receiver that has only shared agent state',
+    async (decision) => {
+      const session = new FakeSession();
+      session.agentState.requests['foreign-question-deny'] = {
+        tool: 'AskUserQuestion',
+        kind: 'user_action',
+        arguments: { questions: [{ question: 'q1', options: [{ label: 'a' }] }] },
+        createdAt: Date.now(),
+      };
+      new TestPermissionHandler(session as any);
+
+      const legacyRpc = session.rpcHandlerManager.handlers.get(SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_LEGACY);
+      await expect(legacyRpc!({
+        id: 'foreign-question-deny',
+        approved: false,
+        decision,
+      })).rejects.toMatchObject({
+        rpcErrorCode: PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_RECEIVER_NOT_OWNER,
+      });
+      expect(session.agentState.requests['foreign-question-deny']).toBeTruthy();
+      expect(session.agentState.completedRequests['foreign-question-deny']).toBeUndefined();
+    },
+  );
+
+  it('delivers an answerless AskUserQuestion denial to the locally owned live waiter', async () => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as any);
+    const pending = handler.request('local-question-deny', 'AskUserQuestion', {
+      questions: [{ question: 'q1', options: [{ label: 'a' }] }],
+    });
+
+    const legacyRpc = session.rpcHandlerManager.handlers.get(SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_LEGACY);
+    await legacyRpc!({ id: 'local-question-deny', approved: false, decision: 'denied' });
+
+    await expect(pending).resolves.toEqual({ decision: 'denied' });
+    expect(session.agentState.requests['local-question-deny']).toBeUndefined();
+    expect(session.agentState.completedRequests['local-question-deny']).toEqual(expect.objectContaining({
+      status: 'denied',
+      decision: 'denied',
+    }));
   });
 
   it('invokes onAbortRequested when user responds with abort', async () => {

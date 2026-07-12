@@ -2711,6 +2711,58 @@ describe('createOpenCodeServerRuntime', () => {
     expect(permissionHandler.handleToolCall).not.toHaveBeenCalled();
   });
 
+  it('does not abort the session when a stale sibling permission reply fails after session-wide rejection', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = createFakeClient();
+      client.permissionReply
+        .mockResolvedValueOnce(true)
+        .mockRejectedValue(new Error('stale sibling permission request'));
+      const session = createFakeSession();
+      const permissionHandler = { handleToolCall: vi.fn(async () => ({ decision: 'approved' })) } as any;
+      const runtime = createOpenCodeServerRuntime({
+        directory: '/tmp',
+        session,
+        messageBuffer: new MessageBuffer(),
+        mcpServers: {},
+        permissionHandler,
+        onThinkingChange: vi.fn(),
+        getPermissionMode: () => 'read-only',
+      }, {
+        createClient: async () => client as any,
+      });
+
+      await runtime.startOrLoad({});
+      runtime.beginTurn();
+
+      const buildPermissionEvent = (id: string) => ({
+        directory: '/tmp',
+        payload: {
+          type: 'permission.asked',
+          properties: {
+            id,
+            sessionID: 'ses_1',
+            permission: 'edit',
+            patterns: ['AGENTS.md'],
+            always: ['*'],
+            metadata: {},
+          },
+        },
+      });
+
+      await client.__emit(buildPermissionEvent('perm_reject_target'));
+      await client.__emit(buildPermissionEvent('perm_reject_stale_sibling'));
+      await flushTranscriptCommitMicrotasks();
+      await advanceTimersAndFlush(10_000);
+
+      expect(client.permissionReply).toHaveBeenCalledTimes(2);
+      expect(client.sessionAbort).not.toHaveBeenCalled();
+      expect(permissionHandler.handleToolCall).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('bridges permission.asked requests onto the blocked tool call id with blocked tool input', async () => {
     const client = createFakeClient();
     client.sessionMessagesList.mockResolvedValue([
@@ -3086,7 +3138,7 @@ describe('createOpenCodeServerRuntime', () => {
     const client = createFakeClient();
     const session = createFakeSession();
     const permissionHandler = {
-      handleToolCall: vi.fn(async () => ({ decision: 'approved', answers: { q1: 'a, b' } })),
+      handleToolCall: vi.fn(async () => ({ decision: 'approved', answers: { q1: ['a', 'b'] } })),
     };
 
     const runtime = createOpenCodeServerRuntime({
@@ -3143,11 +3195,58 @@ describe('createOpenCodeServerRuntime', () => {
     );
   });
 
+  it('rejects and permanently handles a question when publication validation fails', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const permissionHandler = {
+      handleToolCall: vi.fn(async () => {
+        throw new Error('invalid structured question');
+      }),
+    };
+
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: permissionHandler as any,
+      onThinkingChange: vi.fn(),
+    }, {
+      createClient: async () => client as any,
+    });
+
+    await runtime.startOrLoad({});
+    const event = {
+      directory: '/tmp',
+      payload: {
+        type: 'question.asked',
+        properties: {
+          id: 'que_invalid_1',
+          sessionID: 'ses_1',
+          questions: [{ question: 'q1', header: 'Q1', options: [], multiple: false }],
+        },
+      },
+    } as const;
+
+    await client.__emit(event);
+    await expect.poll(() => client.questionReject.mock.calls.length).toBe(1);
+    await client.__emit(event);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(permissionHandler.handleToolCall).toHaveBeenCalledTimes(1);
+    expect(client.questionReject).toHaveBeenCalledTimes(1);
+    expect(client.questionReject).toHaveBeenCalledWith({ requestId: 'que_invalid_1' });
+    expect(session.sendAgentMessage).toHaveBeenCalledWith('opencode', expect.objectContaining({
+      type: 'message',
+      message: expect.stringContaining('rejected'),
+    }));
+  });
+
   it('auto-acknowledges internal OpenCode title update questions without surfacing AskUserQuestion', async () => {
     const client = createFakeClient();
     const session = createFakeSession();
     const permissionHandler = {
-      handleToolCall: vi.fn(async () => ({ decision: 'approved', answers: { q1: 'should-not-be-used' } })),
+      handleToolCall: vi.fn(async () => ({ decision: 'approved', answers: { q1: ['should-not-be-used'] } })),
     };
 
     const runtime = createOpenCodeServerRuntime({
@@ -3200,7 +3299,7 @@ describe('createOpenCodeServerRuntime', () => {
     const client = createFakeClient();
     const session = createFakeSession();
     const permissionHandler = {
-      handleToolCall: vi.fn(async () => ({ decision: 'approved', answers: { q1: 'answer' } })),
+      handleToolCall: vi.fn(async () => ({ decision: 'approved', answers: { q1: ['answer'] } })),
     };
 
     const runtime = createOpenCodeServerRuntime({
@@ -3256,7 +3355,7 @@ describe('createOpenCodeServerRuntime', () => {
     const client = createFakeClient();
     const session = createFakeSession();
     const permissionHandler = {
-      handleToolCall: vi.fn(async () => ({ decision: 'approved', answers: { 'Which file should I inspect?': 'README.md' } })),
+      handleToolCall: vi.fn(async () => ({ decision: 'approved', answers: { 'Which file should I inspect?': ['README.md'] } })),
     };
 
     const runtime = createOpenCodeServerRuntime({
@@ -3321,7 +3420,7 @@ describe('createOpenCodeServerRuntime', () => {
     const client = createFakeClient();
     const session = createFakeSession();
     const permissionHandler = {
-      handleToolCall: vi.fn(async () => ({ decision: 'approved', answers: { 'Which file should I inspect?': 'README.md' } })),
+      handleToolCall: vi.fn(async () => ({ decision: 'approved', answers: { 'Which file should I inspect?': ['README.md'] } })),
     };
 
     const runtime = createOpenCodeServerRuntime({
@@ -3378,7 +3477,7 @@ describe('createOpenCodeServerRuntime', () => {
     const client = createFakeClient();
     const session = createFakeSession();
     const permissionHandler = {
-      handleToolCall: vi.fn(async () => ({ decision: 'approved', answers: { q1: 'Custom goal, with commas' } })),
+      handleToolCall: vi.fn(async () => ({ decision: 'approved', answers: { q1: ['Custom goal, with commas'] } })),
     };
 
     const runtime = createOpenCodeServerRuntime({
@@ -3440,7 +3539,7 @@ describe('createOpenCodeServerRuntime', () => {
     const client = createFakeClient() as any;
     const session = createFakeSession();
     const permissionHandler = {
-      handleToolCall: vi.fn(async () => ({ decision: 'approved', answers: { q1: 'deep' } })),
+      handleToolCall: vi.fn(async () => ({ decision: 'approved', answers: { q1: ['deep'] } })),
     };
 
     client.questionList = vi.fn(async () => ([
@@ -9996,7 +10095,7 @@ describe('createOpenCodeServerRuntime', () => {
       const permissionHandler = {
         handleToolCall: vi.fn(async () => {
           await userWait;
-          if (kind === 'question') return { decision: 'approved' as const, answers: { q1: 'yes' } };
+          if (kind === 'question') return { decision: 'approved' as const, answers: { q1: ['yes'] } };
           return { decision: 'approved' as const };
         }),
       };

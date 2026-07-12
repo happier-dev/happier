@@ -430,4 +430,48 @@ describe("rpcHandler", () => {
         expect(allRpcListeners.has("user-1")).toBe(false);
         expect(redisCoordinator.cleanupMethodsForSocket).toHaveBeenCalledWith("user-1", ["agent.run"], "socket-1");
     });
+
+    it.each([false, true])("surfaces public delegated target failures on the outer response (redis=%s)", async (redisEnabled) => {
+        const publicFailure = {
+            type: "socket-rpc-target-failure-v1",
+            errorCode: "STRUCTURED_QUESTION_RECEIVER_NOT_OWNER",
+            error: "This answer could not be handled safely. Update or reconnect Happier, then try again.",
+        };
+        const targetSocket = createSocket({
+            id: "target-socket",
+            emitWithAck: vi.fn().mockResolvedValue(publicFailure),
+        });
+        const redisCoordinator = createRedisCoordinator({
+            enabled: redisEnabled,
+            lookupSocketId: vi.fn().mockResolvedValue(redisEnabled ? "target-socket" : null),
+        });
+        createRpcRedisRegistryCoordinatorMock.mockReturnValue(redisCoordinator);
+        resolveRpcCallTargetMock.mockResolvedValue({
+            targetUserId: "owner",
+            targetSocket: redisEnabled ? null : targetSocket,
+        });
+        const io = {
+            timeout: vi.fn(() => ({
+                to: vi.fn(() => ({ emitWithAck: vi.fn().mockResolvedValue([publicFailure]) })),
+            })),
+        };
+        const caller = createSocket({ id: "caller" });
+        const callback = vi.fn();
+        rpcHandler("delegate", caller as unknown as Socket, new Map(), new Map(), {
+            io: io as unknown as Server,
+            redisRegistry: redisEnabled ? { enabled: true, instanceId: "instance" } : { enabled: false },
+        });
+
+        await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, {
+            method: "session-1:session.structuredQuestion.respond.v1",
+            params: "encrypted-private-payload",
+        }, callback);
+
+        expect(callback).toHaveBeenCalledWith({
+            ok: false,
+            errorCode: publicFailure.errorCode,
+            error: publicFailure.error,
+        });
+        expect(JSON.stringify(callback.mock.calls)).not.toContain("encrypted-private-payload");
+    });
 });

@@ -17,6 +17,7 @@ const sessionRename = vi.fn(async () => ({ success: true as const }));
 const sessionStopWithServerScope = vi.fn(async () => ({ success: true as const }));
 const updateArtifactWithHeader = vi.fn(async () => {});
 const sessionExecutionRunStart = vi.fn(async () => ({}));
+const sessionRpcWithServerScope = vi.fn(async () => ({ ok: true }));
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunStart,
@@ -39,7 +40,7 @@ vi.mock('@/sync/ops/sessionHandoffs', () => ({
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({
-    sessionRpcWithServerScope: vi.fn(),
+    sessionRpcWithServerScope,
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage', () => ({
@@ -201,6 +202,7 @@ describe('createDefaultActionExecutor approvals', () => {
         sessionRename.mockClear();
         patchSessionMetadataWithRetry.mockClear();
         updateArtifactWithHeader.mockClear();
+        sessionRpcWithServerScope.mockClear();
     });
 
     it('executes approved session.title.set requests when the approval was created from the MCP surface', async () => {
@@ -296,5 +298,28 @@ describe('createDefaultActionExecutor approvals', () => {
         expect(res.ok).toBe(true);
         expect((res as any).result?.status).toBe('executed');
         expect(sessionStopWithServerScope).toHaveBeenCalledWith('s1', { serverId: undefined });
+    });
+
+    it('preserves exact nonblank question-key bytes through the UI action adapter', async () => {
+        state.sessions.s1 = {
+            id: 's1',
+            agentState: { capabilities: { structuredQuestionAnswersV1Supported: true } },
+        };
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const executor = createDefaultActionExecutor();
+
+        const result = await executor.execute('session.user_action.answer', {
+            sessionId: 's1',
+            requestId: 'ask_1',
+            answers: [{ question: '  exact provider key  ', values: ['Yes'] }],
+        });
+
+        expect(result.ok).toBe(true);
+        expect(sessionRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
+            payload: {
+                id: 'ask_1',
+                structuredAnswersV1: { '  exact provider key  ': ['Yes'] },
+            },
+        }));
     });
 });

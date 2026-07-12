@@ -923,7 +923,38 @@ describe('voice tool handlers', () => {
     });
   });
 
+  it('preserves exact nonblank provider question keys in explicit structured answers', async () => {
+    state.sessions.s1.agentState.capabilities = { structuredQuestionAnswersV1Supported: true };
+    state.sessions.s1.agentState.requests = {
+      req_question: {
+        id: 'req_question',
+        tool: 'AskUserQuestion',
+        kind: 'user_action',
+        arguments: { questions: [{ question: '  Continue?  ' }] },
+      },
+    };
+    sessionRpcWithServerScope.mockResolvedValue({ ok: true });
+
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : 's1') });
+
+    const result = await (tools as any).answerUserActionRequest({
+      answers: [{ question: '  Continue?  ', values: ['Yes'] }],
+    });
+
+    expect(JSON.parse(result)).toMatchObject({ ok: true });
+    expect(sessionRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 's1',
+      method: 'session.structuredQuestion.respond.v1',
+      payload: {
+        id: 'req_question',
+        structuredAnswersV1: { '  Continue?  ': ['Yes'] },
+      },
+    }));
+  });
+
   it('maps allow-or-deny decisions onto AskUserQuestion option labels when no structured answers are provided', async () => {
+    state.sessions.s1.agentState.capabilities = { structuredQuestionAnswersV1Supported: true };
     state.sessions.s1.agentState.requests = {
       req_question: {
         id: 'req_question',
@@ -956,11 +987,10 @@ describe('voice tool handlers', () => {
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 's1',
-        method: 'permission',
+        method: 'session.structuredQuestion.respond.v1',
         payload: {
           id: 'req_question',
-          approved: false,
-          answers: { 'May I create QA_DENY_PATH.txt?': `No, don't create it` },
+          structuredAnswersV1: { 'May I create QA_DENY_PATH.txt?': [`No, don't create it`] },
         },
       }),
     );

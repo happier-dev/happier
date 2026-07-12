@@ -16,6 +16,12 @@ import type { Session } from '../../session';
 import type { PermissionRpcPayload } from '../../utils/permissionRpc';
 import type { PermissionRpcConsumerOutcome } from '../../utils/permissionRpcRouter';
 import type { ClaudeUnifiedResumeChoiceAnswer } from '../tuiControls/resumeChoice';
+import {
+  normalizeLegacyStructuredQuestionAnswers,
+  normalizeStructuredQuestionAnswersV1,
+  type StructuredQuestionLike,
+} from '@/agent/questions/normalizeStructuredQuestionAnswersV1';
+import type { StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
 
 export const CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION = 'How should Claude resume this session?' as const;
 
@@ -49,14 +55,32 @@ function createResumeChoiceToolInput(): unknown {
   };
 }
 
-function decodeResumeChoice(payload: PermissionRpcPayload): ClaudeUnifiedResumeChoiceAnswer | null {
-  if (payload.approved !== true) return null;
-  const answers = payload.answers;
-  if (!answers || typeof answers !== 'object' || Array.isArray(answers)) return null;
-  const raw = (answers as Record<string, unknown>)[CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION];
-  if (raw === 'Resume from summary' || raw === 'resume_from_summary') return 'resume_from_summary';
-  if (raw === 'Resume full session' || raw === 'resume_full_session') return 'resume_full_session';
+function decodeResumeChoice(answers: StructuredQuestionAnswersV1): ClaudeUnifiedResumeChoiceAnswer | null {
+  const values = answers[CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION];
+  if (!Array.isArray(values) || values.length !== 1) return null;
+  if (values[0] === 'Resume from summary') return 'resume_from_summary';
+  if (values[0] === 'Resume full session') return 'resume_full_session';
   return null;
+}
+
+function readStructuredQuestions(context: PermissionRequestCoordinatorContext): readonly StructuredQuestionLike[] {
+  const input = context.toolInput;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return [];
+  const questions = (input as { questions?: unknown }).questions;
+  return Array.isArray(questions) ? questions as StructuredQuestionLike[] : [];
+}
+
+function mapLegacyResumeChoiceAliases(answers: unknown): unknown {
+  if (!answers || typeof answers !== 'object' || Array.isArray(answers)) return answers;
+  const mapped = Object.create(null) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(answers)) {
+    mapped[key] = key === CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION && value === 'resume_from_summary'
+      ? 'Resume from summary'
+      : key === CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION && value === 'resume_full_session'
+        ? 'Resume full session'
+        : value;
+  }
+  return mapped;
 }
 
 function isResumeChoiceContext(context: PermissionRequestCoordinatorContext | null): context is PermissionRequestCoordinatorContext {
@@ -178,7 +202,10 @@ export class ClaudeUnifiedResumeChoiceBroker {
   private tryHandlePermissionRpc(payload: PermissionRpcPayload): PermissionRpcConsumerOutcome {
     const requestId = typeof payload?.id === 'string' ? payload.id : '';
     if (!requestId) return false;
-    const context = this.permissionCoordinator.getResponseContext(requestId);
+    const hasStructuredAnswer = payload.answers !== undefined || payload.structuredAnswersV1 !== undefined;
+    const context = hasStructuredAnswer
+      ? this.permissionCoordinator.getLocallyOwnedLiveResponseContext(requestId)
+      : this.permissionCoordinator.getResponseContext(requestId);
     if (!isResumeChoiceContext(context)) return false;
 
     if (payload.approved !== true) {
@@ -189,7 +216,18 @@ export class ClaudeUnifiedResumeChoiceBroker {
       return true;
     }
 
-    const resumeChoice = decodeResumeChoice(payload);
+    const questions = readStructuredQuestions(context);
+    let structuredAnswersV1: StructuredQuestionAnswersV1;
+    if (payload.structuredAnswersV1 !== undefined) {
+      structuredAnswersV1 = normalizeStructuredQuestionAnswersV1(payload.structuredAnswersV1, questions);
+    } else {
+      structuredAnswersV1 = normalizeLegacyStructuredQuestionAnswers({
+        answers: mapLegacyResumeChoiceAliases(payload.answers),
+        questions,
+      });
+    }
+
+    const resumeChoice = decodeResumeChoice(structuredAnswersV1);
     if (!resumeChoice) {
       throw new Error('invalid_resume_choice_answer');
     }
@@ -202,7 +240,7 @@ export class ClaudeUnifiedResumeChoiceBroker {
           status: 'approved',
           decision: 'allow',
           extraCompletedFields: {
-            answers: payload.answers ?? {},
+            structuredAnswersV1,
             resumeChoice,
           },
         },

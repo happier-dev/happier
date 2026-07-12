@@ -1,6 +1,6 @@
 import type { OpenCodeQuestionRequest } from './types';
 import { asRecord, normalizeString } from './openCodeParsing';
-import { looksLikeFreeformQuestionHintLabel, splitCommaSeparatedLabels } from '@/agent/questions/structuredQuestionAnswerText';
+import { looksLikeFreeformQuestionHintLabel } from '@/agent/questions/structuredQuestionAnswerText';
 
 export { looksLikeFreeformQuestionHintLabel };
 
@@ -28,24 +28,6 @@ export function extractBashCommandHint(rawInput: unknown): string {
   return '';
 }
 
-export function openCodeQuestionRecordLooksFreeform(q: Record<string, unknown>): boolean {
-  const hasLocations = Array.isArray((q as any).locations);
-  const multiple = (q as any).multiple === true;
-  const rawOptions = Array.isArray(q.options) ? q.options : [];
-  const optionLabels = rawOptions
-    .map((opt) => (asRecord(opt) ?? null))
-    .filter(Boolean)
-    .map((opt) => normalizeString((opt as any).label))
-    .filter((label) => label.trim().length > 0);
-
-  if (hasLocations) return true;
-  if (optionLabels.length === 0) return true;
-  if (multiple) return false;
-  if (optionLabels.length === 1 && looksLikeFreeformQuestionHintLabel(optionLabels[0]!)) return true;
-  if (optionLabels.some(looksLikeFreeformQuestionHintLabel)) return true;
-  return false;
-}
-
 export function openCodeQuestionRecordLooksLikeInternalTitleUpdate(q: Record<string, unknown>): boolean {
   const header = normalizeString(q.header).trim().toLowerCase();
   if (header !== 'title' && header !== 'title update') return false;
@@ -62,19 +44,19 @@ export function openCodeQuestionRecordLooksLikeInternalTitleUpdate(q: Record<str
 
 export function buildQuestionAnswersArray(params: {
   questions: ReadonlyArray<Record<string, unknown>>;
-  answersByQuestionKey: Record<string, string>;
+  answersByQuestionKey: Readonly<Record<string, readonly string[]>>;
 }): string[][] {
   const out: string[][] = [];
   for (const q of params.questions) {
     const question = normalizeString(q.question);
     const header = normalizeString(q.header);
     const key = question.trim().length > 0 ? question : header;
-    const raw = typeof params.answersByQuestionKey[key] === 'string' ? params.answersByQuestionKey[key]! : '';
-    if (!raw) {
+    const values = Array.isArray(params.answersByQuestionKey[key]) ? params.answersByQuestionKey[key]! : [];
+    if (values.length === 0) {
       out.push([]);
       continue;
     }
-    out.push(openCodeQuestionRecordLooksFreeform(q) ? [raw] : splitCommaSeparatedLabels(raw));
+    out.push([...values]);
   }
   return out;
 }

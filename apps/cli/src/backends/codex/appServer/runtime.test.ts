@@ -2620,7 +2620,7 @@ describe('createCodexAppServerRuntime', () => {
         const permissionHandler = {
             handleToolCall: vi.fn().mockResolvedValueOnce({
                 decision: 'approved',
-                answers: { resume_question: 'yes' },
+                answers: { resume_question: ['yes'] },
             }),
         };
 
@@ -5122,7 +5122,7 @@ describe('createCodexAppServerRuntime', () => {
                 .mockResolvedValueOnce({
                     decision: 'approved',
                     answers: {
-                        'Which session export behavior should the plan target?': 'Single JSON',
+                        'Which session export behavior should the plan target?': ['Single JSON'],
                     },
                 }),
         };

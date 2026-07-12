@@ -844,15 +844,22 @@ export {
   RPC_ERROR_MESSAGES,
   RPC_METHODS,
   SESSION_RPC_METHODS,
+  isDelegatedSessionApprovalRpcMethod,
   isRpcMethodNotFoundResult,
   type RpcErrorCode,
   type RpcMethod,
 } from './rpc.js';
 export {
   createRpcCallError,
+  isPublicRpcHandlerError,
+  isSocketRpcTargetFailureV1,
   isRpcMethodNotAvailableError,
   isRpcMethodNotFoundError,
   readRpcErrorCode,
+  PUBLIC_RPC_HANDLER_ERROR_CODES,
+  PublicRpcHandlerError,
+  toSocketRpcTargetFailureV1,
+  type PublicRpcHandlerErrorCode,
   type RpcErrorCarrier,
 } from './rpcErrors.js';
 export { CHECKLIST_IDS, resumeChecklistId, type ChecklistId } from './checklists.js';
@@ -873,6 +880,8 @@ export {
 } from './installables.js';
 export { applyInstallablePolicyOverride, resolveInstallablePolicy, type InstallablePolicyOverride } from './installablesPolicy.js';
 export { SOCKET_RPC_EVENTS, type SocketRpcEvent } from './socketRpc.js';
+export type { SocketRpcTargetFailureV1 } from './socketRpc.js';
+export * from './tools/structuredQuestionAnswersV1.js';
 export {
   ChangeEntrySchema,
   ChangeKindSchema,

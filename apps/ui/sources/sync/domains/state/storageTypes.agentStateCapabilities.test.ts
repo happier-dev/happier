@@ -3,6 +3,15 @@ import { describe, expect, it } from 'vitest';
 import { AgentStateSchema } from './storageTypes';
 
 describe('AgentStateSchema capabilities', () => {
+    it('keeps the snapshot when structured-answer support is malformed and treats it as unsupported', () => {
+        const parsed = AgentStateSchema.parse({
+            requests: {},
+            capabilities: { structuredQuestionAnswersV1Supported: 'stale' },
+        });
+        expect(parsed.requests).toEqual({});
+        expect(parsed.capabilities?.structuredQuestionAnswersV1Supported).toBeUndefined();
+    });
+
     it('preserves inFlightSteer capability when present', () => {
         const parsed = AgentStateSchema.parse({
             capabilities: {

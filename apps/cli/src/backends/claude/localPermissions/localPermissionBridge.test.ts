@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createPermissionHandlerSessionStub } from '../utils/permissionHandler.testkit';
+import type { PermissionRpcPayload } from '../utils/permissionRpc';
 import { ClaudeLocalPermissionBridge } from './localPermissionBridge';
+import {
+  PUBLIC_RPC_HANDLER_ERROR_CODES,
+  SESSION_RPC_METHODS,
+  type StructuredQuestionResponseV1,
+} from '@happier-dev/protocol';
 
 describe('ClaudeLocalPermissionBridge', () => {
   beforeEach(() => {
@@ -776,6 +782,67 @@ describe('ClaudeLocalPermissionBridge', () => {
     expect(client.agentState.completedRequests.toolu_ask_1).toMatchObject({
       status: 'approved',
       tool: 'AskUserQuestion',
+    });
+  });
+
+  it.each([
+    {
+      name: 'modern',
+      method: SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1,
+      invalid: { id: 'toolu_ask_custom_1', structuredAnswersV1: { 'Wrong question': ['Custom, typed answer'] } },
+      valid: { id: 'toolu_ask_custom_1', structuredAnswersV1: { 'Choose a target': ['Custom, typed answer'] } },
+    },
+    {
+      name: 'legacy',
+      method: SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_LEGACY,
+      invalid: { id: 'toolu_ask_custom_1', approved: true, answers: { 'Wrong question': 'Custom, typed answer' } },
+      valid: { id: 'toolu_ask_custom_1', approved: true, answers: { 'Choose a target': 'Custom, typed answer' } },
+    },
+  ])('validates $name typed freeform answers against the published input and allows retry', async ({ method, invalid, valid }) => {
+    const { session, client } = createPermissionHandlerSessionStub(`session-ask-custom-${method}`);
+    const bridge = new ClaudeLocalPermissionBridge(session, { responseTimeoutMs: null });
+    bridge.activate();
+    const originalInput = {
+      questions: [{
+        header: 'Target',
+        question: 'Choose a target',
+        multiSelect: false,
+        options: [{ label: 'Production' }, { label: 'Staging' }],
+      }],
+    };
+    const expectedProviderInput = structuredClone(originalInput);
+    const pending = bridge.handlePermissionHook({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'AskUserQuestion',
+      tool_input: originalInput,
+      tool_use_id: 'toolu_ask_custom_1',
+    });
+
+    expect((client.agentState.requests.toolu_ask_custom_1 as any)?.arguments?.questions?.[0]?.freeform).toEqual({});
+    originalInput.questions[0]!.question = 'Mutated after publication';
+    const rpc = client.rpcHandlerManager.getHandler<PermissionRpcPayload | StructuredQuestionResponseV1>(method);
+    await expect(rpc?.(invalid)).rejects.toMatchObject({
+      publicErrorCode: method === SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1
+        ? PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_INVALID
+        : PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_LEGACY_INVALID,
+    });
+    expect(client.agentState.requests.toolu_ask_custom_1).toBeDefined();
+
+    await expect(rpc?.(valid)).resolves.toMatchObject({ ok: true });
+    await expect(pending).resolves.toEqual({
+      continue: true,
+      suppressOutput: true,
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'allow',
+        updatedInput: {
+          ...expectedProviderInput,
+          answers: { 'Choose a target': 'Custom, typed answer' },
+        },
+      },
+    });
+    expect(client.agentState.completedRequests.toolu_ask_custom_1).toMatchObject({
+      structuredAnswersV1: { 'Choose a target': ['Custom, typed answer'] },
     });
   });
 

@@ -10,3 +10,9 @@ export const SOCKET_RPC_EVENTS = {
 } as const;
 
 export type SocketRpcEvent = (typeof SOCKET_RPC_EVENTS)[keyof typeof SOCKET_RPC_EVENTS];
+
+export type SocketRpcTargetFailureV1 = Readonly<{
+  type: 'socket-rpc-target-failure-v1';
+  errorCode: string;
+  error: string;
+}>;

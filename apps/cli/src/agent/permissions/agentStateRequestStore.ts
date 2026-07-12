@@ -18,6 +18,7 @@ import {
     CLAUDE_LOCAL_PERMISSION_BRIDGE_STOPPED_REASON,
     isAgentStateRequestCoveredByCompletedRequests,
 } from '@happier-dev/agents';
+import { normalizeAskUserQuestionInputForPublication } from '@/agent/questions/normalizeAskUserQuestionInput';
 
 type AgentStateRequestEntry = NonNullable<AgentState['requests']>[string];
 type AgentStateCompletedEntry = NonNullable<AgentState['completedRequests']>[string];
@@ -110,6 +111,7 @@ export class AgentStateRequestStore {
         permissionSuggestions?: unknown[] | null;
         updateState?: (state: AgentState) => AgentState;
     }>): void {
+        const normalizedToolInput = normalizeAskUserQuestionInputForPublication(params.toolName, params.toolInput);
         updateAgentStateBestEffort(
             this.session,
             (currentState) => {
@@ -117,7 +119,7 @@ export class AgentStateRequestStore {
                 const entry = Object.create(null) as AgentStateRequestEntry & { source?: string; permissionSuggestions?: unknown[] };
                 entry.tool = params.toolName;
                 entry.kind = params.kind ?? resolveAgentRequestKind(params.toolName);
-                entry.arguments = params.toolInput;
+                entry.arguments = normalizedToolInput;
                 entry.createdAt = params.createdAt;
                 if (typeof params.source === 'string') {
                     entry.source = params.source;
@@ -148,7 +150,7 @@ export class AgentStateRequestStore {
         this.notifyPermissionRequestPushBestEffort({
             permissionId: params.requestId,
             toolName: params.toolName,
-            toolInput: params.toolInput,
+            toolInput: normalizedToolInput,
             createdAtMs: params.createdAt,
         });
     }
