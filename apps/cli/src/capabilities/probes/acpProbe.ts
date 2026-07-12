@@ -47,35 +47,7 @@ function buildAcpProbeCacheKey(params: {
 }
 
 async function terminateProcess(child: ChildProcess): Promise<void> {
-    if (child.killed) return;
-
-    if (process.platform === 'win32') {
-        await killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
-        return;
-    }
-
-    const waitForExit = new Promise<void>((resolve) => {
-        child.once('exit', () => resolve());
-    });
-
-    try {
-        child.kill('SIGTERM');
-    } catch {
-        // ignore
-    }
-
-    await Promise.race([
-        waitForExit,
-        new Promise<void>((resolve) => setTimeout(resolve, 250)),
-    ]);
-
-    if (!child.killed) {
-        try {
-            child.kill('SIGKILL');
-        } catch {
-            // ignore
-        }
-    }
+    await killProcessTree(child, { graceMs: 250 }).catch(() => undefined);
 }
 
 export async function probeAcpAgentCapabilities(params: {
@@ -208,6 +180,10 @@ export async function probeAcpAgentCapabilities(params: {
                 // Probe should never ask for permissions; fail closed if it does.
                 return { outcome: { outcome: 'selected', optionId: 'cancel' } };
             },
+            // This client exists only long enough to read initialize capabilities. Some agents
+            // publish provider-owned status while initializing; acknowledge it without parsing,
+            // persisting, or introducing provider branches into this generic probe boundary.
+            extNotification: async (_method, _params) => {},
         };
 
         const connection = new ClientSideConnection((_agent: Agent) => client, stream);

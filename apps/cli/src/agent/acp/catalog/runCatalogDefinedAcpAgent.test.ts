@@ -44,9 +44,9 @@ describe('runCatalogDefinedAcpAgent', () => {
   });
 
   it('forwards machine identity and memory recall guidance to the catalog ACP runtime', async () => {
-    let capturedConfig: null | Readonly<{ createRuntime: (args: any) => unknown }> = null;
+    const capturedConfig: { current: null | Readonly<{ createRuntime: (args: any) => unknown }> } = { current: null };
     runStandardAcpProviderMock.mockImplementation(async (_opts: unknown, config: unknown) => {
-      capturedConfig = config as Readonly<{ createRuntime: (args: any) => unknown }>;
+      capturedConfig.current = config as Readonly<{ createRuntime: (args: any) => unknown }>;
     });
 
     const runtime = { kind: 'runtime' };
@@ -56,11 +56,11 @@ describe('runCatalogDefinedAcpAgent', () => {
       credentials: { token: 'token' } as any,
     });
 
-    if (!capturedConfig) {
+    if (!capturedConfig.current) {
       throw new Error('Expected ACP runtime config to be captured');
     }
 
-    const runtimeConfig = capturedConfig as Readonly<{ createRuntime: (args: any) => unknown }>;
+    const runtimeConfig = capturedConfig.current;
     const createdRuntime = runtimeConfig.createRuntime({
       directory: '/repo',
       machineId: 'machine-123',
@@ -78,10 +78,41 @@ describe('runCatalogDefinedAcpAgent', () => {
       provider: 'kiro',
       directory: '/repo',
       session: { id: 'session-1' },
+      sessionIdentity: { kind: 'manifest-metadata' },
       memoryRecallGuidance: {
         enabled: true,
         machineId: 'machine-123',
       },
+    }));
+  });
+
+  it('derives runtime-only identity for catalog agents whose manifest does not support vendor resume', async () => {
+    const capturedConfig: { current: null | Readonly<{ createRuntime: (args: any) => unknown }> } = { current: null };
+    runStandardAcpProviderMock.mockImplementation(async (_opts: unknown, config: unknown) => {
+      capturedConfig.current = config as Readonly<{ createRuntime: (args: any) => unknown }>;
+    });
+    createCatalogProviderAcpRuntimeMock.mockReturnValue({ kind: 'runtime' });
+
+    await runCatalogDefinedAcpAgent('customAcp', {
+      credentials: { token: 'token' } as any,
+    });
+
+    if (!capturedConfig.current) throw new Error('Expected ACP runtime config to be captured');
+    capturedConfig.current.createRuntime({
+      directory: '/repo',
+      machineId: 'machine-123',
+      session: { id: 'session-1' },
+      messageBuffer: { id: 'buffer-1' },
+      mcpServers: {},
+      permissionHandler: { handleToolCall: vi.fn() },
+      setThinking: vi.fn(),
+      getPermissionMode: () => 'default',
+      memoryRecallGuidanceEnabled: false,
+    });
+
+    expect(createCatalogProviderAcpRuntimeMock).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'customAcp',
+      sessionIdentity: { kind: 'runtime-only', reason: 'vendor-resume-unsupported' },
     }));
   });
 });

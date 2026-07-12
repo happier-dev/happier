@@ -64,7 +64,9 @@ export function createCodexAcpBackend(options: CodexAcpBackendOptions): CodexAcp
       resolveCodexAcpInitTimeoutMs(spawn),
       resolveCodexAcpPreToolIdleTimeoutMs(),
     ),
-    authMethodId,
+    ...(authMethodId
+      ? { authentication: { kind: 'static' as const, methodId: authMethodId } }
+      : {}),
   };
 
   return { backend: new AcpBackend(backendOptions), spawn };

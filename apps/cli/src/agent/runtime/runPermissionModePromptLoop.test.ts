@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createAcpRuntime } from '@/agent/acp/runtime/createAcpRuntime';
+import { createTestAcpRuntime as createAcpRuntime } from '@/testkit/backends/acpRuntime';
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type { ApiSessionClient } from '@/api/session/sessionClient';

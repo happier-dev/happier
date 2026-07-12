@@ -11,6 +11,15 @@
 
 // Core ACP backend
 export { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from './AcpBackend';
+export {
+  AcpAuthenticationResolverPublicError,
+  AcpAuthenticationStartupError,
+  type AcpAuthentication,
+  type AcpAuthenticationResolverContext,
+  type AcpAuthenticationResolverPublicErrorOptions,
+  type AcpAuthenticationSelection,
+  type AcpAuthenticationStartupErrorCode,
+} from './AcpAuthentication';
 
 // Session update handlers (for testing and extension)
 export {

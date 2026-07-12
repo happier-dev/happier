@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { writeAcpTestAgentScript, readFileEventually } from '../testkit/subprocessHarness';
+import {
+  readFileEventually,
+  waitForFileToContain,
+  writeAcpTestAgentScript,
+} from '../testkit/subprocessHarness';
 import { AcpBackend, buildInitializeRequest, type AcpExtensionHandlerContext } from '../AcpBackend';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
@@ -132,6 +136,142 @@ function writeExtensionProbeAgentScript(params: {
   });
 }
 
+function writeExtensionLifecycleAgentScript(params: {
+  dir: string;
+  resultFile: string;
+}): string {
+  const src = `
+    const fs = require('node:fs');
+    const decoder = new TextDecoder();
+    let buf = '';
+    let pendingPromptId = null;
+    let promptCount = 0;
+    const labelsByRequestId = new Map();
+    const results = [];
+
+    function send(obj) {
+      process.stdout.write(JSON.stringify(obj) + '\\n');
+    }
+
+    function ok(id, result) {
+      send({ jsonrpc: '2.0', id, result });
+    }
+
+    function persist(label, message) {
+      results.push({ label, result: message.result, error: message.error });
+      fs.writeFileSync(${JSON.stringify(params.resultFile)}, JSON.stringify(results), 'utf8');
+    }
+
+    function request(label) {
+      const id = 'extension-' + label;
+      labelsByRequestId.set(id, label);
+      send({
+        jsonrpc: '2.0',
+        id,
+        method: 'example/object_request',
+        params: { sessionId: 'test-session', value: label },
+      });
+    }
+
+    function notify(phase) {
+      send({
+        jsonrpc: '2.0',
+        method: 'example/notification',
+        params: { phase },
+      });
+    }
+
+    function finishPrompt() {
+      if (pendingPromptId === null) return;
+      ok(pendingPromptId, { stopReason: 'end_turn' });
+      pendingPromptId = null;
+    }
+
+    function handleResponse(message) {
+      const label = labelsByRequestId.get(message.id);
+      if (!label) return;
+      labelsByRequestId.delete(message.id);
+      persist(label, message);
+
+      if (label === 'in-turn') {
+        finishPrompt();
+        setImmediate(() => {
+          notify('after-turn');
+          request('post-terminal');
+        });
+      } else if (label === 'next-turn') {
+        finishPrompt();
+      }
+    }
+
+    process.stdin.on('data', (chunk) => {
+      buf += decoder.decode(chunk, { stream: true });
+      const lines = buf.split('\\n');
+      buf = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let req;
+        try { req = JSON.parse(trimmed); } catch { continue; }
+        if (!req || typeof req !== 'object') continue;
+
+        if (!('method' in req) && 'id' in req) {
+          handleResponse(req);
+          continue;
+        }
+
+        const id = req.id;
+        const method = req.method;
+        if (id === undefined || id === null || typeof method !== 'string') continue;
+
+        if (method === 'initialize') {
+          notify('initialize');
+          ok(id, { protocolVersion: 1, authMethods: [] });
+          continue;
+        }
+
+        if (method === 'session/new') {
+          ok(id, { sessionId: 'test-session' });
+          setImmediate(() => {
+            notify('pre-prompt');
+            request('pre-prompt');
+          });
+          continue;
+        }
+
+        if (method === 'session/prompt') {
+          pendingPromptId = id;
+          promptCount += 1;
+          notify('during-turn-' + promptCount);
+          if (promptCount === 1) {
+            request('in-turn');
+          } else if (promptCount === 2) {
+            request('terminal-race');
+            setTimeout(finishPrompt, 25);
+          } else {
+            request('next-turn');
+          }
+          continue;
+        }
+
+        if (method === 'session/cancel') {
+          ok(id, {});
+          continue;
+        }
+
+        ok(id, {});
+      }
+    });
+  `;
+
+  return writeAcpTestAgentScript({
+    dir: params.dir,
+    fileName: 'fake-acp-extension-lifecycle.cjs',
+    source: src,
+  });
+}
+
 describe('AcpBackend ACP extension dispatch', () => {
   it('merges provider-supplied initialize metadata into the ACP initialize request', () => {
     const params = {
@@ -236,6 +376,140 @@ describe('AcpBackend ACP extension dispatch', () => {
       }
     });
   }, 10_000);
+
+  it('scopes requests to active prompt turns while notifications remain connection-scoped', async () => {
+    await withTempDir('happier-acp-extension-lifecycle-', async (dir) => {
+      const resultFile = `${dir}/extension-lifecycle.json`;
+      const scriptPath = writeExtensionLifecycleAgentScript({ dir, resultFile });
+      const requestInvocations: string[] = [];
+      const notificationInvocations: Array<{
+        phase: unknown;
+        sessionId: string | null;
+        signalAborted: boolean;
+        signal: AbortSignal;
+      }> = [];
+      let resolveTerminalRaceStarted: (() => void) | null = null;
+      const terminalRaceStarted = new Promise<void>((resolve) => {
+        resolveTerminalRaceStarted = resolve;
+      });
+      let resolveTerminalRaceAborted: (() => void) | null = null;
+      const terminalRaceAborted = new Promise<void>((resolve) => {
+        resolveTerminalRaceAborted = resolve;
+      });
+
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        extensionHandlers: {
+          requests: {
+            'example/object_request': async (
+              params: Record<string, unknown>,
+              context: AcpExtensionHandlerContext,
+            ): Promise<Record<string, unknown>> => {
+              const value = typeof params.value === 'string' ? params.value : 'unknown';
+              requestInvocations.push(value);
+              if (value !== 'terminal-race') {
+                return { accepted: value, signalAborted: context.signal.aborted };
+              }
+
+              resolveTerminalRaceStarted?.();
+              await new Promise<void>((_resolve, reject) => {
+                const onAbort = () => {
+                  resolveTerminalRaceAborted?.();
+                  reject(context.signal.reason instanceof Error
+                    ? context.signal.reason
+                    : new Error('turn-scoped extension aborted'));
+                };
+                if (context.signal.aborted) {
+                  onAbort();
+                  return;
+                }
+                context.signal.addEventListener('abort', onAbort, { once: true });
+              });
+              return { shouldNotReach: true };
+            },
+          },
+          notifications: {
+            'example/notification': async (
+              params: Record<string, unknown>,
+              context: AcpExtensionHandlerContext,
+            ): Promise<void> => {
+              notificationInvocations.push({
+                phase: params.phase,
+                sessionId: context.sessionId,
+                signalAborted: context.signal.aborted,
+                signal: context.signal,
+              });
+            },
+          },
+        },
+      });
+
+      try {
+        const started = await backend.startSession();
+        await waitForFileToContain(resultFile, 'pre-prompt', { timeoutMs: 1_000 });
+
+        await backend.sendPrompt(started.sessionId, 'first turn');
+        await waitForFileToContain(resultFile, 'post-terminal', { timeoutMs: 1_000 });
+        const firstTurnResults = JSON.parse(await readFileEventually(resultFile, { timeoutMs: 1_000 })) as Array<{
+          label: string;
+          result?: Record<string, unknown>;
+          error?: Record<string, unknown>;
+        }>;
+        expect(firstTurnResults.find((entry) => entry.label === 'in-turn')?.result)
+          .toMatchObject({ accepted: 'in-turn', signalAborted: false });
+
+        const secondPrompt = backend.sendPrompt(started.sessionId, 'terminal race');
+        await expect(Promise.race([
+          terminalRaceStarted.then(() => 'started' as const),
+          new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 1_000)),
+        ])).resolves.toBe('started');
+        await secondPrompt;
+        await expect(Promise.race([
+          terminalRaceAborted.then(() => 'aborted' as const),
+          new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 1_000)),
+        ])).resolves.toBe('aborted');
+        await waitForFileToContain(resultFile, 'terminal-race', { timeoutMs: 1_000 });
+
+        await backend.sendPrompt(started.sessionId, 'next turn');
+        await waitForFileToContain(resultFile, 'next-turn', { timeoutMs: 1_000 });
+
+        const finalResults = JSON.parse(await readFileEventually(resultFile, { timeoutMs: 1_000 })) as Array<{
+          label: string;
+          result?: Record<string, unknown>;
+          error?: Record<string, unknown>;
+        }>;
+        expect(finalResults.find((entry) => entry.label === 'pre-prompt')?.error)
+          .toMatchObject({ code: -32600, data: { reason: 'no_active_prompt_turn' } });
+        expect(finalResults.find((entry) => entry.label === 'post-terminal')?.error)
+          .toMatchObject({ code: -32600, data: { reason: 'no_active_prompt_turn' } });
+        expect(finalResults.find((entry) => entry.label === 'terminal-race')?.error)
+          .toMatchObject({ code: -32603 });
+        expect(finalResults.find((entry) => entry.label === 'next-turn')?.result)
+          .toMatchObject({ accepted: 'next-turn', signalAborted: false });
+        expect(requestInvocations).toEqual(['in-turn', 'terminal-race', 'next-turn']);
+
+        expect(notificationInvocations.map((entry) => entry.phase)).toEqual(expect.arrayContaining([
+          'initialize',
+          'pre-prompt',
+          'during-turn-1',
+          'after-turn',
+          'during-turn-2',
+          'during-turn-3',
+        ]));
+        expect(notificationInvocations.every((entry) => entry.signalAborted === false)).toBe(true);
+        expect(notificationInvocations.find((entry) => entry.phase === 'initialize')?.sessionId).toBeNull();
+        expect(notificationInvocations
+          .filter((entry) => entry.phase !== 'initialize')
+          .every((entry) => entry.sessionId === 'test-session')).toBe(true);
+        expect(new Set(notificationInvocations.map((entry) => entry.signal)).size).toBe(1);
+      } finally {
+        await backend.dispose().catch(() => {});
+      }
+    });
+  }, 15_000);
 
   it('surfaces extension handler errors as JSON-RPC internal errors', async () => {
     await withTempDir('happier-acp-extension-error-', async (dir) => {

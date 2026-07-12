@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { AcpBackend } from '@/agent/acp/AcpBackend';
+import * as acpModule from '@/agent/acp';
 import { createAcpRuntime } from '@/agent/acp/runtime/createAcpRuntime';
 import { createRuntimeOverrideSynchronizers } from '@/agent/runtime/createRuntimeOverrideSynchronizers';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
@@ -15,6 +16,12 @@ import { configuration } from '@/configuration';
 import type { PermissionMode } from '@/api/types';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { createVendorResumeIdMetadataPublisher } from '@/session/metadata/createVendorResumeIdMetadataPublisher';
+import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { createPiAcpRuntime } from '@/backends/pi/acp/runtime';
+import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/createProviderEnforcedPermissionHandler';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 
 function writeFakeOpenCodeAcpAgentScript(params: { dir: string }): string {
   const scriptPath = join(params.dir, 'fake-opencode-acp-agent.mjs');
@@ -244,6 +251,7 @@ describe('runPermissionModePromptLoop with real ACP runtime idle overrides', () 
       permissionHandler: createApprovedPermissionHandler(),
       onThinkingChange: () => {},
       ensureBackend: async () => backend as any,
+      sessionIdentity: { kind: 'external-owner' },
     });
 
     const loopPromise = runPermissionModePromptLoop({
@@ -307,6 +315,188 @@ describe('runPermissionModePromptLoop with real ACP runtime idle overrides', () 
       await loopPromise.catch(() => {});
       await backend.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not fork a successfully resumed provider session when redundant metadata publication would fail', async () => {
+    const resumeId = 'qwen-resume-1';
+    const identityUpdateMetadata = vi.fn()
+      .mockRejectedValueOnce(new Error('metadata unavailable'))
+      .mockResolvedValueOnce(undefined);
+    const session = createMutableApiSessionClientFixture({
+      metadata: createTestMetadata({ qwenSessionId: resumeId, permissionMode: 'default' }),
+    });
+    const publisher = createVendorResumeIdMetadataPublisher({
+      agentId: 'qwen',
+      getMetadataSnapshot: () => session.getMetadataSnapshot(),
+      updateMetadata: identityUpdateMetadata,
+    });
+
+    let shouldExit = false;
+    const abortController = new AbortController();
+    const loadSession = vi.fn(async (sessionId: string) => ({ sessionId }));
+    const startSession = vi.fn(async () => ({ sessionId: 'qwen-fresh-1' }));
+    const backend = {
+      loadSession,
+      startSession,
+      sendPrompt: async () => {
+        shouldExit = true;
+        abortController.abort();
+      },
+      cancel: async () => {},
+      onMessage: () => {},
+      dispose: async () => {},
+    };
+    const runtime = createAcpRuntime({
+      provider: 'qwen',
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+      sessionIdentity: { kind: 'persist-bound', persistBound: publisher.persistBound },
+    });
+    const queue = createModeQueue();
+    queue.push({ text: 'continue', localId: 'local-resume-1' }, { permissionMode: 'default' });
+
+    await runPermissionModePromptLoop({
+      providerName: 'Qwen',
+      agentMessageType: 'qwen',
+      explicitPermissionMode: undefined,
+      session,
+      messageQueue: queue,
+      permissionHandler: {
+        setPermissionMode() {},
+        reset() {},
+      } as any,
+      runtime,
+      createOverrideSynchronizer: () => ({
+        syncFromMetadata() {},
+        async flushPendingAfterStart() {},
+      }),
+      messageBuffer: new MessageBuffer(),
+      shouldExit: () => shouldExit,
+      getAbortSignal: () => abortController.signal,
+      keepAlive: () => {},
+      setThinking: () => {},
+      sendReady: () => {},
+      currentPermissionModeUpdatedAt: 0,
+      setCurrentPermissionMode: () => {},
+      setCurrentPermissionModeUpdatedAt: () => {},
+      initialResumeId: resumeId,
+      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+    });
+
+    expect(loadSession).toHaveBeenCalledTimes(1);
+    expect(loadSession).toHaveBeenCalledWith(resumeId);
+    expect(startSession).not.toHaveBeenCalled();
+    expect(identityUpdateMetadata).not.toHaveBeenCalled();
+    expect(runtime.getSessionId()).toBe(resumeId);
+  });
+
+  it('does not fork a Pi session when a permission-mode restart resumes an already-durable identity', async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'happier-pi-resume-publication-'));
+    const previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = tempRoot;
+
+    let shouldExit = false;
+    const abortController = new AbortController();
+    const startSession = vi.fn(async () => ({ sessionId: 'pi-session-1' }));
+    const loadSession = vi.fn(async (sessionId: string) => ({ sessionId }));
+    const createBackend = vi.spyOn(acpModule, 'createCatalogAcpBackend').mockImplementation(async () => ({
+      backend: {
+        startSession,
+        loadSession,
+        async sendPrompt(_sessionId: string, message: string) {
+          if (message === 'second') {
+            shouldExit = true;
+            abortController.abort();
+          }
+        },
+        async cancel() {},
+        onMessage() {},
+        async dispose() {},
+      },
+    }) as unknown as Awaited<ReturnType<typeof acpModule.createCatalogAcpBackend>>);
+
+    let metadataWriteCount = 0;
+    const session = createMutableApiSessionClientFixture({
+      metadata: createTestMetadata({
+        flavor: 'pi',
+        permissionMode: 'default',
+        permissionModeUpdatedAt: 0,
+      }),
+      overrides: {
+        rpcHandlerManager: new RpcHandlerManager({
+          scopePrefix: 'session-test',
+          encryptionKey: new Uint8Array(32),
+          encryptionVariant: 'legacy',
+          encryptionMode: 'plain',
+        }),
+      },
+    });
+    session.updateMetadata = (updater) => {
+      metadataWriteCount += 1;
+      if (metadataWriteCount === 2) return Promise.reject(new Error('metadata unavailable'));
+      const current = session.__getMetadata();
+      if (!current) return Promise.reject(new Error('missing metadata fixture'));
+      session.__setMetadata(updater(current));
+      return Promise.resolve();
+    };
+
+    const runtime = createPiAcpRuntime({
+      directory: tempRoot,
+      machineId: 'machine-1',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange() {},
+      getPermissionMode: () => session.getMetadataSnapshot()?.permissionMode ?? 'default',
+    });
+    const queue = createModeQueue();
+    queue.push({ text: 'first', localId: 'pi-first' }, { permissionMode: 'default' });
+    queue.push({ text: 'second', localId: 'pi-second' }, { permissionMode: 'read-only' });
+
+    try {
+      await runPermissionModePromptLoop({
+        providerName: 'Pi',
+        agentMessageType: 'pi',
+        explicitPermissionMode: undefined,
+        session,
+        messageQueue: queue,
+        permissionHandler: createProviderEnforcedPermissionHandler({
+          session,
+          logPrefix: '[Pi resume publication test]',
+        }),
+        runtime,
+        createOverrideSynchronizer: () => ({ syncFromMetadata() {}, async flushPendingAfterStart() {} }),
+        messageBuffer: new MessageBuffer(),
+        shouldExit: () => shouldExit,
+        getAbortSignal: () => abortController.signal,
+        keepAlive() {},
+        setThinking() {},
+        sendReady() {},
+        currentPermissionModeUpdatedAt: 0,
+        setCurrentPermissionMode() {},
+        setCurrentPermissionModeUpdatedAt() {},
+        formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
+      });
+
+      expect(createBackend).toHaveBeenCalledTimes(2);
+      expect(startSession).toHaveBeenCalledTimes(1);
+      expect(loadSession).toHaveBeenCalledTimes(1);
+      expect(loadSession).toHaveBeenCalledWith('pi-session-1');
+      expect(metadataWriteCount).toBe(1);
+      expect(runtime.getSessionId()).toBe('pi-session-1');
+    } finally {
+      await runtime.reset().catch(() => {});
+      createBackend.mockRestore();
+      if (previousPiAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousPiAgentDir;
+      rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 });
