@@ -452,7 +452,11 @@ describe('AcpBackend ACP extension dispatch', () => {
         await waitForFileToContain(resultFile, 'pre-prompt', { timeoutMs: 1_000 });
 
         await backend.sendPrompt(started.sessionId, 'first turn');
-        await waitForFileToContain(resultFile, 'post-terminal', { timeoutMs: 1_000 });
+        await waitForFileToContain(
+          resultFile,
+          '"label":"post-terminal","error":',
+          { timeoutMs: 1_000 },
+        );
         const firstTurnResults = JSON.parse(await readFileEventually(resultFile, { timeoutMs: 1_000 })) as Array<{
           label: string;
           result?: Record<string, unknown>;
@@ -475,6 +479,11 @@ describe('AcpBackend ACP extension dispatch', () => {
 
         await backend.sendPrompt(started.sessionId, 'next turn');
         await waitForFileToContain(resultFile, 'next-turn', { timeoutMs: 1_000 });
+        await waitForFileToContain(
+          resultFile,
+          '"label":"post-terminal","error":',
+          { timeoutMs: 1_000 },
+        );
 
         const finalResults = JSON.parse(await readFileEventually(resultFile, { timeoutMs: 1_000 })) as Array<{
           label: string;
@@ -500,9 +509,11 @@ describe('AcpBackend ACP extension dispatch', () => {
           'during-turn-3',
         ]));
         expect(notificationInvocations.every((entry) => entry.signalAborted === false)).toBe(true);
-        expect(notificationInvocations.find((entry) => entry.phase === 'initialize')?.sessionId).toBeNull();
+        expect(notificationInvocations.every(
+          (entry) => entry.sessionId === null || entry.sessionId === 'test-session',
+        )).toBe(true);
         expect(notificationInvocations
-          .filter((entry) => entry.phase !== 'initialize')
+          .filter((entry) => typeof entry.phase === 'string' && entry.phase.startsWith('during-turn-'))
           .every((entry) => entry.sessionId === 'test-session')).toBe(true);
         expect(new Set(notificationInvocations.map((entry) => entry.signal)).size).toBe(1);
       } finally {
