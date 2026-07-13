@@ -8,7 +8,7 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
-import { openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
+import { selectFirstAvailableMachineForNewSession } from '../../src/testkit/uiE2e/createSessionFromNewSessionComposer';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -29,7 +29,9 @@ async function createConfiguredAcpBackend(params: Readonly<{
   await params.page.getByTestId('settings.acpCatalog.backendEditor.title').fill('UI ACP Stub Backend');
   await params.page.getByTestId('settings.acpCatalog.backendEditor.command').fill('node');
   await params.page.getByTestId('settings.acpCatalog.backendEditor.args').fill(ACP_STUB_PROVIDER_PATH);
-  await params.page.getByTestId('settings.acpCatalog.backendEditor.save').click();
+  const saveButton = params.page.getByTestId('settings.acpCatalog.backendEditor.save');
+  await expect(saveButton).toBeEnabled();
+  await saveButton.click();
 
   await expect(params.page.getByTestId(`settings.acpCatalog.backend.${params.backendId}`)).toHaveCount(1, { timeout: 60_000 });
 }
@@ -45,10 +47,7 @@ async function selectMachineForNewSession(params: Readonly<{
 
   await gotoDomContentLoadedWithRetries(params.page, `${params.uiBaseUrl}/new${backendTargetKeyQuery}`);
   await expect(params.page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 120_000 });
-  await openNewSessionMachineSelection({ page: params.page, uiBaseUrl: params.uiBaseUrl });
-  const anyMachine = params.page.locator('[data-testid^="new-session-machine:"]').first();
-  await expect(anyMachine).toHaveCount(1, { timeout: 120_000 });
-  await anyMachine.click();
+  await selectFirstAvailableMachineForNewSession({ page: params.page, uiBaseUrl: params.uiBaseUrl });
 
   await params.page.waitForURL((url: URL) => url.pathname.endsWith('/new'), { timeout: 60_000 });
   await expect(params.page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
