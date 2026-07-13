@@ -7,15 +7,16 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
+import { approveTerminalConnect } from '../../src/testkit/uiE2e/approveTerminalConnect';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { enableEnhancedSessionWizard } from '../../src/testkit/uiE2e/enableEnhancedSessionWizard';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
+import { ensureUiFeatureEnabled } from '../../src/testkit/uiE2e/ensureUiFeatureEnabled';
 import {
   gotoDomContentLoadedWithPathFallback,
   gotoDomContentLoadedWithRetries,
   normalizeLoopbackBaseUrl,
 } from '../../src/testkit/uiE2e/pageNavigation';
-import { setUiFeatureToggle } from '../../src/testkit/uiE2e/setUiFeatureToggle';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -91,8 +92,7 @@ test.describe('ui e2e: connected-services auth chip state', () => {
     });
 
     await page.goto(cliLogin.connectUrl, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('terminal-connect-approve')).toHaveCount(1, { timeout: 60_000 });
-    await page.getByTestId('terminal-connect-approve').click();
+    await approveTerminalConnect({ page });
     await cliLogin.waitForSuccess();
 
     await acknowledgeTerminalConnectSuccessIfPresent(page);
@@ -114,7 +114,7 @@ test.describe('ui e2e: connected-services auth chip state', () => {
     });
 
     await enableEnhancedSessionWizard({ page, baseUrl: uiBaseUrl });
-    await setUiFeatureToggle({ page, baseUrl: uiBaseUrl, featureId: 'connectedServices', enabled: true });
+    await ensureUiFeatureEnabled({ page, baseUrl: uiBaseUrl, featureId: 'connectedServices' });
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new?happier_hmr=0`);
     await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 180_000 });
 

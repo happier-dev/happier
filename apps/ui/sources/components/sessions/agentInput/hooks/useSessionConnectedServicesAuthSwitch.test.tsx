@@ -231,10 +231,10 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             chipAnchorRef: { current: null },
             popoverAnchorRef: { current: null },
             toggleCollapsedPopover: vi.fn(),
-        }) as React.ReactElement<{ testID?: string; 'data-auth-source'?: string }>;
+        }) as React.ReactElement<{ testID?: string; dataSet?: { authSource?: string } }>;
 
         expect(renderedChip.props.testID).toBe('session-connected-services-auth-chip');
-        expect(renderedChip.props['data-auth-source']).toBe('connected');
+        expect(renderedChip.props.dataSet?.authSource).toBe('connected');
         await hook.unmount();
     });
 

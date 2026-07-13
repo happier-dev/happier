@@ -18,11 +18,8 @@ export function createConnectedServicesAuthActionChip(params: Readonly<{
     maxWidthCap?: number;
 }>): AgentInputExtraActionChip {
     const testID = params.testID ?? 'new-session-connected-services-auth-chip';
-    const webStateProps = Platform.OS === 'web'
-        ? ({
-            'data-testid': testID,
-            ...(params.authSource ? { 'data-auth-source': params.authSource } : {}),
-        } as const)
+    const webStateProps = Platform.OS === 'web' && params.authSource
+        ? ({ dataSet: { authSource: params.authSource } } as const)
         : undefined;
 
     return {
