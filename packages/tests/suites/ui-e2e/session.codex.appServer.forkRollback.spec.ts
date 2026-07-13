@@ -12,6 +12,7 @@ import { openNewSessionMachineSelection } from '../../src/testkit/uiE2e/createSe
 import { approveTerminalConnect } from '../../src/testkit/uiE2e/approveTerminalConnect';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
+import { selectNewSessionAgent } from '../../src/testkit/uiE2e/selectNewSessionAgent';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -204,27 +205,7 @@ async function createCodexSessionFromComposer(params: {
   await expect(page.getByTestId('new-session-composer-input')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 60_000 });
 
-  const agentChip = page.getByTestId('agent-input-agent-chip').first();
-  try {
-    await agentChip.click({ timeout: 15_000 });
-  } catch {
-    await agentChip.click({ timeout: 15_000, force: true });
-  }
-  const inlineCodexOption = page.getByTestId('new-session-agent:codex');
-  if ((await inlineCodexOption.count()) > 0) {
-    await inlineCodexOption.click();
-  } else {
-    const pickerDialog = page.getByRole('dialog').last();
-    const codexOption = pickerDialog.getByTestId('new-session-agent:codex').first();
-    if ((await codexOption.count()) > 0) {
-      await expect(codexOption).toBeVisible({ timeout: 60_000 });
-      await codexOption.click();
-    } else {
-      const codexTextOption = pickerDialog.getByText('Codex', { exact: true }).first();
-      await expect(codexTextOption).toBeVisible({ timeout: 60_000 });
-      await codexTextOption.click();
-    }
-  }
+  await selectNewSessionAgent({ page, agentId: 'codex' });
 
   await openNewSessionMachineSelection({ page, uiBaseUrl });
   const machineOption = page.locator(
