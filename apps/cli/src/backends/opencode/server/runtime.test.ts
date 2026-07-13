@@ -3195,9 +3195,15 @@ describe('createOpenCodeServerRuntime', () => {
     );
   });
 
-  it('rejects and permanently handles a question when publication validation fails', async () => {
+  it('retries fail-closed question rejection after delivery fails and handles only after settlement', async () => {
     const client = createFakeClient();
     const session = createFakeSession();
+    let rejectFirstDelivery: (error: Error) => void = () => {
+      throw new Error('first question rejection delivery did not start');
+    };
+    client.questionReject.mockImplementationOnce(async () => await new Promise<never>((_resolve, reject) => {
+      rejectFirstDelivery = reject;
+    })).mockResolvedValueOnce(true);
     const permissionHandler = {
       handleToolCall: vi.fn(async () => {
         throw new Error('invalid structured question');
@@ -3232,15 +3238,160 @@ describe('createOpenCodeServerRuntime', () => {
     await expect.poll(() => client.questionReject.mock.calls.length).toBe(1);
     await client.__emit(event);
     await new Promise<void>((resolve) => setImmediate(resolve));
-
     expect(permissionHandler.handleToolCall).toHaveBeenCalledTimes(1);
     expect(client.questionReject).toHaveBeenCalledTimes(1);
-    expect(client.questionReject).toHaveBeenCalledWith({ requestId: 'que_invalid_1' });
+    rejectFirstDelivery(new Error('transient question rejection delivery failure'));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await client.__emit(event);
+    await expect.poll(() => client.questionReject.mock.calls.length).toBe(2);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await client.__emit(event);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(permissionHandler.handleToolCall).toHaveBeenCalledTimes(1);
+    expect(client.questionReject).toHaveBeenCalledTimes(2);
+    expect(client.questionReject).toHaveBeenNthCalledWith(1, { requestId: 'que_invalid_1' });
+    expect(client.questionReject).toHaveBeenNthCalledWith(2, { requestId: 'que_invalid_1' });
     expect(session.sendAgentMessage).toHaveBeenCalledWith('opencode', expect.objectContaining({
       type: 'message',
       message: expect.stringContaining('rejected'),
     }));
+    expect(sentAgentMessagesOfType(session, 'task_started')).toHaveLength(1);
+    const rejectionNotices = session.sendAgentMessage.mock.calls.filter((call: unknown[]) => {
+      const message = call[1];
+      return message !== null
+        && typeof message === 'object'
+        && !Array.isArray(message)
+        && (message as Record<string, unknown>).type === 'message'
+        && String((message as Record<string, unknown>).message).includes('request was rejected');
+    });
+    expect(rejectionNotices).toHaveLength(1);
   });
+
+  it('clears unsettled fail-closed question rejection intent on runtime reset', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    client.questionReject
+      .mockRejectedValueOnce(new Error('transient question rejection delivery failure'))
+      .mockResolvedValueOnce(true);
+    const permissionHandler = {
+      handleToolCall: vi.fn(async () => {
+        throw new Error('invalid structured question');
+      }),
+    };
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: permissionHandler as any,
+      onThinkingChange: vi.fn(),
+    }, { createClient: async () => client as any });
+    const event = {
+      directory: '/tmp',
+      payload: {
+        type: 'question.asked',
+        properties: {
+          id: 'que_invalid_reset',
+          sessionID: 'ses_1',
+          questions: [{ question: 'q1', header: 'Q1', options: [], multiple: false }],
+        },
+      },
+    } as const;
+
+    await runtime.startOrLoad({});
+    await client.__emit(event);
+    await expect.poll(() => client.questionReject.mock.calls.length).toBe(1);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    await runtime.reset();
+    await runtime.startOrLoad({});
+    await client.__emit(event);
+    await expect.poll(() => client.questionReject.mock.calls.length).toBe(2);
+
+    expect(permissionHandler.handleToolCall).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['resolve', 'reject'] as const)(
+    'fences stale fail-closed rejection %s from a new runtime lifecycle with the same request key',
+    async (retiredOutcome) => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    let resolveRetiredDelivery: (value: boolean) => void = () => {
+      throw new Error('retired question rejection delivery did not start');
+    };
+    let rejectRetiredDelivery: (error: Error) => void = () => {
+      throw new Error('retired question rejection delivery did not start');
+    };
+    let rejectNewDelivery: (error: Error) => void = () => {
+      throw new Error('new question rejection delivery did not start');
+    };
+    client.questionReject
+      .mockImplementationOnce(async () => await new Promise<boolean>((resolve, reject) => {
+        resolveRetiredDelivery = resolve;
+        rejectRetiredDelivery = reject;
+      }))
+      .mockImplementationOnce(async () => await new Promise<never>((_resolve, reject) => {
+        rejectNewDelivery = reject;
+      }))
+      .mockResolvedValueOnce(true);
+    const permissionHandler = {
+      handleToolCall: vi.fn(async () => {
+        throw new Error('invalid structured question');
+      }),
+    };
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: permissionHandler as any,
+      onThinkingChange: vi.fn(),
+    }, { createClient: async () => client as any });
+    const event = {
+      directory: '/tmp',
+      payload: {
+        type: 'question.asked',
+        properties: {
+          id: 'que_invalid_reset_race',
+          sessionID: 'ses_1',
+          questions: [{ question: 'q1', header: 'Q1', options: [], multiple: false }],
+        },
+      },
+    } as const;
+
+    await runtime.startOrLoad({});
+    await client.__emit(event);
+    await expect.poll(() => client.questionReject.mock.calls.length).toBe(1);
+
+    await runtime.reset();
+    await runtime.startOrLoad({});
+    await client.__emit(event);
+    await expect.poll(() => client.questionReject.mock.calls.length).toBe(2);
+
+    if (retiredOutcome === 'resolve') {
+      resolveRetiredDelivery(true);
+    } else {
+      rejectRetiredDelivery(new Error('retired lifecycle rejection delivery failure'));
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await client.__emit(event);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(permissionHandler.handleToolCall).toHaveBeenCalledTimes(2);
+    expect(client.questionReject).toHaveBeenCalledTimes(2);
+
+    rejectNewDelivery(new Error('new lifecycle rejection delivery failure'));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await client.__emit(event);
+    await expect.poll(() => client.questionReject.mock.calls.length).toBe(3);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await client.__emit(event);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(permissionHandler.handleToolCall).toHaveBeenCalledTimes(2);
+    expect(client.questionReject).toHaveBeenCalledTimes(3);
+    },
+  );
 
   it('auto-acknowledges internal OpenCode title update questions without surfacing AskUserQuestion', async () => {
     const client = createFakeClient();

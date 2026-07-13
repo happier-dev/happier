@@ -353,6 +353,7 @@ export function createOpenCodeServerRuntime(params: {
   let handledQuestionIds: Set<string> | null = null;
   let inFlightPermissionIds: Set<string> | null = null;
   let inFlightQuestionIds: Set<string> | null = null;
+  let pendingFailClosedQuestionRejectionKeys: Set<string> | null = null;
   let userMessageIdLastTimestampMs = 0;
   let userMessageIdCounter = 0;
   const observedRemoteTextMessageIds = new Set<string>();
@@ -1120,6 +1121,7 @@ export function createOpenCodeServerRuntime(params: {
     handledQuestionIds = null;
     inFlightPermissionIds = null;
     inFlightQuestionIds = null;
+    pendingFailClosedQuestionRejectionKeys = null;
     activeLifecycleMarkerId = null;
     pendingProviderAutonomousBackgroundWake = null;
   };
@@ -2579,6 +2581,16 @@ export function createOpenCodeServerRuntime(params: {
   const handleQuestionAsked = async (req: OpenCodeQuestionRequest) => {
     if (req.sessionID !== sessionId && !sidechainIdByRemoteSessionId.has(req.sessionID)) return;
 
+    const rejectionKey = `${req.sessionID}\u0000${req.id}`;
+    const rejectionKeysForOwningTurn = pendingFailClosedQuestionRejectionKeys ?? new Set<string>();
+    pendingFailClosedQuestionRejectionKeys = rejectionKeysForOwningTurn;
+    if (rejectionKeysForOwningTurn.has(rejectionKey)) {
+      const c = await ensureClient();
+      await c.questionReject({ requestId: req.id });
+      rejectionKeysForOwningTurn.delete(rejectionKey);
+      return;
+    }
+
     setThinking(false);
     idleSignalSeen = false;
     idleSignalSeenViaControlPlane = false;
@@ -2660,14 +2672,17 @@ export function createOpenCodeServerRuntime(params: {
         type: 'message',
         message: 'Question request handling failed. For safety, the request was rejected.',
       });
+      rejectionKeysForOwningTurn.add(rejectionKey);
       try {
         const c = await ensureClient();
         await c.questionReject({ requestId: req.id });
+        rejectionKeysForOwningTurn.delete(rejectionKey);
       } catch (replyError) {
-        logger.debug('[OpenCodeServer] failed to reject question request after handler error (non-fatal)', {
+        logger.debug('[OpenCodeServer] failed to reject question request after handler error', {
           requestId: req.id,
           sessionId: req.sessionID,
         }, replyError);
+        throw replyError;
       }
       return;
     } finally {
