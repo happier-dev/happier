@@ -209,33 +209,9 @@ async function fillAndClickComposerSend(params: Readonly<{
 }
 
 async function ensureSignedIn(page: Page, uiBaseUrl: string): Promise<void> {
-    const deadlineMs = Date.now() + 180_000;
-    const settingsSessionItem = page.getByTestId('settings-session-replay-enabled-item');
-
-    while (Date.now() < deadlineMs) {
-        // The most stable "signed in + app booted" proof we currently have in this suite is
-        // the settings session screen existing. UI can render chrome (sidebar) even while
-        // still blocked by getting-started guidance; don't treat that as signed-in.
-        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/session`).catch(() => {});
-        if ((await settingsSessionItem.count()) > 0) return;
-
-        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new`).catch(() => {});
-        await waitForInitialAppUi({ page, timeoutMs: 30_000 }).catch(() => {});
-        await ensureAccountReadyForConnect({ page, timeoutMs: 30_000 }).catch(() => {});
-
-        await page.waitForTimeout(750);
-    }
-
-    const debugTestIds = await page.locator('[data-testid]').evaluateAll((nodes) => {
-        return nodes
-            .map((node) => node.getAttribute('data-testid'))
-            .filter((value): value is string => typeof value === 'string' && value.length > 0)
-            .filter((value) => value.startsWith('welcome-') || value.startsWith('settings-') || value.startsWith('session-getting-started-kind-'));
-    }).catch(() => []);
-
-    throw new Error(`Timed out ensuring signed-in state on ${page.url()}. Visible testIDs: ${
-        debugTestIds.length > 0 ? debugTestIds.slice(0, 80).join(', ') : '(none)'
-    }`);
+    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/new`);
+    await waitForInitialAppUi({ page, timeoutMs: 180_000 });
+    await ensureAccountReadyForConnect({ page, timeoutMs: 180_000 });
 }
 
 async function ensureOnNewSessionComposer(page: Page, uiBaseUrl: string): Promise<void> {
@@ -319,26 +295,6 @@ async function setCodexBackendModeToAppServer(page: Page, uiBaseUrl: string): Pr
     await expect(backendModeRow).toContainText('App Server', { timeout: 60_000 });
 }
 
-async function setSessionReplayEnabled(page: Page, uiBaseUrl: string, enabled: boolean): Promise<void> {
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/session`);
-    const replayItem = page.getByTestId('settings-session-replay-enabled-item');
-    await expect(replayItem).toHaveCount(1, { timeout: 60_000 });
-    const replaySwitch = replayItem.locator('input[type="checkbox"]').first();
-    if ((await replaySwitch.count()) === 0) {
-        if (enabled) await replayItem.click();
-        return;
-    }
-    const checked = await replaySwitch.isChecked().catch(() => false);
-    if (checked !== enabled) {
-        await replayItem.click();
-    }
-    if (enabled) {
-        await expect(replaySwitch).toBeChecked({ timeout: 60_000 });
-    } else {
-        await expect(replaySwitch).not.toBeChecked({ timeout: 60_000 });
-    }
-}
-
 async function connectDaemonWithFakeCodexAppServer(params: Readonly<{
     page: Page;
     suiteDir: string;
@@ -399,7 +355,6 @@ async function connectDaemonWithFakeCodexAppServer(params: Readonly<{
 
     await setCodexBackendModeToAppServer(params.page, params.uiBaseUrl);
     await enableEnhancedSessionWizard({ page: params.page, baseUrl: params.uiBaseUrl });
-    await setSessionReplayEnabled(params.page, params.uiBaseUrl, false);
 
     const machineId = await readDaemonMachineIdFromHappyHomeDir({ happyHomeDir: cliHomeDir });
     await waitForDaemonMachineToAppearInUi({ page: params.page, uiBaseUrl: params.uiBaseUrl, machineId });
@@ -434,7 +389,9 @@ async function waitForDaemonMachineToAppearInUi(params: Readonly<{ page: Page; u
 
         try {
             await openNewSessionMachineSelection({ page: params.page, uiBaseUrl: params.uiBaseUrl });
-            const machineOption = params.page.locator(`[data-testid="new-session-machine:${params.machineId}"]:visible`).first();
+            const machineOption = params.page.locator(
+                `[data-testid="new-session-machine:${params.machineId}"]:visible, [data-testid="new-session-machine-option:${params.machineId}"]:visible`,
+            ).first();
             if ((await machineOption.count()) > 0) {
                 await params.page.keyboard.press('Escape').catch(() => {});
                 return;
@@ -546,7 +503,9 @@ async function selectCodexAgentAndMachine(params: Readonly<{ page: Page; uiBaseU
     const machineSelectionResult = await openNewSessionMachineSelection({ page: params.page, uiBaseUrl: params.uiBaseUrl });
     const pickDeadlineMs = Date.now() + 120_000;
     while (true) {
-        const machineOption = params.page.locator(`[data-testid="new-session-machine:${params.machineId}"]:visible`).first();
+        const machineOption = params.page.locator(
+            `[data-testid="new-session-machine:${params.machineId}"]:visible, [data-testid="new-session-machine-option:${params.machineId}"]:visible`,
+        ).first();
 
         if ((await machineOption.count()) > 0) {
             await expect(machineOption).toBeEnabled({ timeout: 120_000 });

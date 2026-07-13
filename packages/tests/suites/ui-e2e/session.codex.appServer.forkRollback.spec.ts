@@ -164,28 +164,6 @@ async function setCodexBackendModeToAppServer(page: Page, uiBaseUrl: string): Pr
   await expect(backendModeRow).toContainText('App Server', { timeout: 60_000 });
 }
 
-async function setSessionReplayEnabled(page: Page, uiBaseUrl: string, enabled: boolean): Promise<void> {
-  await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/session`);
-  const replayItem = page.getByTestId('settings-session-replay-enabled-item');
-  await expect(replayItem).toHaveCount(1, { timeout: 60_000 });
-  const replaySwitch = replayItem.locator('input[type="checkbox"]').first();
-  if ((await replaySwitch.count()) === 0) {
-    if (enabled) {
-      await replayItem.click();
-    }
-    return;
-  }
-  const checked = await replaySwitch.isChecked().catch(() => false);
-  if (checked !== enabled) {
-    await replayItem.click();
-  }
-  if (enabled) {
-    await expect(replaySwitch).toBeChecked({ timeout: 60_000 });
-  } else {
-    await expect(replaySwitch).not.toBeChecked({ timeout: 60_000 });
-  }
-}
-
 async function maybeDismissDetectedClisModal(page: Page, opts?: Readonly<{ timeoutMs?: number }>): Promise<boolean> {
   const timeoutMs = opts?.timeoutMs ?? 5_000;
   const deadlineMs = Date.now() + timeoutMs;
@@ -225,36 +203,40 @@ async function createCodexSessionFromComposer(params: {
   await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
   await expect(page.getByTestId('new-session-composer-input')).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId('agent-input-machine-chip')).toHaveCount(1, { timeout: 60_000 });
+
+  const agentChip = page.getByTestId('agent-input-agent-chip').first();
+  try {
+    await agentChip.click({ timeout: 15_000 });
+  } catch {
+    await agentChip.click({ timeout: 15_000, force: true });
+  }
+  const inlineCodexOption = page.getByTestId('new-session-agent:codex');
+  if ((await inlineCodexOption.count()) > 0) {
+    await inlineCodexOption.click();
+  } else {
+    const pickerDialog = page.getByRole('dialog').last();
+    const codexOption = pickerDialog.getByTestId('new-session-agent:codex').first();
+    if ((await codexOption.count()) > 0) {
+      await expect(codexOption).toBeVisible({ timeout: 60_000 });
+      await codexOption.click();
+    } else {
+      const codexTextOption = pickerDialog.getByText('Codex', { exact: true }).first();
+      await expect(codexTextOption).toBeVisible({ timeout: 60_000 });
+      await codexTextOption.click();
+    }
+  }
+
   await openNewSessionMachineSelection({ page, uiBaseUrl });
-  await expect(page.getByTestId(`new-session-machine:${machineId}`)).toHaveCount(1, { timeout: 120_000 });
-  await page.getByTestId(`new-session-machine:${machineId}`).click();
+  const machineOption = page.locator(
+    `[data-testid="new-session-machine:${machineId}"], [data-testid="new-session-machine-option:${machineId}"]`,
+  ).first();
+  await expect(machineOption).toHaveCount(1, { timeout: 120_000 });
+  await machineOption.click();
 
   await page.waitForURL((url) => url.pathname.endsWith('/new'), { timeout: 60_000 });
   await maybeDismissDetectedClisModal(page, { timeoutMs: 30_000 }).catch(() => false);
   await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
   await expect(page.getByTestId('new-session-composer-input')).toBeVisible({ timeout: 60_000 });
-
-  // Agent options can depend on the selected machine (CLI availability), so pick machine first.
-  // After the machine is selected, open the agent picker and select Codex.
-  await expect(page.getByTestId('agent-input-agent-chip')).toHaveCount(1, { timeout: 60_000 });
-  await page.getByTestId('agent-input-agent-chip').click();
-  await maybeDismissDetectedClisModal(page, { timeoutMs: 30_000 }).catch(() => false);
-
-  const codexAgentRow = page.getByTestId('new-session-agent:codex').first();
-  await expect(codexAgentRow).toBeVisible({ timeout: 60_000 });
-  await expect(codexAgentRow).toBeEnabled({ timeout: 60_000 });
-  await codexAgentRow.scrollIntoViewIfNeeded().catch(() => {});
-  await codexAgentRow.click();
-
-  const applyButton = page.locator('[data-testid="agent-input-chip-picker.apply"]:visible').first();
-  if ((await applyButton.count()) > 0) {
-    await expect(applyButton).toBeEnabled({ timeout: 60_000 });
-    await applyButton.click();
-    await expect(applyButton).toHaveCount(0, { timeout: 60_000 }).catch(async () => {
-      await page.keyboard.press('Escape').catch(() => {});
-      await expect(page.locator('[data-testid="agent-input-chip-picker.apply"]:visible')).toHaveCount(0, { timeout: 60_000 });
-    });
-  }
 
   await expect(page.getByTestId('new-session-composer-input')).toHaveCount(1, { timeout: 60_000 });
   await page.getByTestId('new-session-composer-input').fill(prompt);
@@ -385,7 +367,6 @@ test.describe('ui e2e: Codex app-server fork and rollback', () => {
     });
 
     await setCodexBackendModeToAppServer(page, uiBaseUrl);
-    await setSessionReplayEnabled(page, uiBaseUrl, false);
 
     const machineId = await waitForLatestMachineId({ suiteDir, timeoutMs: 120_000 });
     const parentPrompt = `codex-app-server-parent-1 ${run.runId}`;
