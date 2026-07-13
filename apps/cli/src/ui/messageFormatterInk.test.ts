@@ -7,9 +7,20 @@ function buildAssistantMessage(text: string): SDKMessage {
     return {
         type: 'assistant',
         message: {
+            role: 'assistant',
             content: [{ type: 'text', text }],
         },
-    } as unknown as SDKAssistantMessage
+    } satisfies SDKAssistantMessage
+}
+
+function buildAssistantMessageFromTextBlocks(...texts: string[]): SDKMessage {
+    return {
+        type: 'assistant',
+        message: {
+            role: 'assistant',
+            content: texts.map((text) => ({ type: 'text', text })),
+        },
+    } satisfies SDKAssistantMessage
 }
 
 describe('formatClaudeMessageForInk', () => {
@@ -32,6 +43,21 @@ describe('formatClaudeMessageForInk', () => {
 
         const contents = messageBuffer.getMessages().map((m) => m.content)
         expect(contents).toContain(text)
+    })
+
+    it('assembles an options block split across two adjacent text blocks', () => {
+        const messageBuffer = new MessageBuffer()
+        const message = buildAssistantMessageFromTextBlocks(
+            'Should I proceed?\n\n<options>\n<option>Yes, go ahead</option>\n',
+            '<option>No, stop here</option>\n</options>',
+        )
+
+        formatClaudeMessageForInk(message, messageBuffer)
+
+        const contents = messageBuffer.getMessages().map((m) => m.content)
+        expect(contents).toContain('Should I proceed?\n\nOptions:\n  1. Yes, go ahead\n  2. No, stop here')
+        expect(contents.join('\n')).not.toContain('<options>')
+        expect(contents.join('\n')).not.toContain('<option>')
     })
 
     it('renders <options> blocks in the result summary as a numbered list', () => {
