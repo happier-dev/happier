@@ -1,7 +1,6 @@
 import { join } from 'node:path';
 
 import { getProjectPath } from '@/backends/claude/utils/path';
-import { CLAUDE_AUTH_ENV_KEYS } from '@/backends/claude/auth/claudeAuthEnvKeys';
 import type { EnhancedMode } from '@/backends/claude/loop';
 import type { PermissionResult } from '@/backends/claude/sdk/types';
 
@@ -66,47 +65,6 @@ export function buildClaudeAgentSdkHooks(params: Readonly<{
               params.onSessionFound(sessionId, { transcript_path: transcriptPathFallback, transcriptPath: transcriptPathFallback });
             }
             return { continue: true };
-          },
-        ],
-      },
-    ],
-    PreToolUse: [
-      {
-        hooks: [
-          async (input: any) => {
-            if (!input || typeof input !== 'object') {
-              return { continue: true, suppressOutput: true };
-            }
-
-            const toolName = typeof input.tool_name === 'string' ? input.tool_name : '';
-            if (toolName !== 'Bash') {
-              return { continue: true, suppressOutput: true };
-            }
-
-            const toolInput = (input as any).tool_input;
-            if (!toolInput || typeof toolInput !== 'object' || Array.isArray(toolInput)) {
-              return { continue: true, suppressOutput: true };
-            }
-
-            const command = typeof (toolInput as any).command === 'string' ? (toolInput as any).command : '';
-            if (!command.trim()) {
-              return { continue: true, suppressOutput: true };
-            }
-
-            const prefix = `unset ${CLAUDE_AUTH_ENV_KEYS.join(' ')}; `;
-            const nextCommand = command.startsWith(prefix) ? command : prefix + command;
-
-            return {
-              continue: true,
-              suppressOutput: true,
-              hookSpecificOutput: {
-                hookEventName: 'PreToolUse',
-                updatedInput: {
-                  ...(toolInput as Record<string, unknown>),
-                  command: nextCommand,
-                },
-              },
-            };
           },
         ],
       },
