@@ -1,10 +1,12 @@
 #include <jni.h>
 
 #include <atomic>
+#include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
-#include <memory>
+#include <vector>
 
 #include <android/log.h>
 
