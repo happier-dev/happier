@@ -247,14 +247,19 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
     const isRunning = tool.state === 'running';
     const canApprovePermissions = interaction?.canApprovePermissions ?? true;
     const toolCallId = resolvePermissionRequestId(tool);
-    const session = sessionId ? storage.getState().sessions[sessionId] : undefined;
-    const structuredQuestionAnswersV1Supported = getStructuredQuestionAnswersV1Supported(
-        session?.agentState?.capabilities,
-    );
-    const activeMatchingRequest = toolCallId ? session?.agentState?.requests?.[toolCallId] : null;
-    const hasActiveAskUserQuestionRequest =
-        isAskUserQuestionToolName(activeMatchingRequest?.tool) &&
-        resolveAgentRequestKind({ toolName: activeMatchingRequest.tool, requestKind: activeMatchingRequest.kind }) === 'user_action';
+    const structuredQuestionAnswersV1Supported = storage((state) => getStructuredQuestionAnswersV1Supported(
+        sessionId ? state.sessions[sessionId]?.agentState?.capabilities : undefined,
+    ));
+    const hasActiveAskUserQuestionRequest = storage((state) => {
+        const activeMatchingRequest = sessionId && toolCallId
+            ? state.sessions[sessionId]?.agentState?.requests?.[toolCallId]
+            : null;
+        return isAskUserQuestionToolName(activeMatchingRequest?.tool)
+            && resolveAgentRequestKind({
+                toolName: activeMatchingRequest.tool,
+                requestKind: activeMatchingRequest.kind,
+            }) === 'user_action';
+    });
     const canInteract = isRunning && !isSubmitted && canApprovePermissions && hasActiveAskUserQuestionRequest;
     const disabledMessage =
         interaction?.permissionDisabledReason === 'public'

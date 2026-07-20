@@ -2,7 +2,7 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import type { ToolCall } from '@/sync/domains/messages/messageTypes';
-import { makeToolCall, makeToolViewProps } from '@/dev/testkit';
+import { createSessionFixture, makeToolCall, makeToolViewProps } from '@/dev/testkit';
 import { changeTextTestInstance, findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installWorkflowRendererCommonModuleMocks } from './workflowRendererTestHelpers';
 import { STRUCTURED_QUESTION_LIMITS } from '@happier-dev/protocol';
@@ -29,32 +29,33 @@ installWorkflowRendererCommonModuleMocks({
         }).module;
     },
     storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        const { createStorageModuleStub, createStorageStoreStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
-            storage: {
-                getState: () => ({
-                    sessions: {
-                        s1: {
-                            agentState: {
-                                capabilities: {
-                                    askUserQuestionAnswersInPermission: supportsAnswersInPermission,
-                                    structuredQuestionAnswersV1Supported,
-                                },
-                                requests: activeAskUserQuestionRequest
-                                    ? {
-                                        [activeAskUserQuestionRequestId]: {
-                                            tool: activeAskUserQuestionRequest.tool,
-                                            ...(activeAskUserQuestionRequest.kind ? { kind: activeAskUserQuestionRequest.kind } : {}),
-                                            arguments: {},
-                                            createdAt: 1,
-                                        },
-                                    }
-                                    : {},
+            storage: createStorageStoreStub(() => ({
+                sessions: {
+                    s1: createSessionFixture({
+                        id: 's1',
+                        agentState: {
+                            capabilities: {
+                                askUserQuestionAnswersInPermission: supportsAnswersInPermission,
+                                ...(structuredQuestionAnswersV1Supported
+                                    ? { structuredQuestionAnswersV1Supported: true as const }
+                                    : {}),
                             },
+                            requests: activeAskUserQuestionRequest
+                                ? {
+                                    [activeAskUserQuestionRequestId]: {
+                                        tool: activeAskUserQuestionRequest.tool,
+                                        ...(activeAskUserQuestionRequest.kind ? { kind: activeAskUserQuestionRequest.kind } : {}),
+                                        arguments: {},
+                                        createdAt: 1,
+                                    },
+                                }
+                                : {},
                         },
-                    },
-                }),
-            },
+                    }),
+                },
+            })),
         });
     },
 });
