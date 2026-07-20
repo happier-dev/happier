@@ -200,56 +200,6 @@ const newSessionMcpTranslationExtension = {
   mcpReasonNotPortable: 'Not portable to this session',
 } as const;
 
-const providerAuthenticationTranslationExtension = {
-  authentication: {
-    title: 'Authentication',
-    footer: 'Machine-local CLI authentication for this backend.',
-    statusTitle: 'Status',
-    loggedInAsTitle: 'Logged in as',
-    methodTitle: 'Method',
-    sourceTitle: 'Source',
-    reasonTitle: 'Details',
-    lastCheckedTitle: 'Last checked',
-    stateLoggedIn: 'Logged in',
-    stateLoggedOut: 'Not logged in',
-    stateUnknown: 'Status unknown',
-    logInTitle: 'Log in',
-    logInSubtitle: 'Open a terminal to authenticate this CLI on the machine.',
-    reauthenticateTitle: 'Re-authenticate',
-    reauthenticateSubtitle: 'Open a terminal to refresh this CLI login on the machine.',
-    deviceCodeTitle: 'Use device code',
-    deviceCodeSubtitle: 'Authenticate in a headless or remote terminal with a device code.',
-    checkNowTitle: 'Check now',
-    checkNowSubtitle: 'Refresh machine-local authentication details.',
-    terminalTitle: 'Provider login terminal',
-    methods: {
-      apiKeyEnv: 'API key from environment',
-      authTokenEnv: 'Auth token from environment',
-      credentialsFile: 'Credentials file',
-      oauthCli: 'CLI login session',
-      configFile: 'Config file',
-      gcloudAdc: 'Google ADC',
-      unknown: 'Unknown method',
-    },
-    reasons: {
-      missingCredentials: 'No credentials were found.',
-      expired: 'Stored credentials have expired.',
-      cliMissing: 'The CLI is not installed on the machine.',
-      probeFailed: 'The CLI status probe failed.',
-      timeout: 'The CLI status probe timed out.',
-      unsupported: 'This backend does not expose local auth status.',
-      interactiveBlocked: 'This backend requires an interactive login flow.',
-      notConfigured: 'This backend is not configured on the machine.',
-    },
-    sources: {
-      environment: 'Environment',
-      file: 'Local file',
-      command: 'CLI command',
-      mixed: 'Multiple sources',
-    },
-  },
-} as const;
-
 const settingsAppearanceTranslationExtension = {
   themeProfiles: {
     title: 'Themes',
@@ -3436,7 +3386,6 @@ export const en = {
     },
 
     settingsProviders: {
-        ...providerAuthenticationTranslationExtension,
         title: 'AI backends',
         entrySubtitle: 'View capabilities and configure each backend',
         footer: 'Manage backend availability, capabilities, model support, and provider-specific settings.',

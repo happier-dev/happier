@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { buildGrokAcpBackendOptions } from './backend';
+import { resolveGrokAcpAuthentication } from './auth';
+import { buildGrokAcpBackendOptions, resolveGrokXaiApiKeyPresence } from './backend';
 
 describe('Grok ACP backend options', () => {
   let root = '';
@@ -53,6 +54,79 @@ describe('Grok ACP backend options', () => {
       advertisedMethodIds: new Set(['xai.api_key']),
       initializeMeta: null,
     })).toEqual({ methodId: 'xai.api_key', meta: { headless: true } });
+  });
+
+  it.each([
+    {
+      name: 'accepts an inherited exact-case key on POSIX',
+      platform: 'linux' as const,
+      inheritedEnv: { XAI_API_KEY: '  inherited-secret  ' },
+      overrideEnv: undefined,
+      expectedMethodId: 'xai.api_key',
+      expectedUnsetInherited: false,
+    },
+    {
+      name: 'ignores an inherited differently-cased key on POSIX',
+      platform: 'darwin' as const,
+      inheritedEnv: { xai_api_key: 'inherited-secret' },
+      overrideEnv: undefined,
+      expectedMethodId: 'cached_token',
+      expectedUnsetInherited: false,
+    },
+    {
+      name: 'accepts an inherited differently-cased key on Windows',
+      platform: 'win32' as const,
+      inheritedEnv: { xai_api_key: '  inherited-secret  ' },
+      overrideEnv: undefined,
+      expectedMethodId: 'xai.api_key',
+      expectedUnsetInherited: false,
+    },
+    {
+      name: 'lets a differently-cased blank Windows override shadow an inherited key',
+      platform: 'win32' as const,
+      inheritedEnv: { XAI_API_KEY: 'inherited-secret' },
+      overrideEnv: { xai_api_key: '   ' },
+      expectedMethodId: 'cached_token',
+      expectedUnsetInherited: true,
+    },
+    {
+      name: 'does not let a differently-cased POSIX override shadow an inherited key',
+      platform: 'linux' as const,
+      inheritedEnv: { XAI_API_KEY: 'inherited-secret' },
+      overrideEnv: { xai_api_key: '   ' },
+      expectedMethodId: 'xai.api_key',
+      expectedUnsetInherited: false,
+    },
+    {
+      name: 'uses a differently-cased nonblank Windows override over an inherited blank value',
+      platform: 'win32' as const,
+      inheritedEnv: { XAI_API_KEY: '   ' },
+      overrideEnv: { Xai_Api_Key: '\t override-secret \n' },
+      expectedMethodId: 'xai.api_key',
+      expectedUnsetInherited: true,
+    },
+    {
+      name: 'uses the lexicographically first Windows override when casing variants coexist',
+      platform: 'win32' as const,
+      inheritedEnv: {},
+      overrideEnv: { xai_api_key: '   ', XAI_API_KEY: 'override-secret' },
+      expectedMethodId: 'xai.api_key',
+      expectedUnsetInherited: true,
+    },
+  ])('$name', ({ platform, inheritedEnv, overrideEnv, expectedMethodId, expectedUnsetInherited }) => {
+    const presence = resolveGrokXaiApiKeyPresence({
+      inheritedEnv,
+      overrideEnv,
+      platform,
+    });
+    const authentication = resolveGrokAcpAuthentication({
+      advertisedMethodIds: new Set(['xai.api_key', 'cached_token']),
+      initializeMeta: { defaultAuthMethodId: 'cached_token' },
+    }, presence.hasXaiApiKey);
+
+    expect(authentication).toEqual({ methodId: expectedMethodId, meta: { headless: true } });
+    expect(presence.unsetInheritedXaiApiKey).toBe(expectedUnsetInherited);
+    expect(JSON.stringify({ presence, authentication })).not.toContain('secret');
   });
 
   it('wires both xAI request methods only when the shared permission owner is present', () => {

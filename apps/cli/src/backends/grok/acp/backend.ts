@@ -16,11 +16,59 @@ export interface GrokBackendOptions extends AgentFactoryOptions {
   permissionHandler?: AcpPermissionHandler;
 }
 
+function inspectEnvironmentValuePresence(
+  env: NodeJS.ProcessEnv,
+  key: string,
+  platform: NodeJS.Platform,
+): Readonly<{ found: boolean; nonBlank: boolean }> {
+  if (platform !== 'win32') {
+    const found = Object.prototype.hasOwnProperty.call(env, key);
+    const value = found ? env[key] : undefined;
+    return { found, nonBlank: typeof value === 'string' && value.trim().length > 0 };
+  }
+
+  const normalizedKey = key.toLowerCase();
+  const matchedKey = Object.keys(env)
+    .sort()
+    .find((candidate) => candidate.toLowerCase() === normalizedKey);
+  const value = matchedKey === undefined ? undefined : env[matchedKey];
+  return {
+    found: matchedKey !== undefined,
+    nonBlank: typeof value === 'string' && value.trim().length > 0,
+  };
+}
+
+export function resolveGrokXaiApiKeyPresence(params: Readonly<{
+  inheritedEnv: NodeJS.ProcessEnv;
+  overrideEnv?: NodeJS.ProcessEnv;
+  platform: NodeJS.Platform;
+}>): Readonly<{
+  hasXaiApiKey: boolean;
+  unsetInheritedXaiApiKey: boolean;
+}> {
+  const override = params.overrideEnv === undefined
+    ? { found: false, nonBlank: false }
+    : inspectEnvironmentValuePresence(params.overrideEnv, 'XAI_API_KEY', params.platform);
+  const hasXaiApiKey = override.found
+    ? override.nonBlank
+    : inspectEnvironmentValuePresence(params.inheritedEnv, 'XAI_API_KEY', params.platform).nonBlank;
+
+  return {
+    hasXaiApiKey,
+    // AcpBackend removes inherited variants before applying the override so the
+    // Windows child environment observes the same case-insensitive precedence.
+    unsetInheritedXaiApiKey: params.platform === 'win32' && override.found,
+  };
+}
+
 export function buildGrokAcpBackendOptions(options: GrokBackendOptions): AcpBackendOptions {
   const processEnv = { ...process.env, ...options.env };
   const launch = requireProviderCliLaunchSpec('grok', { processEnv });
-  const hasXaiApiKey = typeof processEnv.XAI_API_KEY === 'string'
-    && processEnv.XAI_API_KEY.trim().length > 0;
+  const xaiApiKeyPresence = resolveGrokXaiApiKeyPresence({
+    inheritedEnv: process.env,
+    overrideEnv: options.env,
+    platform: process.platform,
+  });
 
   return {
     agentName: 'grok',
@@ -28,10 +76,11 @@ export function buildGrokAcpBackendOptions(options: GrokBackendOptions): AcpBack
     command: launch.command,
     args: [...launch.args, ...GROK_ACP_ARGS],
     env: { ...options.env },
+    unsetEnv: xaiApiKeyPresence.unsetInheritedXaiApiKey ? ['XAI_API_KEY'] : undefined,
     mcpServers: options.mcpServers,
     permissionHandler: options.permissionHandler,
     transportHandler: grokTransport,
-    authentication: createGrokAcpAuthentication({ hasXaiApiKey }),
+    authentication: createGrokAcpAuthentication({ hasXaiApiKey: xaiApiKeyPresence.hasXaiApiKey }),
     extensionHandlers: buildGrokExtensionHandlers({ permissionHandler: options.permissionHandler }),
   };
 }
