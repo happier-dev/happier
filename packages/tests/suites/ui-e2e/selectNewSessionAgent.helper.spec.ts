@@ -1,21 +1,9 @@
-import { chromium, type Browser } from '@playwright/test';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { expect, test } from '@playwright/test';
 
-import { selectNewSessionAgent } from './selectNewSessionAgent';
+import { selectNewSessionAgent } from '../../src/testkit/uiE2e/selectNewSessionAgent';
 
-describe('selectNewSessionAgent', () => {
-  let browser: Browser;
-
-  beforeAll(async () => {
-    browser = await chromium.launch({ headless: true });
-  });
-
-  afterAll(async () => {
-    await browser.close();
-  });
-
-  it('opens once and selects an asynchronously retained active option instead of a non-actionable duplicate', async () => {
-    const page = await browser.newPage();
+test.describe('selectNewSessionAgent', () => {
+  test('opens once and selects an asynchronously retained active option instead of a non-actionable duplicate', async ({ page }) => {
     page.setDefaultTimeout(300);
     await page.setContent(`
       <button data-testid="agent-input-agent-chip">Agent</button>
@@ -53,11 +41,9 @@ describe('selectNewSessionAgent', () => {
       selectedAgent: document.body.dataset.selectedAgent ?? null,
     }));
     expect(state).toEqual({ openCount: 1, selectedAgent: 'codex' });
-    await page.close();
   });
 
-  it('selects the canonical agent-prefixed picker option id', async () => {
-    const page = await browser.newPage();
+  test('selects the canonical agent-prefixed picker option id', async ({ page }) => {
     await page.setContent(`
       <button data-testid="agent-input-agent-chip">Agent</button>
       <div id="active" hidden>
@@ -76,11 +62,9 @@ describe('selectNewSessionAgent', () => {
     await selectNewSessionAgent({ page, agentId: 'codex', timeoutMs: 1_000 });
 
     expect(await page.locator('body').getAttribute('data-selected-agent')).toBe('codex');
-    await page.close();
   });
 
-  it('ignores an older retained Codex trigger and selects Codex through the active trigger', async () => {
-    const page = await browser.newPage();
+  test('ignores an older retained Codex trigger and selects Codex through the active trigger', async ({ page }) => {
     await page.setContent(`
       <div style="pointer-events:none">
         <button data-testid="agent-input-agent-chip">Codex</button>
@@ -105,6 +89,5 @@ describe('selectNewSessionAgent', () => {
 
     expect(await page.locator('body').getAttribute('data-active-trigger-opened')).toBe('true');
     expect(await page.locator('body').getAttribute('data-selected-agent')).toBe('codex');
-    await page.close();
   });
 });
