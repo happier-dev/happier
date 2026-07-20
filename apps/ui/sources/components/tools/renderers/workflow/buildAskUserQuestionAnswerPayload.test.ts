@@ -143,6 +143,16 @@ describe('buildAskUserQuestionAnswerPayload', () => {
         })).toEqual({ ok: false });
     });
 
+    it.each([
+        [{ id: 'id-only', options: [] }],
+        [{ question: 'Question?', options: [], freeform: 'yes' }],
+        [{ question: 'Question?', options: [], multiSelect: 'yes' }],
+        [{ question: 'Question?', options: [{ value: 'wire', label: 1 }] }],
+        [{ question: 'Question?', options: [{ label: 'A', description: 1 }] }],
+    ])('rejects the same malformed recognized descriptor fields as publication: %j', (questions) => {
+        expect(normalizeAskUserQuestionRenderQuestions({ questions })).toEqual({ ok: false });
+    });
+
     it('accepts one question whose provider id equals its response key', () => {
         expect(normalizeAskUserQuestionRenderQuestions({
             questions: [{
@@ -155,8 +165,10 @@ describe('buildAskUserQuestionAnswerPayload', () => {
         })).toEqual({
             ok: true,
             questions: [{
+                id: 'Pick one',
                 question: 'Pick one',
                 header: 'Pick',
+                responseKey: 'Pick one',
                 options: [{ label: 'A' }],
                 multiSelect: false,
             }],

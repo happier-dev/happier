@@ -35,6 +35,7 @@ interface QuestionOption {
 }
 
 interface Question {
+    responseKey?: string;
     question: string;
     header: string;
     options: QuestionOption[];
@@ -405,7 +406,9 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
                     {questions.map((rawQuestion, qIndex) => {
                         const q = readRenderableQuestion(rawQuestion);
                         const selected = selections.get(qIndex);
-                        const questionKey = typeof q.question === 'string' && q.question.trim().length > 0
+                        const questionKey = typeof q.responseKey === 'string'
+                            ? q.responseKey
+                            : typeof q.question === 'string' && q.question.trim().length > 0
                             ? q.question
                             : typeof q.header === 'string'
                                 ? q.header

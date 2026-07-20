@@ -11,7 +11,8 @@ describe('resolveAskUserQuestionDecisionAnswers', () => {
                 questions: [{ question: 'Continue?', options: [{ label: 'Yes' }, { label: 'No' }] }],
             },
             createdAt: 1,
-        } as any, 'allow')).toEqual([{ question: 'Continue?', values: ['Yes'] }]);
+        } as Parameters<typeof resolveAskUserQuestionDecisionAnswers>[0], 'allow'))
+            .toEqual([{ question: 'Continue?', values: ['Yes'] }]);
     });
 
     it.each(['AskUserQuestion', 'ask_user_question'] as const)(
@@ -45,7 +46,7 @@ describe('resolveAskUserQuestionDecisionAnswers', () => {
             kind: 'user_action',
             arguments: { questions: [{ question: 'Continue?', options: [{ label: 'Yes' }] }] },
             createdAt: 1,
-        } as any, 'allow')).toBeNull();
+        } as Parameters<typeof resolveAskUserQuestionDecisionAnswers>[0], 'allow')).toBeNull();
     });
 
     it('preserves exact nonblank provider question-key bytes', () => {
@@ -55,5 +56,22 @@ describe('resolveAskUserQuestionDecisionAnswers', () => {
             arguments: { questions: [{ question: '  Continue exactly?  ', options: [{ label: 'Yes' }, { label: 'No' }] }] },
             createdAt: 1,
         } as any, 'allow')).toEqual([{ question: '  Continue exactly?  ', values: ['Yes'] }]);
+    });
+
+    it('uses the shared header response key and rejects malformed descriptors', () => {
+        expect(resolveAskUserQuestionDecisionAnswers({
+            tool: 'AskUserQuestion',
+            kind: 'user_action',
+            arguments: { questions: [{ header: 'Continue?', options: [{ label: 'Yes' }, { label: 'No' }] }] },
+            createdAt: 1,
+        } as Parameters<typeof resolveAskUserQuestionDecisionAnswers>[0], 'allow'))
+            .toEqual([{ question: 'Continue?', values: ['Yes'] }]);
+
+        expect(resolveAskUserQuestionDecisionAnswers({
+            tool: 'AskUserQuestion',
+            kind: 'user_action',
+            arguments: { questions: [{ question: 'Continue?', options: [{ label: 'Yes' }], freeform: 'yes' }] },
+            createdAt: 1,
+        } as Parameters<typeof resolveAskUserQuestionDecisionAnswers>[0], 'allow')).toBeNull();
     });
 });

@@ -1,21 +1,10 @@
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import {
     isAskUserQuestionToolName,
-    resolveStructuredQuestionOptionAnswerValue,
+    normalizeStructuredQuestionDescriptors,
 } from '@happier-dev/protocol';
 
 type DirectPermissionDecision = 'allow' | 'deny';
-
-type AskUserQuestionOptionLike = Readonly<{
-    label?: unknown;
-    value?: unknown;
-    choice?: unknown;
-}>;
-
-type AskUserQuestionLike = Readonly<{
-    question?: unknown;
-    options?: unknown;
-}>;
 
 const ALLOW_OPTION_PATTERNS = [
     /\byes\b/i,
@@ -40,14 +29,6 @@ const DENY_OPTION_PATTERNS = [
     /\bdo not\b/i,
     /\brequest changes\b/i,
 ];
-
-function normalizeText(value: unknown): string {
-    return typeof value === 'string' ? value.trim() : '';
-}
-
-function readExactNonBlankText(value: unknown): string {
-    return typeof value === 'string' && value.trim().length > 0 ? value : '';
-}
 
 type DecisionOption = Readonly<{
     displayLabel: string;
@@ -75,28 +56,22 @@ export function resolveAskUserQuestionDecisionAnswers(
 ): ReadonlyArray<Readonly<{ question: string; values: readonly string[] }>> | null {
     if (!request || !isAskUserQuestionToolName(request.tool)) return null;
 
-    const questions = Array.isArray((request.arguments as { questions?: unknown })?.questions)
-        ? ((request.arguments as { questions: readonly AskUserQuestionLike[] }).questions ?? [])
-        : [];
-    if (questions.length === 0) return null;
+    const questions = normalizeStructuredQuestionDescriptors(
+        (request.arguments as { questions?: unknown })?.questions,
+    );
+    if (!questions.ok) return null;
 
     const answers: Array<Readonly<{ question: string; values: readonly string[] }>> = [];
-    for (const rawQuestion of questions) {
-        const question = readExactNonBlankText(rawQuestion?.question);
-        const options = Array.isArray(rawQuestion?.options)
-            ? (rawQuestion.options as readonly AskUserQuestionOptionLike[])
-                  .map((option): DecisionOption | null => {
-                      const displayLabel = normalizeText(option?.label);
-                      const answerValue = resolveStructuredQuestionOptionAnswerValue(option);
-                      return displayLabel && answerValue ? { displayLabel, answerValue } : null;
-                  })
-                  .filter((option): option is DecisionOption => option !== null)
-            : [];
-        if (!question || options.length === 0) return null;
+    for (const question of questions.questions) {
+        const options = question.options.map((option) => ({
+            displayLabel: option.label.trim(),
+            answerValue: option.answerValue,
+        }));
+        if (options.length === 0) return null;
 
         const answer = pickOption(options, decision);
         if (!answer) return null;
-        answers.push({ question, values: [answer.answerValue] });
+        answers.push({ question: question.responseKey, values: [answer.answerValue] });
     }
 
     return answers.length > 0 ? answers : null;

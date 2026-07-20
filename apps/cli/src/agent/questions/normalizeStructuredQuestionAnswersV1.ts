@@ -1,8 +1,10 @@
 import {
     STRUCTURED_QUESTION_LIMITS,
     StructuredQuestionAnswersV1Schema,
-    resolveStructuredQuestionOptionAnswerValue,
+    normalizeStructuredQuestionDescriptors,
+    type StructuredQuestionDescriptor,
     type StructuredQuestionAnswersV1,
+    type StructuredQuestionLike,
 } from '@happier-dev/protocol';
 import {
     PUBLIC_RPC_HANDLER_ERROR_CODES,
@@ -10,42 +12,11 @@ import {
     type PublicRpcHandlerErrorCode,
 } from '@happier-dev/protocol/rpcErrors';
 
-export type StructuredQuestionLike = Readonly<{
-    id?: unknown;
-    question?: unknown;
-    header?: unknown;
-    multiSelect?: unknown;
-    multiple?: unknown;
-    options?: unknown;
-    freeform?: unknown;
-}>;
-
-function readNonEmptyString(value: unknown): string {
-    return typeof value === 'string' && value.trim().length > 0 ? value : '';
-}
-
-function questionKeys(question: StructuredQuestionLike): readonly string[] {
-    const questionText = typeof question.question === 'string' && question.question.trim().length > 0
-        ? question.question
-        : '';
-    const responseKey = questionText || readNonEmptyString(question.header);
-    return [...new Set([
-        readNonEmptyString(question.id),
-        responseKey,
-    ].filter(Boolean))];
-}
+export type { StructuredQuestionLike } from '@happier-dev/protocol';
 
 function addCandidate(candidates: Map<string, readonly string[]>, candidate: readonly string[]): void {
     candidates.set(JSON.stringify(candidate), candidate);
 }
-
-type StructuredQuestionDescriptor = Readonly<{
-    question: StructuredQuestionLike;
-    keys: readonly string[];
-    options: readonly string[];
-    allowsFreeform: boolean;
-    multiSelect: boolean;
-}>;
 
 function parseQuestionDescriptors(
     questions: ReadonlyArray<StructuredQuestionLike>,
@@ -54,46 +25,18 @@ function parseQuestionDescriptors(
     descriptors: readonly StructuredQuestionDescriptor[];
     descriptorByKey: ReadonlyMap<string, StructuredQuestionDescriptor>;
 }> {
-    if (questions.length === 0 || questions.length > STRUCTURED_QUESTION_LIMITS.maxQuestions) {
+    const normalized = normalizeStructuredQuestionDescriptors(questions);
+    if (!normalized.ok) {
         throw new PublicRpcHandlerError(errorCode);
     }
 
-    const descriptors: StructuredQuestionDescriptor[] = [];
     const descriptorByKey = new Map<string, StructuredQuestionDescriptor>();
-    for (const question of questions) {
-        if (!question || typeof question !== 'object' || Array.isArray(question)) {
-            throw new PublicRpcHandlerError(errorCode);
-        }
-        const keys = questionKeys(question);
-        if (typeof question.options !== 'undefined' && !Array.isArray(question.options)) {
-            throw new PublicRpcHandlerError(errorCode);
-        }
-        const rawOptions = Array.isArray(question.options) ? question.options : [];
-        const options = rawOptions.map((option) => resolveStructuredQuestionOptionAnswerValue(option) ?? '');
-        if (
-            keys.length === 0
-            || rawOptions.length > STRUCTURED_QUESTION_LIMITS.maxOptionsPerQuestion
-            || options.some((option) => option.length === 0)
-            || new Set(options).size !== options.length
-        ) {
-            throw new PublicRpcHandlerError(errorCode);
-        }
-        const descriptor: StructuredQuestionDescriptor = {
-            question,
-            keys,
-            options,
-            allowsFreeform: Boolean(question.freeform) || options.length === 0,
-            multiSelect: question.multiSelect === true || question.multiple === true,
-        };
-        for (const key of keys) {
-            if (descriptorByKey.has(key)) {
-                throw new PublicRpcHandlerError(errorCode);
-            }
+    for (const descriptor of normalized.questions) {
+        for (const key of descriptor.keys) {
             descriptorByKey.set(key, descriptor);
         }
-        descriptors.push(descriptor);
     }
-    return { descriptors, descriptorByKey };
+    return { descriptors: normalized.questions, descriptorByKey };
 }
 
 export function validateStructuredQuestionDescriptors(
@@ -123,7 +66,7 @@ function validateAnswersAgainstQuestions(params: Readonly<{
             values.length === 0
             || (!descriptor.multiSelect && values.length !== 1)
             || values.some((value) => value.trim().length === 0)
-            || (!descriptor.allowsFreeform && values.some((value) => !descriptor.options.includes(value)))
+            || (!descriptor.allowsFreeform && values.some((value) => !descriptor.options.some((option) => option.answerValue === value)))
         ) {
             throw new PublicRpcHandlerError(params.errorCode);
         }
@@ -137,20 +80,13 @@ function validateAnswersAgainstQuestions(params: Readonly<{
 
 function decodeLegacyQuestion(params: Readonly<{
     raw: string;
-    question: StructuredQuestionLike;
+    question: StructuredQuestionDescriptor;
 }>): readonly string[] {
-    const options = Array.isArray(params.question.options)
-        ? params.question.options
-            .map((option) => resolveStructuredQuestionOptionAnswerValue(option))
-            .filter((option): option is string => option !== null)
-        : [];
-    if (new Set(options).size !== options.length || options.length > STRUCTURED_QUESTION_LIMITS.maxOptionsPerQuestion) {
-        throw new PublicRpcHandlerError(PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_LEGACY_INVALID);
-    }
+    const options = params.question.options.map((option) => option.answerValue);
 
     const candidates = new Map<string, readonly string[]>();
-    const allowsFreeform = Boolean(params.question.freeform) || options.length === 0;
-    const multiSelect = params.question.multiSelect === true || params.question.multiple === true;
+    const allowsFreeform = params.question.allowsFreeform;
+    const multiSelect = params.question.multiSelect;
 
     if (allowsFreeform) addCandidate(candidates, [params.raw]);
     if (!multiSelect) {
@@ -214,7 +150,7 @@ export function normalizeLegacyStructuredQuestionAnswers(params: Readonly<{
         if (!descriptor) {
             throw new PublicRpcHandlerError(PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_LEGACY_INVALID);
         }
-        normalized[key] = decodeLegacyQuestion({ raw, question: descriptor.question });
+        normalized[key] = decodeLegacyQuestion({ raw, question: descriptor });
     }
 
     const parsed = StructuredQuestionAnswersV1Schema.safeParse(normalized);

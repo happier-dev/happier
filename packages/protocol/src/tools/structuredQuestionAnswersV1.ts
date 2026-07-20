@@ -40,6 +40,161 @@ export function resolveStructuredQuestionOptionAnswerValue(option: unknown): str
     ?? readExactNonBlankString(candidate.label);
 }
 
+export type StructuredQuestionLike = Readonly<{
+  id?: unknown;
+  question?: unknown;
+  header?: unknown;
+  multiSelect?: unknown;
+  multiple?: unknown;
+  options?: unknown;
+  freeform?: unknown;
+}>;
+
+export type StructuredQuestionDescriptorOption = Readonly<{
+  label: string;
+  answerValue: string;
+  value?: string;
+  choice?: string;
+  description?: string;
+}>;
+
+export type StructuredQuestionDescriptor = Readonly<{
+  id?: string;
+  question?: string;
+  header?: string;
+  responseKey: string;
+  keys: readonly string[];
+  options: readonly StructuredQuestionDescriptorOption[];
+  multiSelect: boolean;
+  freeform?: Readonly<{ placeholder?: string; description?: string }>;
+  allowsFreeform: boolean;
+}>;
+
+export type NormalizeStructuredQuestionDescriptorsResult =
+  | Readonly<{ ok: true; questions: readonly StructuredQuestionDescriptor[] }>
+  | Readonly<{ ok: false }>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Canonical grammar and projection for published AskUserQuestion descriptors.
+ * Unknown provider fields deliberately remain outside this projection so the
+ * publication boundary can preserve them in its detached source snapshot.
+ */
+export function normalizeStructuredQuestionDescriptors(
+  input: unknown,
+): NormalizeStructuredQuestionDescriptorsResult {
+  try {
+    if (!Array.isArray(input) || input.length === 0 || input.length > STRUCTURED_QUESTION_LIMITS.maxQuestions) {
+      return { ok: false };
+    }
+
+    let totalStringLength = 0;
+    const readString = (value: unknown, optional = false): string | undefined => {
+      if (value === undefined && optional) return undefined;
+      if (typeof value !== 'string' || value.length > STRUCTURED_QUESTION_LIMITS.maxStringLength) {
+        throw new Error('invalid structured-question string');
+      }
+      totalStringLength += value.length;
+      if (totalStringLength > STRUCTURED_QUESTION_LIMITS.maxTotalStringLength) {
+        throw new Error('structured-question descriptors exceed bounds');
+      }
+      return value;
+    };
+    const readOptionalBoolean = (value: unknown): boolean | undefined => {
+      if (value === undefined) return undefined;
+      if (typeof value !== 'boolean') throw new Error('invalid structured-question boolean');
+      return value;
+    };
+
+    const seenKeys = new Set<string>();
+    const questions = input.map((rawQuestion): StructuredQuestionDescriptor => {
+      if (!isRecord(rawQuestion)) throw new Error('invalid structured question');
+      const id = readString(rawQuestion.id, true);
+      const question = readString(rawQuestion.question, true);
+      const header = readString(rawQuestion.header, true);
+      const responseKey = readExactNonBlankString(question) ?? readExactNonBlankString(header);
+      if (!responseKey) throw new Error('missing structured-question display/response key');
+
+      const keys = Object.freeze([...new Set([
+        readExactNonBlankString(id),
+        responseKey,
+      ].filter((key): key is string => key !== null))]);
+      for (const key of keys) {
+        if (seenKeys.has(key)) throw new Error('duplicate structured-question key');
+        seenKeys.add(key);
+      }
+
+      const rawOptions = rawQuestion.options === undefined ? [] : rawQuestion.options;
+      if (!Array.isArray(rawOptions) || rawOptions.length > STRUCTURED_QUESTION_LIMITS.maxOptionsPerQuestion) {
+        throw new Error('invalid structured-question options');
+      }
+      const seenOptionValues = new Set<string>();
+      const options = Object.freeze(rawOptions.map((rawOption): StructuredQuestionDescriptorOption => {
+        if (typeof rawOption === 'string') {
+          const label = readString(rawOption)!;
+          const answerValue = readExactNonBlankString(label);
+          if (!answerValue || seenOptionValues.has(answerValue)) throw new Error('invalid structured-question option');
+          seenOptionValues.add(answerValue);
+          return Object.freeze({ label, answerValue });
+        }
+        if (!isRecord(rawOption)) throw new Error('invalid structured-question option');
+        const value = readString(rawOption.value, true);
+        const choice = readString(rawOption.choice, true);
+        const label = readString(rawOption.label, true);
+        const description = readString(rawOption.description, true);
+        const answerValue = resolveStructuredQuestionOptionAnswerValue({ value, choice, label });
+        const displayLabel = readExactNonBlankString(label) ?? answerValue;
+        if (!answerValue || !displayLabel || seenOptionValues.has(answerValue)) {
+          throw new Error('invalid structured-question option');
+        }
+        seenOptionValues.add(answerValue);
+        return Object.freeze({
+          ...(value !== undefined ? { value } : {}),
+          ...(choice !== undefined ? { choice } : {}),
+          label: displayLabel,
+          ...(description !== undefined ? { description } : {}),
+          answerValue,
+        });
+      }));
+
+      let freeform: StructuredQuestionDescriptor['freeform'];
+      if (rawQuestion.freeform === true) {
+        freeform = Object.freeze({});
+      } else if (rawQuestion.freeform !== undefined && rawQuestion.freeform !== false && rawQuestion.freeform !== null) {
+        if (!isRecord(rawQuestion.freeform)) throw new Error('invalid structured-question freeform descriptor');
+        const placeholder = readString(rawQuestion.freeform.placeholder, true);
+        const description = readString(rawQuestion.freeform.description, true);
+        freeform = Object.freeze({
+          ...(placeholder !== undefined ? { placeholder } : {}),
+          ...(description !== undefined ? { description } : {}),
+        });
+      }
+
+      const multiSelectField = readOptionalBoolean(rawQuestion.multiSelect);
+      const multipleField = readOptionalBoolean(rawQuestion.multiple);
+      const multiSelect = multiSelectField === true || multipleField === true;
+      return Object.freeze({
+        ...(id !== undefined ? { id } : {}),
+        ...(question !== undefined ? { question } : {}),
+        ...(header !== undefined ? { header } : {}),
+        responseKey,
+        keys,
+        options,
+        multiSelect,
+        ...(freeform !== undefined ? { freeform } : {}),
+        allowsFreeform: freeform !== undefined || options.length === 0,
+      });
+    });
+
+    return { ok: true, questions: Object.freeze(questions) };
+  } catch {
+    return { ok: false };
+  }
+}
+
 export const StructuredQuestionAnswersV1Schema = z
   .unknown()
   .superRefine((input, ctx) => {

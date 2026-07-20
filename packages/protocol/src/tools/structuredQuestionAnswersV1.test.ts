@@ -4,6 +4,7 @@ import {
   StructuredQuestionAnswersV1Schema,
   buildLegacyStructuredQuestionAnswers,
   isAskUserQuestionToolName,
+  normalizeStructuredQuestionDescriptors,
   resolveStructuredQuestionOptionAnswerValue,
 } from './structuredQuestionAnswersV1.js';
 
@@ -56,5 +57,50 @@ describe('StructuredQuestionAnswersV1', () => {
     expect(buildLegacyStructuredQuestionAnswers(StructuredQuestionAnswersV1Schema.parse({ q: ['A, B', 'C'] }))).toBeNull();
     expect(buildLegacyStructuredQuestionAnswers(StructuredQuestionAnswersV1Schema.parse({ q: [' A'] }))).toBeNull();
     expect(buildLegacyStructuredQuestionAnswers(StructuredQuestionAnswersV1Schema.parse({ q: [''] }))).toBeNull();
+  });
+
+  it('normalizes the shared descriptor contract without losing provider wire values', () => {
+    expect(normalizeStructuredQuestionDescriptors([
+      {
+        id: 'provider-id',
+        header: 'Provider',
+        question: 'Choose?',
+        multiple: true,
+        options: [
+          { value: 'wire-a', label: 'Human A', description: 'First' },
+          { choice: 'wire-b', label: 'Human B' },
+        ],
+        freeform: { placeholder: 'Other', description: 'Type another value', providerExtra: true },
+        providerCorrelation: { opaque: true },
+      },
+    ])).toEqual({
+      ok: true,
+      questions: [{
+        id: 'provider-id',
+        header: 'Provider',
+        question: 'Choose?',
+        responseKey: 'Choose?',
+        keys: ['provider-id', 'Choose?'],
+        multiSelect: true,
+        options: [
+          { value: 'wire-a', label: 'Human A', description: 'First', answerValue: 'wire-a' },
+          { choice: 'wire-b', label: 'Human B', answerValue: 'wire-b' },
+        ],
+        freeform: { placeholder: 'Other', description: 'Type another value' },
+        allowsFreeform: true,
+      }],
+    });
+  });
+
+  it.each([
+    [{ id: 'id-only', options: [] }],
+    [{ question: 'Question?', options: [], freeform: 'yes' }],
+    [{ question: 'Question?', options: [], freeform: 1 }],
+    [{ question: 'Question?', options: [], multiSelect: 'yes' }],
+    [{ question: 'Question?', options: [], multiSelect: true, multiple: 'yes' }],
+    [{ question: 'Question?', options: [{ value: 'wire', label: 1 }] }],
+    [{ question: 'Question?', options: [{ label: 'A', description: 1 }] }],
+  ])('rejects malformed recognized descriptor fields: %j', (question) => {
+    expect(normalizeStructuredQuestionDescriptors([question])).toEqual({ ok: false });
   });
 });

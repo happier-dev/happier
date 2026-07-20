@@ -391,7 +391,7 @@ describe('PermissionRequestCoordinator', () => {
         store.publishRequest({
             requestId: 'agent-state-only',
             toolName: 'AskUserQuestion',
-            toolInput: { questions: [{ id: 'q1' }] },
+            toolInput: { questions: [{ id: 'q1', question: 'q1' }] },
             createdAt: 500,
             kind: 'user_action',
         });
