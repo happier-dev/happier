@@ -753,6 +753,12 @@ export function normalizeRawMessage(
                 return filterNormalizedEventRoleOutput(normalized, opts?.messageRole);
             }
             // Any other output payload should be surfaced as an opaque message rather than dropped.
+            // Name the payload type: agent CLIs keep adding record types, and an unnamed placeholder
+            // leaves nothing to grep for when one starts leaking into transcripts.
+            const unsupportedType = (raw.content.data as { type?: unknown }).type;
+            const unsupportedLabel = typeof unsupportedType === 'string' && unsupportedType.length > 0
+                ? `[Unsupported agent output: ${unsupportedType}]`
+                : '[Unsupported agent output]';
             const normalized = {
                 id,
                 ...(seq !== undefined ? { seq } : {}),
@@ -762,7 +768,7 @@ export function normalizeRawMessage(
                 isSidechain: false,
                 content: [{
                     type: 'text',
-                    text: '[Unsupported agent output]',
+                    text: unsupportedLabel,
                     uuid: id,
                     parentUUID: null,
                 }],

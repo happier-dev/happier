@@ -73,4 +73,29 @@ describe('readClaudeSessionJsonlMessages', () => {
     expect(messages.map((m) => m.uuid)).toEqual(['u2', 'u3']);
     expect((logger.debug as any).mock.calls.some((call: unknown[]) => String(call[0]).includes('Error processing message'))).toBe(false);
   });
+
+  it('drops Claude-internal state records that are not conversation content', async () => {
+    tmpRoot = await mkdtemp(join(tmpdir(), 'happier-claude-jsonl-'));
+    const sessionFilePath = join(tmpRoot, 'sess.jsonl');
+
+    const lines = [
+      JSON.stringify({ type: 'last-prompt', lastPrompt: 'hi', leafUuid: 'leaf-1', sessionId: 's1' }),
+      JSON.stringify({ type: 'mode', mode: 'default', sessionId: 's1' }),
+      JSON.stringify({ type: 'pr-link', url: 'https://example.test/pr/1', sessionId: 's1' }),
+      JSON.stringify({
+        type: 'attachment',
+        uuid: 'a1',
+        sessionId: 's1',
+        attachment: { type: 'hook_success', hookEvent: 'SessionStart' },
+      }),
+      JSON.stringify({ type: 'assistant', uuid: 'u1', message: {} }),
+    ];
+
+    await writeFile(sessionFilePath, `${lines.join('\n')}\n`, 'utf8');
+
+    const { readClaudeSessionJsonlMessages } = await import('./readClaudeSessionJsonlMessages');
+    const messages = await readClaudeSessionJsonlMessages({ sessionFilePath, logLabel: 'TEST' });
+
+    expect(messages.map((m) => m.type)).toEqual(['assistant']);
+  });
 });
