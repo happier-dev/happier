@@ -65,6 +65,9 @@ import {
 import {
   makeGrokAcpStubAuthCreateResumeScenario,
   makeGrokAcpStubCancelAndCapabilitiesScenario,
+  makeGrokAcpStubFreeformQuestionScenario,
+  makeGrokAcpStubMixedFreeformQuestionScenario,
+  makeGrokAcpStubModelsAndEffortScenario,
   makeGrokAcpStubStructuredQuestionScenario,
 } from './scenarios.grok';
 import { cleanupOutsideWorkspacePath, makeOutsideWorkspacePath } from '../harness/outsideWorkspacePath';
@@ -785,6 +788,12 @@ await server.connect(new StdioServerTransport());
 
   grok_acp_stub_structured_question: makeGrokAcpStubStructuredQuestionScenario,
 
+  grok_acp_stub_freeform_question: makeGrokAcpStubFreeformQuestionScenario,
+
+  grok_acp_stub_mixed_freeform_question: makeGrokAcpStubMixedFreeformQuestionScenario,
+
+  grok_acp_stub_models_and_effort: makeGrokAcpStubModelsAndEffortScenario,
+
   grok_acp_stub_cancel_and_capabilities: makeGrokAcpStubCancelAndCapabilitiesScenario,
 
   acp_probe_models: (provider) => {
@@ -994,7 +1003,7 @@ await server.connect(new StdioServerTransport());
     if (provider.protocol !== 'acp') {
       throw new Error(`acp_set_model_dynamic only supports ACP providers (got ${provider.protocol})`);
     }
-    if (!['opencode', 'kilo', 'auggie', 'codex', 'cursor'].includes(provider.id)) {
+    if (!['opencode', 'kilo', 'auggie', 'codex', 'cursor', 'grok_acp_stub'].includes(provider.id)) {
       throw new Error(`acp_set_model_dynamic requires dynamic model providers (got ${provider.id})`);
     }
 

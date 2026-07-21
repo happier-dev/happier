@@ -1,6 +1,7 @@
 import type { Metadata } from '@/api/types';
 import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { normalizeAcpConfigOptionChoices } from '@/agent/acp/configOptionChoiceNormalization';
+import { readNewestSessionModelsMetadataStateV1 } from '@happier-dev/agents';
 
 type NormalizedConfigOptionValue = string | number | boolean | null;
 
@@ -173,7 +174,7 @@ export function publishAcpSessionModelsState(params: Readonly<{
     params.session,
     (metadata) => {
       const previous = params.preservePreviousAvailableModels === true
-        ? metadata.acpSessionModelsV1
+        ? readNewestSessionModelsMetadataStateV1(metadata as unknown as Record<string, unknown>) as AcpSessionModelsState | null
         : null;
       const next = buildAcpSessionModelsStateFromPayload({
         provider: params.provider,
@@ -181,7 +182,7 @@ export function publishAcpSessionModelsState(params: Readonly<{
         previousAvailableModels: previous?.provider === params.provider ? previous.availableModels : undefined,
         requireAvailableModels: params.requireAvailableModels,
       });
-      return next ? { ...metadata, acpSessionModelsV1: next } : metadata;
+      return next ? { ...metadata, sessionModelsV1: next, acpSessionModelsV1: next } : metadata;
     },
     params.logPrefix,
     params.reason,

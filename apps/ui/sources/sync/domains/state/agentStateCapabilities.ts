@@ -11,3 +11,8 @@ export function getStructuredQuestionAnswersV1Supported(
     if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities)) return false;
     return (capabilities as Readonly<Record<string, unknown>>).structuredQuestionAnswersV1Supported === true;
 }
+
+export function getModelScopedConfigTombstonesV1Supported(capabilities: unknown): boolean {
+    if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities)) return false;
+    return (capabilities as Readonly<Record<string, unknown>>).modelScopedConfigTombstonesV1 === true;
+}

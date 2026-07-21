@@ -9,6 +9,7 @@ import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProv
 import { createGrokAcpAuthentication } from './auth';
 import { buildGrokExtensionHandlers } from './extensionHandlers';
 import { GROK_ACP_ARGS } from './launch';
+import { grokSessionModelAdapter } from './modelControls';
 import { grokTransport } from './transport';
 
 export interface GrokBackendOptions extends AgentFactoryOptions {
@@ -82,6 +83,7 @@ export function buildGrokAcpBackendOptions(options: GrokBackendOptions): AcpBack
     transportHandler: grokTransport,
     authentication: createGrokAcpAuthentication({ hasXaiApiKey: xaiApiKeyPresence.hasXaiApiKey }),
     extensionHandlers: buildGrokExtensionHandlers({ permissionHandler: options.permissionHandler }),
+    sessionModelAdapter: grokSessionModelAdapter,
   };
 }
 

@@ -53,7 +53,7 @@ describe('computeSessionConfigOptionControls', () => {
         expect(res?.[0]).toMatchObject({
             option: { id: 'telemetry', currentValue: 'false' },
             requestedValue: 'true',
-            effectiveValue: 'true',
+            effectiveValue: 'false',
             isPending: true,
         });
     });
@@ -119,7 +119,7 @@ describe('computeSessionConfigOptionControls', () => {
         const res = computeSessionConfigOptionControls({ agentId: 'opencode', metadata });
         expect(res?.[0]).toMatchObject({
             requestedValue: 'high',
-            effectiveValue: 'high',
+            effectiveValue: 'medium',
             isPending: true,
         });
     });
@@ -309,13 +309,13 @@ describe('computeSessionConfigOptionControls', () => {
             expect.objectContaining({
                 option: expect.objectContaining({ id: 'booleanFlag', currentValue: 'false' }),
                 requestedValue: 'true',
-                effectiveValue: 'true',
+                effectiveValue: 'false',
                 isPending: true,
             }),
             expect.objectContaining({
                 option: expect.objectContaining({ id: 'maxRetries', currentValue: '3' }),
                 requestedValue: '5',
-                effectiveValue: '5',
+                effectiveValue: '3',
                 isPending: true,
             }),
         ]);
@@ -337,7 +337,30 @@ describe('computeSessionConfigOptionControls', () => {
         });
 
         const res = computeSessionConfigOptionControls({ agentId: 'opencode', metadata });
-        expect(res?.[0]?.effectiveValue).toBe('true');
+        expect(res?.[0]?.effectiveValue).toBe('false');
+    });
+
+    it('uses newer valid legacy config state and commands over older canonical aliases', () => {
+        const metadata = createMetadata({
+            sessionConfigOptionsV1: {
+                v: 1, provider: 'opencode', updatedAt: 1,
+                configOptions: [{ id: 'telemetry', name: 'Telemetry', type: 'boolean', currentValue: 'false' }],
+            },
+            acpConfigOptionsV1: {
+                v: 1, provider: 'opencode', updatedAt: 2,
+                configOptions: [{ id: 'telemetry', name: 'Telemetry', type: 'boolean', currentValue: 'true' }],
+            },
+            sessionConfigOptionOverridesV1: {
+                v: 1, updatedAt: 3, overrides: { telemetry: { updatedAt: 3, value: 'false' } },
+            },
+            acpConfigOptionOverridesV1: {
+                v: 1, updatedAt: 4, overrides: { telemetry: { updatedAt: 4, value: 'true' } },
+            },
+        });
+        const res = computeSessionConfigOptionControls({ agentId: 'opencode', metadata });
+        expect(res?.[0]).toMatchObject({
+            option: { currentValue: 'true' }, requestedValue: 'true', effectiveValue: 'true', isPending: false,
+        });
     });
 });
 
@@ -356,17 +379,29 @@ describe('ultracode override of the reasoning effort control', () => {
         { id: 'ultracode', name: 'Ultracode', type: 'boolean', currentValue: 'false' },
     ];
 
-    it('marks the reasoning effort control disabled while ultracode is effectively on', () => {
+    it('keeps reasoning effort enabled while an ultracode request is pending provider confirmation', () => {
         const controls = computeSessionConfigOptionControlsForProvider({
             providerId: 'claude',
             configOptions,
             overrides: { ultracode: { value: 'true' } },
         });
         const effort = controls?.find((control) => control.option.id === 'reasoning_effort');
-        expect(effort?.disabled).toBe(true);
-        expect(effort?.disabledByOptionName).toBe('Ultracode');
+        expect(effort?.disabled).not.toBe(true);
+        expect(effort?.disabledByOptionName).toBeUndefined();
         const ultracode = controls?.find((control) => control.option.id === 'ultracode');
         expect(ultracode?.disabled).not.toBe(true);
+    });
+
+    it('disables reasoning effort after the provider confirms ultracode', () => {
+        const controls = computeSessionConfigOptionControlsForProvider({
+            providerId: 'claude',
+            configOptions: configOptions.map((option) => option.id === 'ultracode'
+                ? { ...option, currentValue: 'true' }
+                : option),
+        });
+        const effort = controls?.find((control) => control.option.id === 'reasoning_effort');
+        expect(effort?.disabled).toBe(true);
+        expect(effort?.disabledByOptionName).toBe('Ultracode');
     });
 
     it('keeps the reasoning effort control enabled while ultracode is off', () => {

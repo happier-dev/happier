@@ -8,6 +8,19 @@ vi.mock('@/text', async () => {
 import { getModelOptionsForAgentTypeOrPreflight } from './modelOptions';
 
 describe('modelOptions preflight', () => {
+    it('treats Grok non-freeform preflight models as authoritative', () => {
+        const out = getModelOptionsForAgentTypeOrPreflight({
+            agentType: 'grok',
+            preflight: {
+                availableModels: [{ id: 'grok-4.5', name: 'Grok 4.5' }],
+                supportsFreeform: false,
+            },
+        });
+
+        expect(out.map((option) => option.value)).toEqual(['default', 'grok-4.5']);
+        expect(out.some((option) => option.value === 'grok-build')).toBe(false);
+    });
+
     it('merges preflight models with canonical agent models instead of dropping catalog options', () => {
         const out = getModelOptionsForAgentTypeOrPreflight({
             agentType: 'claude',

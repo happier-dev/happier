@@ -1,4 +1,4 @@
-import { computeNextMetadataStringOverrideV1 } from '@happier-dev/agents';
+import { computeNextModelOverrideMetadataV1 } from '@happier-dev/agents';
 
 import type { Credentials } from '@/persistence';
 
@@ -9,18 +9,18 @@ export async function setSessionModel(params: Readonly<{
   idOrPrefix: string;
   modelId: string;
   updatedAt?: number;
+  retireModelScopedConfigOverrides: boolean;
 }>): ReturnType<typeof updateSessionMetadataForTarget> {
   const updatedAt = params.updatedAt ?? Date.now();
   return await updateSessionMetadataForTarget({
     credentials: params.credentials,
     idOrPrefix: params.idOrPrefix,
     updater: (metadata) =>
-      computeNextMetadataStringOverrideV1({
+      computeNextModelOverrideMetadataV1({
         metadata,
-        overrideKey: 'modelOverrideV1',
-        valueKey: 'modelId',
-        value: params.modelId,
+        modelId: params.modelId,
         updatedAt,
+        retireModelScopedConfigOverrides: params.retireModelScopedConfigOverrides,
       }),
   });
 }

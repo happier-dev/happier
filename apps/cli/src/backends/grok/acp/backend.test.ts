@@ -149,4 +149,52 @@ describe('Grok ACP backend options', () => {
       '_x.ai/mcp/servers_updated',
     ]);
   });
+
+  it('projects only well-formed per-model reasoning effort metadata', () => {
+    const adapter = buildGrokAcpBackendOptions({ cwd: root }).sessionModelAdapter;
+    expect(adapter).toBeDefined();
+
+    expect(adapter?.projectModelOptions?.({
+      rawModel: {
+        id: 'grok-4.5',
+        name: 'Grok 4.5',
+        meta: {
+          supportsReasoningEffort: true,
+          reasoningEffort: 'high',
+          reasoningEfforts: [
+            { id: 'fast', value: 'low', label: 'Fast' },
+            { id: 'deep', value: 'high', label: 'Deep', description: 'More reasoning' },
+            { value: 'max' },
+          ],
+        },
+      },
+      normalizedModelOptions: [],
+    })).toEqual([{
+      id: 'reasoning_effort',
+      name: 'Reasoning effort',
+      type: 'select',
+      currentValue: 'high',
+      options: [
+        { value: 'low', name: 'Fast' },
+        { value: 'high', name: 'Deep', description: 'More reasoning' },
+        { value: 'max', name: 'Max' },
+      ],
+    }]);
+
+    for (const meta of [
+      undefined,
+      { supportsReasoningEffort: true, reasoningEffort: 'high' },
+      { supportsReasoningEffort: false, reasoningEffort: 'high', reasoningEfforts: [{ value: 'high' }] },
+      { supportsReasoningEffort: true, reasoningEffort: 'high', reasoningEfforts: [{ value: 'low' }] },
+      { supportsReasoningEffort: true, reasoningEffort: 'high', reasoningEfforts: [{ value: 'high' }, 1] },
+      { supportsReasoningEffort: true, reasoningEffort: 'high', reasoningEfforts: [{ value: 'high' }, { value: 'high' }] },
+      { supportsReasoningEffort: true, reasoningEffort: ' high ', reasoningEfforts: [{ value: ' high ' }] },
+      { supportsReasoningEffort: true, reasoningEffort: 'high', reasoningEfforts: [{ value: 'high', label: ' ' }] },
+    ]) {
+      expect(adapter?.projectModelOptions?.({
+        rawModel: { id: 'grok-4.5', name: 'Grok 4.5', ...(meta ? { meta } : {}) },
+        normalizedModelOptions: [],
+      })).toEqual([]);
+    }
+  });
 });

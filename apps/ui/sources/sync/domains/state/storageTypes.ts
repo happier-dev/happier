@@ -347,6 +347,10 @@ const AgentStateObjectSchema = z.object({
      * This must be permissive for backward/forward compatibility across agent versions.
      */
     capabilities: z.object({
+        modelScopedConfigTombstonesV1: z.preprocess(
+            (value) => value === true ? true : undefined,
+            z.literal(true).optional(),
+        ),
         askUserQuestionAnswersInPermission: z.boolean().optional(),
         structuredQuestionAnswersV1Supported: z.preprocess(
             (value) => value === true ? true : undefined,

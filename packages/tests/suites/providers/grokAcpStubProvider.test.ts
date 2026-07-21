@@ -136,21 +136,59 @@ describe('Grok ACP deterministic boundary fake', () => {
     });
     expect(created).toMatchObject({
       sessionId: 'grok-stub-session-1',
-      models: { currentModelId: 'grok-build', availableModels: [{ id: 'grok-build' }] },
+      models: {
+        currentModelId: 'grok-4.5',
+        availableModels: [
+          { id: 'grok-4.1-fast' },
+          {
+            id: 'grok-4.5',
+            meta: {
+              supportsReasoningEffort: true,
+              reasoningEffort: 'medium',
+              reasoningEfforts: [
+                { id: 'low', value: 'low', label: 'Low' },
+                { id: 'medium', value: 'medium', label: 'Medium' },
+                { id: 'high', value: 'high', label: 'High' },
+              ],
+            },
+          },
+          { id: 'grok-switch-fails' },
+        ],
+      },
     });
     await expect(client.request('session/load', { sessionId: 'grok-stub-session-1' }))
       .resolves.toMatchObject({ sessionId: 'grok-stub-session-1' });
+    await expect(client.request('session/load', { sessionId: 'grok-fallback-session' }))
+      .resolves.toMatchObject({
+        sessionId: 'grok-fallback-session',
+        models: {
+          currentModelId: 'grok-build',
+          availableModels: [{ id: 'grok-build', name: 'Grok Build' }],
+        },
+      });
     await expect(client.request('session/set_model', {
       sessionId: 'grok-stub-session-1',
-      modelId: 'grok-build',
+      modelId: 'grok-4.1-fast',
+      _meta: { reasoningEffort: 'high' },
     })).resolves.toEqual({});
     await expect(client.request('session/set_model', {
-      modelId: 'grok-build',
+      sessionId: 'grok-stub-session-1',
+      modelId: 'grok-4.5',
+    })).resolves.toEqual({});
+    await expect(client.request('session/set_model', {
+      modelId: 'grok-4.1-fast',
+      _meta: { reasoningEffort: 'high' },
     })).rejects.toThrow('session');
     await expect(client.request('session/set_model', {
       sessionId: 'grok-stub-session-1',
       modelId: 'unknown',
+      _meta: { reasoningEffort: 'high' },
     })).rejects.toThrow('unknown fixture model');
+    await expect(client.request('session/set_model', {
+      sessionId: 'grok-stub-session-1',
+      modelId: 'grok-switch-fails',
+      _meta: { reasoningEffort: 'high' },
+    })).rejects.toThrow('fixture switch failed');
     await expect(client.request('session/set_mode', {
       sessionId: 'grok-stub-session-1',
       modeId: 'plan',
@@ -169,6 +207,9 @@ describe('Grok ACP deterministic boundary fake', () => {
       'authenticate',
       'session/new',
       'session/load',
+      'session/load',
+      'session/set_model',
+      'session/set_model',
       'session/set_model',
       'session/set_model',
       'session/set_model',
@@ -231,5 +272,36 @@ describe('Grok ACP deterministic boundary fake', () => {
       sessionId: String(created.sessionId),
       prompt: [{ type: 'text', text: 'GROK_STUB_STRUCTURED_QUESTION' }],
     })).rejects.toThrow('question response');
+  });
+
+  it('accepts freeform-only and mixed option/freeform responses using Other plus exact notes', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-grok-stub-'));
+    const typed = 'Keep commas, exactly\nand preserve the newline';
+    const freeformClient = await createClient(join(dir, 'freeform-requests.jsonl'), {
+      outcome: 'accepted',
+      answers: { 'Describe the change': ['Other'] },
+      annotations: { 'Describe the change': { notes: typed } },
+    });
+    await freeformClient.request('initialize');
+    await freeformClient.request('authenticate', { methodId: 'xai.api_key', _meta: { headless: true } });
+    const freeformSession = await freeformClient.request('session/new');
+    await expect(freeformClient.request('session/prompt', {
+      sessionId: String(freeformSession.sessionId),
+      prompt: [{ type: 'text', text: 'GROK_STUB_FREEFORM_QUESTION' }],
+    })).resolves.toEqual({ stopReason: 'end_turn' });
+
+    const mixed = 'A custom, multiline\nlocation';
+    const mixedClient = await createClient(join(dir, 'mixed-requests.jsonl'), {
+      outcome: 'accepted',
+      answers: { 'Where?': ['Washington, D.C.', 'Other'] },
+      annotations: { 'Where?': { notes: mixed } },
+    });
+    await mixedClient.request('initialize');
+    await mixedClient.request('authenticate', { methodId: 'xai.api_key', _meta: { headless: true } });
+    const mixedSession = await mixedClient.request('session/new');
+    await expect(mixedClient.request('session/prompt', {
+      sessionId: String(mixedSession.sessionId),
+      prompt: [{ type: 'text', text: 'GROK_STUB_MIXED_FREEFORM_QUESTION' }],
+    })).resolves.toEqual({ stopReason: 'end_turn' });
   });
 });

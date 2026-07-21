@@ -196,7 +196,6 @@ describe('Grok xAI question codec', () => {
 
   it.each([
     [[{ question: '', options: [{ label: 'A' }] }], 'question'],
-    [[{ question: 'Question?', options: [] }], 'option'],
     [[{ question: 'Same?', options: [{ label: 'A' }] }, { question: 'Same?', options: [{ label: 'B' }] }], 'question'],
     [[{ id: 'same', question: 'One?', options: [{ label: 'A' }] }, { id: 'same', question: 'Two?', options: [{ label: 'B' }] }], 'correlation'],
     [[{ id: 'Two?', question: 'One?', options: [{ label: 'A' }] }, { id: 'second', question: 'Two?', options: [{ label: 'B' }] }], 'correlation'],
@@ -206,6 +205,23 @@ describe('Grok xAI question codec', () => {
       directPayload({ questions }),
       context(),
     )).toThrow(expected);
+  });
+
+  it('publishes the canonical freeform affordance for an official zero-option question', () => {
+    const parsed = parseGrokAskUserQuestionRequest(directPayload({
+      questions: [{ id: 'details', question: 'Describe the change', options: [] }],
+    }), context());
+
+    expect(parsed.askUserQuestionInput.questions).toEqual([
+      {
+        id: 'details',
+        header: 'Question',
+        question: 'Describe the change',
+        multiSelect: false,
+        options: [],
+        freeform: { placeholder: 'Other' },
+      },
+    ]);
   });
 
   it('rejects payloads whose published question snapshot exceeds the shared size budget', () => {
@@ -228,7 +244,7 @@ describe('Grok xAI question codec', () => {
     }
   });
 
-  it('preserves comma-bearing labels and reserved record keys as exact array data', () => {
+  it('preserves comma-bearing labels, freeform notes, and reserved record keys as exact data', () => {
     const parsed = parseGrokAskUserQuestionRequest(directPayload({
       questions: [
         {
@@ -243,13 +259,16 @@ describe('Grok xAI question codec', () => {
       ],
     }), context());
     const answers = Object.create(null) as Record<string, readonly string[]>;
-    answers.__proto__ = ['Washington, D.C.', 'Remote'];
+    answers.__proto__ = ['Washington, D.C.', 'Typed\nvalue'];
 
     const response = buildGrokAskUserQuestionAcceptedResponse(parsed, answers);
     expect(response.outcome).toBe('accepted');
     expect(Object.getPrototypeOf(response.answers)).toBeNull();
     expect(Object.prototype.hasOwnProperty.call(response.answers, 'constructor')).toBe(true);
-    expect(response.answers.constructor).toEqual(['Washington, D.C.', 'Remote']);
+    expect(response.answers.constructor).toEqual(['Washington, D.C.', 'Other']);
+    expect(Object.getPrototypeOf(response.annotations)).toBeNull();
+    expect(Object.prototype.hasOwnProperty.call(response.annotations, 'constructor')).toBe(true);
+    expect(response.annotations?.constructor).toEqual({ notes: 'Typed\nvalue' });
   });
 
   it('maps approved canonical answers to exact xAI text keys and preview annotations', async () => {
@@ -280,6 +299,7 @@ describe('Grok xAI question codec', () => {
                 { label: 'Workspace', description: 'Use this workspace' },
                 { label: 'Session', description: 'Use this session' },
               ],
+              freeform: { placeholder: 'Other' },
             },
           ],
         },
@@ -290,6 +310,93 @@ describe('Grok xAI question codec', () => {
       answers: { 'Which scope?': ['Workspace'] },
       annotations: { 'Which scope?': { preview: 'Workspace preview' } },
     });
+  });
+
+  it('maps exact freeform text to the official Other answer and notes annotation', async () => {
+    const typed = '  Keep commas, exactly\nand preserve the newline  ';
+    const permissionHandler = new CapturingPermissionHandler({
+      decision: 'approved',
+      answers: { details: [typed] },
+    });
+    const result = await buildGrokExtensionHandlers({ permissionHandler }).requests![
+      'x.ai/ask_user_question'
+    ]!(directPayload({
+      questions: [{ id: 'details', question: 'Describe the change', options: [] }],
+    }), context());
+
+    expect(result).toEqual({
+      outcome: 'accepted',
+      answers: { 'Describe the change': ['Other'] },
+      annotations: { 'Describe the change': { notes: typed } },
+    });
+  });
+
+  it('preserves a known option and maps one mixed freeform answer without delimiter encoding', async () => {
+    const typed = 'A custom, multiline\nlocation';
+    const session = new BaseBackedSession();
+    const permissionHandler = new BaseBackedPermissionHandler(session as unknown as ApiSessionClient);
+    const result = buildGrokExtensionHandlers({ permissionHandler }).requests![
+      'x.ai/ask_user_question'
+    ]!(directPayload({
+      questions: [{
+        id: 'locations',
+        question: 'Where?',
+        multiSelect: true,
+        options: [{ label: 'Washington, D.C.' }, { label: 'Remote' }],
+      }],
+    }), context());
+    const rpc = session.rpcHandlerManager.handlers.get(
+      SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1,
+    );
+    await rpc!({
+      id: 'tool-1',
+      structuredAnswersV1: { locations: ['Washington, D.C.', typed] },
+    });
+
+    await expect(result).resolves.toEqual({
+      outcome: 'accepted',
+      answers: { 'Where?': ['Washington, D.C.', 'Other'] },
+      annotations: { 'Where?': { notes: typed } },
+    });
+  });
+
+  it('rejects multiple freeform values that cannot fit the singular xAI notes annotation', () => {
+    const parsed = parseGrokAskUserQuestionRequest(directPayload({
+      questions: [{
+        id: 'locations',
+        question: 'Where?',
+        multiSelect: true,
+        options: [{ label: 'Remote' }],
+      }],
+    }), context());
+
+    expect(() => buildGrokAskUserQuestionAcceptedResponse(parsed, {
+      locations: ['First typed value', 'Second typed value'],
+    })).toThrow('freeform');
+  });
+
+  it('keeps an exact known Other option without manufacturing freeform notes', () => {
+    const parsed = parseGrokAskUserQuestionRequest(directPayload({
+      questions: [{ id: 'choice', question: 'Choose?', options: [{ label: 'Other' }] }],
+    }), context());
+
+    expect(buildGrokAskUserQuestionAcceptedResponse(parsed, { choice: ['Other'] })).toEqual({
+      outcome: 'accepted',
+      answers: { 'Choose?': ['Other'] },
+    });
+  });
+
+  it('rejects a known Other option combined with unmatched freeform text', () => {
+    const parsed = parseGrokAskUserQuestionRequest(directPayload({
+      questions: [{
+        id: 'choice', question: 'Choose?', multiSelect: true,
+        options: [{ label: 'Other' }, { label: 'Remote' }],
+      }],
+    }), context());
+
+    expect(() => buildGrokAskUserQuestionAcceptedResponse(parsed, {
+      choice: ['Other', 'Typed custom value'],
+    })).toThrow(/ambiguous/i);
   });
 
   it.each(['denied', 'abort'] as const)('returns only cancelled for a %s decision', async (decision) => {
@@ -304,7 +411,7 @@ describe('Grok xAI question codec', () => {
   it.each([
     ['missing answer', {}],
     ['empty answer', { scope: [] }],
-    ['unknown option', { scope: ['Unknown'] }],
+    ['whitespace-only freeform answer', { scope: ['   '] }],
     ['extra answer key', { scope: ['Workspace'], unexpected: ['Session'] }],
     ['multiple answers for a single-select question', { scope: ['Workspace', 'Session'] }],
   ])('keeps the live waiter retryable when a modern %s is rejected before coordinator commit', async (_case, invalidAnswers) => {

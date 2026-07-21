@@ -59,6 +59,7 @@ describe('createAcpRuntime (configOptions)', () => {
       ],
     });
     expect(typeof metadata.acpConfigOptionsV1?.updatedAt).toBe('number');
+    expect(metadata.sessionConfigOptionsV1).toEqual(metadata.acpConfigOptionsV1);
   });
 
   it('clears ACP configOptions metadata when the provider reports an empty list', async () => {
@@ -101,6 +102,7 @@ describe('createAcpRuntime (configOptions)', () => {
     });
 
     expect(getMetadata().acpConfigOptionsV1?.configOptions).toEqual([]);
+    expect(getMetadata().sessionConfigOptionsV1).toEqual(getMetadata().acpConfigOptionsV1);
   });
 
   it('preserves boolean values before delegating setSessionConfigOption', async () => {

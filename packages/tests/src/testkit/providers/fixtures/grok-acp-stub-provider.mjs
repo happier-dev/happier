@@ -8,6 +8,7 @@ let buffer = '';
 let pendingPrompt = null;
 let nextSession = 1;
 const sessions = new Set();
+const sessionModels = new Map();
 let initialized = false;
 let authenticated = false;
 
@@ -100,7 +101,37 @@ function emitText(sessionId, text) {
   });
 }
 
-function sessionResult(sessionId) {
+const reasoningEffortMeta = (reasoningEffort, reasoningEfforts) => ({
+  supportsReasoningEffort: true,
+  reasoningEffort,
+  reasoningEfforts,
+});
+const effortOptions = (values) => values.map((value) => ({
+  id: value,
+  value,
+  label: value.charAt(0).toUpperCase() + value.slice(1),
+}));
+
+const advertisedModels = [
+  {
+    id: 'grok-4.1-fast',
+    name: 'Grok 4.1 Fast',
+    meta: reasoningEffortMeta('medium', effortOptions(['medium', 'high'])),
+  },
+  {
+    id: 'grok-4.5',
+    name: 'Grok 4.5',
+    meta: reasoningEffortMeta('medium', effortOptions(['low', 'medium', 'high'])),
+  },
+  {
+    id: 'grok-switch-fails',
+    name: 'Grok switch failure fixture',
+    meta: reasoningEffortMeta('high', effortOptions(['high'])),
+  },
+];
+
+function sessionResult(sessionId, fallback = false) {
+  const currentModelId = fallback ? 'grok-build' : (sessionModels.get(sessionId) ?? 'grok-4.5');
   return {
     sessionId,
     modes: {
@@ -108,32 +139,49 @@ function sessionResult(sessionId) {
       availableModes: [{ id: 'default', name: 'Default' }, { id: 'plan', name: 'Plan' }],
     },
     models: {
-      currentModelId: 'grok-build',
-      availableModels: [{ id: 'grok-build', name: 'Grok Build' }],
+      currentModelId,
+      availableModels: fallback
+        ? [{ id: 'grok-build', name: 'Grok Build' }]
+        : advertisedModels,
     },
   };
 }
 
-function startQuestion(id, sessionId, wrapped) {
-  const extensionRequestId = wrapped ? 'grok-stub-question-wrapped' : 'grok-stub-question';
-  pendingPrompt = { id, sessionId, kind: 'question', wrapped, extensionRequestId };
+function startQuestion(id, sessionId, wrapped, questionKind = 'options') {
+  const extensionRequestId = wrapped
+    ? 'grok-stub-question-wrapped'
+    : `grok-stub-question-${questionKind}`;
+  pendingPrompt = { id, sessionId, kind: 'question', wrapped, questionKind, extensionRequestId };
   const method = wrapped ? '_x.ai/ask_user_question' : 'x.ai/ask_user_question';
+  const questions = questionKind === 'freeform'
+    ? [{ id: 'details', question: 'Describe the change', options: [] }]
+    : questionKind === 'mixed'
+      ? [{
+          id: 'locations',
+          question: 'Where?',
+          multiSelect: true,
+          options: [
+            { id: 'dc', label: 'Washington, D.C.' },
+            { id: 'remote', label: 'Remote' },
+          ],
+        }]
+      : [
+          {
+            id: 'location',
+            question: 'Where should this run?',
+            multiSelect: true,
+            options: [
+              { id: 'dc', label: 'Washington, D.C.', description: 'Comma-bearing option' },
+              { id: 'reserved', label: '__proto__', preview: 'Reserved-key label' },
+              { id: 'remote', label: 'Remote' },
+            ],
+          },
+        ];
   const params = {
     sessionId,
     toolCallId: extensionRequestId,
     mode: 'default',
-    questions: [
-      {
-        id: 'location',
-        question: 'Where should this run?',
-        multiSelect: true,
-        options: [
-          { id: 'dc', label: 'Washington, D.C.', description: 'Comma-bearing option' },
-          { id: 'reserved', label: '__proto__', preview: 'Reserved-key label' },
-          { id: 'remote', label: 'Remote' },
-        ],
-      },
-    ],
+    questions,
   };
   send({
     jsonrpc: '2.0',
@@ -145,23 +193,41 @@ function startQuestion(id, sessionId, wrapped) {
 
 function handleResponse(message) {
   if (pendingPrompt?.kind !== 'question' || message.id !== pendingPrompt.extensionRequestId) return;
-  const { id, sessionId, wrapped } = pendingPrompt;
+  const { id, sessionId, wrapped, questionKind } = pendingPrompt;
   pendingPrompt = null;
   const result = message.result;
   const answers = result && typeof result === 'object' ? result.answers : null;
+  const expectedQuestion = questionKind === 'freeform'
+    ? 'Describe the change'
+    : questionKind === 'mixed'
+      ? 'Where?'
+      : 'Where should this run?';
   const selected = answers && typeof answers === 'object'
-    && Object.prototype.hasOwnProperty.call(answers, 'Where should this run?')
-    ? answers['Where should this run?']
+    && Object.prototype.hasOwnProperty.call(answers, expectedQuestion)
+    ? answers[expectedQuestion]
     : null;
+  const notes = result?.annotations?.[expectedQuestion]?.notes;
+  const exactAnswer = questionKind === 'freeform'
+    ? Array.isArray(selected)
+      && selected.length === 1
+      && selected[0] === 'Other'
+      && notes === 'Keep commas, exactly\nand preserve the newline'
+    : questionKind === 'mixed'
+      ? Array.isArray(selected)
+        && selected.length === 2
+        && selected[0] === 'Washington, D.C.'
+        && selected[1] === 'Other'
+        && notes === 'A custom, multiline\nlocation'
+      : Array.isArray(selected)
+        && selected.length === 2
+        && selected[0] === 'Washington, D.C.'
+        && selected[1] === '__proto__';
   if (result?.outcome !== 'accepted'
     || !answers
     || typeof answers !== 'object'
     || Array.isArray(answers)
     || Object.keys(answers).length !== 1
-    || !Array.isArray(selected)
-    || selected.length !== 2
-    || selected[0] !== 'Washington, D.C.'
-    || selected[1] !== '__proto__') {
+    || !exactAnswer) {
     fail(id, 'grok stub: question response must preserve the exact accepted answer arrays');
     return;
   }
@@ -211,6 +277,7 @@ function handleRequest(message) {
     if (!requireAuthenticated(id)) return;
     const sessionId = `grok-stub-session-${nextSession++}`;
     sessions.add(sessionId);
+    sessionModels.set(sessionId, 'grok-4.5');
     ok(id, sessionResult(sessionId));
     return;
   }
@@ -223,7 +290,8 @@ function handleRequest(message) {
       return;
     }
     sessions.add(sessionId);
-    ok(id, sessionResult(sessionId));
+    sessionModels.set(sessionId, sessionId === 'grok-fallback-session' ? 'grok-build' : 'grok-4.5');
+    ok(id, sessionResult(sessionId, sessionId === 'grok-fallback-session'));
     return;
   }
 
@@ -237,6 +305,14 @@ function handleRequest(message) {
     const text = promptText(params?.prompt);
     if (text.includes('GROK_STUB_STRUCTURED_QUESTION_WRAPPED')) {
       startQuestion(id, sessionId, true);
+      return;
+    }
+    if (text.includes('GROK_STUB_FREEFORM_QUESTION')) {
+      startQuestion(id, sessionId, false, 'freeform');
+      return;
+    }
+    if (text.includes('GROK_STUB_MIXED_FREEFORM_QUESTION')) {
+      startQuestion(id, sessionId, false, 'mixed');
       return;
     }
     if (text.includes('GROK_STUB_STRUCTURED_QUESTION')) {
@@ -266,10 +342,22 @@ function handleRequest(message) {
 
   if (method === 'session/set_model' && id != null) {
     if (!requireSession(id, params?.sessionId)) return;
-    if (params?.modelId !== 'grok-build') {
+    const model = advertisedModels.find((candidate) => candidate.id === params?.modelId);
+    if (!model) {
       send({ jsonrpc: '2.0', id, error: { code: -32602, message: 'unknown fixture model' } });
       return;
     }
+    const effort = params?._meta?.reasoningEffort;
+    const allowedEfforts = model.meta.reasoningEfforts;
+    if (effort !== undefined && !allowedEfforts.some((option) => option.value === effort)) {
+      send({ jsonrpc: '2.0', id, error: { code: -32602, message: 'fixture reasoning effort mismatch' } });
+      return;
+    }
+    if (params.modelId === 'grok-switch-fails') {
+      send({ jsonrpc: '2.0', id, error: { code: -32002, message: 'fixture switch failed' } });
+      return;
+    }
+    sessionModels.set(params.sessionId, params.modelId);
     ok(id, {});
     return;
   }

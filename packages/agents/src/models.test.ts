@@ -131,15 +131,13 @@ describe('agent model config', () => {
     expect(codexModels.map((model) => model.id)).toContain('gpt-5.4');
   });
 
-  it('uses the observed Grok current model only as a non-switchable fallback', () => {
+  it('uses provider-advertised Grok models with grok-build as the non-freeform fallback', () => {
     const grok = getAgentModelConfig('grok');
     const grokModels = getAgentStaticModels('grok');
 
-    // Current/floor initialize payloads report the current `grok-build` id while advertising no
-    // selectable model list. Do not infer freeform or live switching from the current id.
-    expect(grok.supportsSelection).toBe(false);
+    expect(grok.supportsSelection).toBe(true);
     expect(grok.supportsFreeform).toBe(false);
-    expect(grok.acpApplyBehavior).toBeUndefined();
+    expect(grok.acpApplyBehavior).toBe('set_model');
     expect(grok.acpModelConfigOptionId).toBeUndefined();
     expect(grokModels.map((model) => model.id)).toEqual(['grok-build']);
     expect(grok.allowedModes).toEqual(['grok-build']);
@@ -147,7 +145,7 @@ describe('agent model config', () => {
     expect(grokModels[0]).toMatchObject({
       id: 'grok-build',
       name: 'Grok Build',
-      description: 'Current Grok Build model (selection is not advertised by the CLI).',
+      description: 'Fallback Grok Build model when the provider does not advertise selectable models.',
     });
   });
 

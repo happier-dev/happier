@@ -100,6 +100,23 @@ import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 import type { AcpTurnOutcome } from './backend/turn/_types';
 import { mapStopReasonToAcpTurnOutcome, readPromptStopReason } from './backend/turn/acpTurnCompletion';
 import { abortPendingAcpPermissionRequests } from './backend/permissions/acpPermissionFinalization';
+import { SessionControlApplyError } from '@/agent/runtime/sessionControlApplyError';
+
+function isAcpJsonRpcRejection(error: unknown): boolean {
+  if (error instanceof RequestError) return true;
+  if (!error || typeof error !== 'object' || Array.isArray(error)) return false;
+  const record = error as Record<string, unknown>;
+  return typeof record.code === 'number' && Number.isFinite(record.code) && typeof record.message === 'string';
+}
+
+async function applyAcpSessionControl<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (isAcpJsonRpcRejection(error)) throw SessionControlApplyError.definitive(error);
+    throw error;
+  }
+}
 
 function makeAbortError(message: string): Error {
   const err = new Error(message);
@@ -302,6 +319,21 @@ export type SessionModelState = {
   currentModelId: string;
   availableModels: SessionModel[];
 };
+
+export type AcpSessionModelAdapter = Readonly<{
+  projectModelOptions?: (params: Readonly<{
+    rawModel: Readonly<Record<string, unknown>>;
+    normalizedModelOptions: ReadonlyArray<SessionConfigOption>;
+  }>) => ReadonlyArray<SessionConfigOption>;
+  resolveConfigOptionModelUpdate?: (params: Readonly<{
+    configId: string;
+    value: SessionConfigOptionValueId;
+    modelState: Readonly<SessionModelState> | null;
+  }>) => Readonly<{
+    modelId: string;
+    requestMeta?: Readonly<Record<string, unknown>>;
+  }> | undefined;
+}>;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -614,6 +646,9 @@ export interface AcpBackendOptions {
 
   /** Provider-owned handlers for non-standard ACP extension requests/notifications. */
   extensionHandlers?: AcpExtensionHandlers;
+
+  /** Provider-owned projection/application for model metadata not standardized by ACP. */
+  sessionModelAdapter?: AcpSessionModelAdapter;
 }
 
 /**
@@ -2280,12 +2315,16 @@ export class AcpBackend implements AgentBackend {
         const description = getString(model, 'description');
         const modelOptionsCandidate = model['modelOptions'] ?? model['model_options'];
         const modelOptionsRaw: unknown[] | null = Array.isArray(modelOptionsCandidate) ? modelOptionsCandidate : null;
-        const modelOptions = modelOptionsRaw ? normalizeSessionConfigOptions(modelOptionsRaw) : null;
+        const normalizedModelOptions = modelOptionsRaw ? normalizeSessionConfigOptions(modelOptionsRaw) : [];
+        const modelOptions = this.options.sessionModelAdapter?.projectModelOptions?.({
+          rawModel: model,
+          normalizedModelOptions,
+        }) ?? normalizedModelOptions;
         return {
           id,
           name,
           ...(description ? { description } : {}),
-          ...(modelOptions && modelOptions.length > 0 ? { modelOptions } : {}),
+          ...(modelOptions.length > 0 ? { modelOptions: [...modelOptions] } : {}),
         };
       })
       .filter((model): model is SessionModel => Boolean(model));
@@ -2339,6 +2378,44 @@ export class AcpBackend implements AgentBackend {
       throw new Error('Config value is required');
     }
 
+    let modelUpdate: ReturnType<NonNullable<AcpSessionModelAdapter['resolveConfigOptionModelUpdate']>>;
+    try {
+      modelUpdate = this.options.sessionModelAdapter?.resolveConfigOptionModelUpdate?.({
+        configId: normalizedConfigId,
+        value: normalizedValueId,
+        modelState: this.sessionModelState,
+      });
+    } catch (error) {
+      // Provider adapter validation is local and deterministic for this exact command.
+      throw SessionControlApplyError.definitive(error);
+    }
+    if (modelUpdate) {
+      await this.setSessionModel(
+        normalizedSessionId,
+        modelUpdate.modelId,
+        modelUpdate.requestMeta,
+      );
+      if (this.sessionModelState) {
+        this.sessionModelState = {
+          ...this.sessionModelState,
+          availableModels: this.sessionModelState.availableModels.map((model) =>
+            model.id === modelUpdate.modelId && model.modelOptions
+              ? {
+                  ...model,
+                  modelOptions: model.modelOptions.map((option) =>
+                    option.id === normalizedConfigId
+                      ? { ...option, currentValue: normalizedValueId }
+                      : option
+                  ),
+                }
+              : model
+          ),
+        };
+        this.emit({ type: 'event', name: 'session_models_state', payload: this.sessionModelState });
+      }
+      return;
+    }
+
     const connectionAny = this.connection as any;
     if (typeof connectionAny.setSessionConfigOption !== 'function') {
       throw new Error('ACP SDK does not support session/set_config_option');
@@ -2351,7 +2428,9 @@ export class AcpBackend implements AgentBackend {
       ...(typeof normalizedValueId === 'boolean' ? { type: 'boolean' } : {}),
     };
 
-    const response = await connectionAny.setSessionConfigOption(request);
+    const response = await applyAcpSessionControl<{ configOptions?: unknown }>(
+      () => connectionAny.setSessionConfigOption(request),
+    );
 
     const configOptionsCandidate = response?.configOptions;
     const configOptionsRaw = Array.isArray(configOptionsCandidate) ? configOptionsCandidate : null;
@@ -3068,7 +3147,7 @@ export class AcpBackend implements AgentBackend {
     }
 
     const request: SetSessionModeRequest = { sessionId: normalizedSessionId, modeId: normalizedModeId };
-    await this.connection.setSessionMode(request);
+    await applyAcpSessionControl(() => this.connection!.setSessionMode(request));
 
     if (this.sessionModeState) {
       this.sessionModeState = { ...this.sessionModeState, currentModeId: normalizedModeId };
@@ -3077,7 +3156,11 @@ export class AcpBackend implements AgentBackend {
     this.emit({ type: 'event', name: 'current_mode_update', payload: { currentModeId: normalizedModeId } });
   }
 
-  async setSessionModel(sessionId: SessionId, modelId: string): Promise<void> {
+  async setSessionModel(
+    sessionId: SessionId,
+    modelId: string,
+    requestMeta?: Readonly<Record<string, unknown>>,
+  ): Promise<void> {
     if (this.disposed) {
       throw new Error('Backend has been disposed');
     }
@@ -3107,7 +3190,11 @@ export class AcpBackend implements AgentBackend {
       throw new Error('ACP SDK does not support session/set_model');
     }
 
-    await setModel({ sessionId: normalizedSessionId, modelId: normalizedModelId });
+    await applyAcpSessionControl(() => setModel({
+      sessionId: normalizedSessionId,
+      modelId: normalizedModelId,
+      ...(requestMeta && Object.keys(requestMeta).length > 0 ? { _meta: requestMeta } : {}),
+    }));
 
     if (this.sessionModelState) {
       this.sessionModelState = { ...this.sessionModelState, currentModelId: normalizedModelId };

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { buildBackendTargetKey } from '@happier-dev/protocol';
 
-import { runStandardAcpProvider, type StandardAcpProviderConfig, type StandardAcpProviderRunOptions } from './runStandardAcpProvider';
+import { reportSessionControlTerminalFailure, runStandardAcpProvider, type StandardAcpProviderConfig, type StandardAcpProviderRunOptions } from './runStandardAcpProvider';
 
 function createHarness() {
   let defaultReadyCalls = 0;
@@ -228,6 +228,39 @@ function createHarness() {
 }
 
 describe('runStandardAcpProvider', () => {
+  it('persists terminal model/effort failures through the released-compatible provider message channel', () => {
+    const sendAgentMessage = vi.fn();
+    const addMessage = vi.fn();
+    const formatError = vi.fn(() => 'Error: sanitized');
+
+    reportSessionControlTerminalFailure({
+      failure: { kind: 'model', requested: 'model-b', error: new Error('secret raw') },
+      provider: 'qwen',
+      session: { sendAgentMessage } as any,
+      messageBuffer: { addMessage } as any,
+      formatError,
+    });
+    reportSessionControlTerminalFailure({
+      failure: { kind: 'config', configId: 'reasoning_effort', requested: 'high', error: new Error('raw') },
+      provider: 'qwen',
+      session: { sendAgentMessage } as any,
+      messageBuffer: { addMessage } as any,
+      formatError,
+    });
+    reportSessionControlTerminalFailure({
+      failure: { kind: 'config', configId: 'provider_private', requested: 'x', error: new Error('raw') },
+      provider: 'qwen',
+      session: { sendAgentMessage } as any,
+      messageBuffer: { addMessage } as any,
+      formatError,
+    });
+
+    expect(sendAgentMessage).toHaveBeenCalledTimes(3);
+    expect(sendAgentMessage).toHaveBeenNthCalledWith(1, 'qwen', { type: 'message', message: 'Error: sanitized' });
+    expect(sendAgentMessage).toHaveBeenNthCalledWith(2, 'qwen', { type: 'message', message: 'Error: sanitized' });
+    expect(sendAgentMessage).toHaveBeenNthCalledWith(3, 'qwen', { type: 'message', message: 'Error: sanitized' });
+    expect(formatError).toHaveBeenCalledTimes(3);
+  });
   it('does not emit idle keepAlive heartbeats at the thinking cadence', async () => {
     vi.useFakeTimers();
     const harness = createHarness();
@@ -791,6 +824,89 @@ describe('runStandardAcpProvider', () => {
       session: expect.objectContaining({ sessionId: 'session-2' }),
     });
     expect(callOrder).toEqual(['before-notify', 'hook:start', 'hook:end', 'after-notify']);
+  });
+
+  it('rebinds runtime override reads, writes, and capability publication to the swapped session', async () => {
+    const harness = createHarness();
+    let notifySessionSwap: ((session: any) => void | Promise<void>) | null = null;
+    const swappedUpdateAgentState = vi.fn((updater: (state: any) => any) => {
+      swappedSession.agentState = updater(swappedSession.agentState);
+    });
+    const swappedSession: any = {
+      ...harness.session,
+      sessionId: 'session-real',
+      agentState: { capabilities: { inFlightSteer: true } },
+      getMetadataSnapshot: () => ({
+        path: '/tmp/workspace',
+        permissionMode: 'default',
+        modelOverrideV1: { v: 1, updatedAt: 40, modelId: 'model-real' },
+      }),
+      updateAgentState: swappedUpdateAgentState,
+      updateMetadata: vi.fn(async (updater: (metadata: any) => any) => {
+        updater(swappedSession.getMetadataSnapshot());
+      }),
+    };
+    harness.deps.initializeBackendRunSessionFn = async ({ onSessionSwap }: any) => {
+      notifySessionSwap = onSessionSwap;
+      return {
+        session: harness.session,
+        reconnectionHandle: null,
+        reportedSessionId: 'session-1',
+        attachedToExistingSession: false,
+      };
+    };
+    harness.deps.runPermissionModePromptLoopFn = async (params: any) => {
+      const overrideSync = params.createOverrideSynchronizer(() => true);
+      expect(notifySessionSwap).toBeTypeOf('function');
+      await notifySessionSwap?.(swappedSession);
+      overrideSync.syncFromMetadata();
+      await overrideSync.flushPendingAfterStart();
+    };
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+
+    expect(harness.runtime.setSessionModel).toHaveBeenCalledWith('model-real');
+    expect(swappedUpdateAgentState).toHaveBeenCalledTimes(1);
+    expect(swappedSession.agentState.capabilities).toEqual({
+      inFlightSteer: true,
+      modelScopedConfigTombstonesV1: true,
+    });
+  });
+
+  it('runs the provider session-swap hook when override capability publication fails', async () => {
+    const harness = createHarness();
+    let notifySessionSwap: ((session: any) => void | Promise<void>) | null = null;
+    const publicationError = new Error('capability publication failed');
+    const swappedUpdateAgentState = vi.fn(async () => {
+      throw publicationError;
+    });
+    const swappedSession: any = {
+      ...harness.session,
+      sessionId: 'session-real',
+      updateAgentState: swappedUpdateAgentState,
+    };
+    const onSessionSwap = vi.fn(async () => undefined);
+    harness.config.onSessionSwap = onSessionSwap;
+    harness.deps.initializeBackendRunSessionFn = async ({ onSessionSwap }: any) => {
+      notifySessionSwap = onSessionSwap;
+      return {
+        session: harness.session,
+        reconnectionHandle: null,
+        reportedSessionId: 'session-1',
+        attachedToExistingSession: false,
+      };
+    };
+    harness.deps.runPermissionModePromptLoopFn = async (params: any) => {
+      params.createOverrideSynchronizer(() => true);
+      expect(notifySessionSwap).toBeTypeOf('function');
+      await expect(notifySessionSwap?.(swappedSession)).rejects.toBe(publicationError);
+    };
+
+    await runStandardAcpProvider(harness.opts, harness.config, harness.deps);
+
+    expect(swappedUpdateAgentState).toHaveBeenCalledTimes(1);
+    expect(onSessionSwap).toHaveBeenCalledTimes(1);
+    expect(onSessionSwap).toHaveBeenCalledWith({ session: swappedSession });
   });
 
   it('runs provider-specific dispose hooks during cleanup', async () => {

@@ -3,6 +3,7 @@ import { resolveMetadataStringOverrideV1 } from '@happier-dev/agents';
 
 import type { SessionComposerNonSteerablePayloadReason } from '@/agents/registry/registryUiBehavior';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { readSessionConfigOptionOverridesState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
 
 const CLAUDE_NON_STEERABLE_META_KEYS = new Set([
     'model',
@@ -60,9 +61,7 @@ function hasFreshModelOverride(session: Session | null | undefined): boolean {
 }
 
 function readMetadataConfigOptionOverrides(session: Session | null | undefined): AcpConfigOptionOverridesV1 | null {
-    const raw = session?.metadata?.acpConfigOptionOverridesV1 ?? session?.metadata?.sessionConfigOptionOverridesV1 ?? null;
-    if (!raw || typeof raw !== 'object') return null;
-    return raw as AcpConfigOptionOverridesV1;
+    return readSessionConfigOptionOverridesState(session?.metadata ?? null);
 }
 
 function hasFreshConfigOptionOverride(

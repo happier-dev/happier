@@ -2,9 +2,12 @@ import { parsePermissionIntentAlias } from '../permissions/index.js';
 import { computeMonotonicUpdatedAt } from './monotonic.js';
 import {
   getMetadataKeysForAlias,
-  LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
   SESSION_CONFIG_OPTION_OVERRIDES_KEY,
 } from './metadataKeys.js';
+import {
+  readNewestSessionConfigOptionOverridesMetadataStateV1,
+  readNewestSessionModelsMetadataStateV1,
+} from './metadata.js';
 
 function asFiniteNumber(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
@@ -106,11 +109,10 @@ export function computeNextMetadataConfigOptionOverrideV1(params: Readonly<{
   const configId = normalizeConfigOptionId(params.configId);
   if (!configId) return params.metadata;
   const valueId = normalizeConfigOptionValueId(params.value);
-  if (!valueId) return params.metadata;
+  const isClear = params.value === null;
+  if (!valueId && !isClear) return params.metadata;
 
-  const prevRoot =
-    (params.metadata[SESSION_CONFIG_OPTION_OVERRIDES_KEY] as Record<string, unknown> | null | undefined) ??
-    (params.metadata[LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY] as Record<string, unknown> | null | undefined);
+  const prevRoot = readNewestSessionConfigOptionOverridesMetadataStateV1(params.metadata);
   const prevUpdatedAt = prevRoot ? asFiniteNumber(prevRoot.updatedAt) : 0;
 
   const prevOverridesRaw = prevRoot?.overrides;
@@ -124,7 +126,7 @@ export function computeNextMetadataConfigOptionOverrideV1(params: Readonly<{
   const prevEntryValueRaw = prevEntryRaw ? prevEntryRaw.value : undefined;
 
   const desiredUpdatedAt = asFiniteNumber(params.updatedAt);
-  const desiredValue = valueId;
+  const desiredValue = isClear ? null : valueId;
 
   const nextEntryUpdatedAt = computeMonotonicUpdatedAt({
     previousUpdatedAt: prevEntryUpdatedAt,
@@ -153,4 +155,64 @@ export function computeNextMetadataConfigOptionOverrideV1(params: Readonly<{
     nextMetadata[rootKey] = nextRoot;
   }
   return nextMetadata;
+}
+
+/**
+ * Publishes a model command and atomically retires config commands owned by the
+ * provider-confirmed previous model. A strictly newer config command is preserved.
+ */
+export function computeNextModelOverrideMetadataV1(params: Readonly<{
+  metadata: Record<string, unknown>;
+  modelId: string;
+  updatedAt: number;
+  retireModelScopedConfigOverrides?: boolean;
+}>): Record<string, unknown> {
+  let next = computeNextMetadataStringOverrideV1({
+    metadata: params.metadata,
+    overrideKey: 'modelOverrideV1',
+    valueKey: 'modelId',
+    value: params.modelId,
+    updatedAt: params.updatedAt,
+  });
+  const emittedModelUpdatedAt = asFiniteNumber(
+    (next.modelOverrideV1 as Record<string, unknown> | null | undefined)?.updatedAt,
+  );
+
+  if (params.retireModelScopedConfigOverrides !== true) return next;
+
+  const rawState = readNewestSessionModelsMetadataStateV1(params.metadata);
+  const currentModelId = asTrimmedString(rawState?.currentModelId);
+  if (!currentModelId || currentModelId === asTrimmedString(params.modelId)) return next;
+
+  const availableModels = Array.isArray(rawState?.availableModels) ? rawState.availableModels : [];
+  const previousModel = availableModels.find((candidate) => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return false;
+    return asTrimmedString((candidate as Record<string, unknown>).id) === currentModelId;
+  }) as Record<string, unknown> | undefined;
+  const modelOptions = Array.isArray(previousModel?.modelOptions) ? previousModel.modelOptions : [];
+  const optionIds = new Set(modelOptions.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return [];
+    const id = asTrimmedString((candidate as Record<string, unknown>).id);
+    return id ? [id] : [];
+  }));
+
+  for (const configId of optionIds) {
+    const root = readNewestSessionConfigOptionOverridesMetadataStateV1(next);
+    const overrides = root?.overrides && typeof root.overrides === 'object' && !Array.isArray(root.overrides)
+      ? root.overrides as Record<string, unknown>
+      : {};
+    const entry = overrides[configId];
+    const entryRecord = entry && typeof entry === 'object' && !Array.isArray(entry)
+      ? entry as Record<string, unknown>
+      : null;
+    const entryUpdatedAt = entryRecord ? asFiniteNumber(entryRecord.updatedAt) : 0;
+    if (entryUpdatedAt > emittedModelUpdatedAt) continue;
+    next = computeNextMetadataConfigOptionOverrideV1({
+      metadata: next,
+      configId,
+      value: null,
+      updatedAt: Math.max(emittedModelUpdatedAt + 1, entryUpdatedAt + 1),
+    });
+  }
+  return next;
 }

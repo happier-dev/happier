@@ -158,6 +158,7 @@ describe('createAcpRuntime (in-flight steer)', () => {
       inFlightSteerSupported: true,
       inFlightSteerAvailable: false,
     });
+    expect(agentState.capabilities.modelScopedConfigTombstonesV1).toBeUndefined();
 
     runtime.beginTurn();
     expect(agentState.capabilities).toMatchObject({

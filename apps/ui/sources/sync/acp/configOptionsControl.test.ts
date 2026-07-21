@@ -53,7 +53,7 @@ describe('computeAcpConfigOptionControls', () => {
         expect(res?.[0]).toMatchObject({
             option: { id: 'telemetry', currentValue: 'false' },
             requestedValue: 'true',
-            effectiveValue: 'true',
+            effectiveValue: 'false',
             isPending: true,
         });
     });
@@ -119,7 +119,7 @@ describe('computeAcpConfigOptionControls', () => {
         const res = computeAcpConfigOptionControls({ agentId: 'opencode', metadata });
         expect(res?.[0]).toMatchObject({
             requestedValue: 'high',
-            effectiveValue: 'high',
+            effectiveValue: 'medium',
             isPending: true,
         });
     });
@@ -309,13 +309,13 @@ describe('computeAcpConfigOptionControls', () => {
             expect.objectContaining({
                 option: expect.objectContaining({ id: 'booleanFlag', currentValue: 'false' }),
                 requestedValue: 'true',
-                effectiveValue: 'true',
+                effectiveValue: 'false',
                 isPending: true,
             }),
             expect.objectContaining({
                 option: expect.objectContaining({ id: 'maxRetries', currentValue: '3' }),
                 requestedValue: '5',
-                effectiveValue: '5',
+                effectiveValue: '3',
                 isPending: true,
             }),
         ]);
@@ -337,7 +337,7 @@ describe('computeAcpConfigOptionControls', () => {
         });
 
         const res = computeAcpConfigOptionControls({ agentId: 'opencode', metadata });
-        expect(res?.[0]?.effectiveValue).toBe('true');
+        expect(res?.[0]?.effectiveValue).toBe('false');
     });
 });
 
@@ -356,17 +356,29 @@ describe('ultracode override of the reasoning effort control', () => {
         { id: 'ultracode', name: 'Ultracode', type: 'boolean', currentValue: 'false' },
     ];
 
-    it('marks the reasoning effort control disabled while ultracode is effectively on', () => {
+    it('keeps reasoning effort enabled while an ultracode request is pending provider confirmation', () => {
         const controls = computeAcpConfigOptionControlsForProvider({
             providerId: 'claude',
             configOptions,
             overrides: { ultracode: { value: 'true' } },
         });
         const effort = controls?.find((control) => control.option.id === 'reasoning_effort');
-        expect(effort?.disabled).toBe(true);
-        expect(effort?.disabledByOptionName).toBe('Ultracode');
+        expect(effort?.disabled).not.toBe(true);
+        expect(effort?.disabledByOptionName).toBeUndefined();
         const ultracode = controls?.find((control) => control.option.id === 'ultracode');
         expect(ultracode?.disabled).not.toBe(true);
+    });
+
+    it('disables reasoning effort after the provider confirms ultracode', () => {
+        const controls = computeAcpConfigOptionControlsForProvider({
+            providerId: 'claude',
+            configOptions: configOptions.map((option) => option.id === 'ultracode'
+                ? { ...option, currentValue: 'true' }
+                : option),
+        });
+        const effort = controls?.find((control) => control.option.id === 'reasoning_effort');
+        expect(effort?.disabled).toBe(true);
+        expect(effort?.disabledByOptionName).toBe('Ultracode');
     });
 
     it('keeps the reasoning effort control enabled while ultracode is off', () => {

@@ -25,6 +25,7 @@ export const GROK_ASK_USER_QUESTION_METHODS = [
 ] as const;
 
 type GrokAskUserQuestionMethod = (typeof GROK_ASK_USER_QUESTION_METHODS)[number];
+const GROK_FREEFORM_OPTION_LABEL = 'Other' as const;
 
 const NonEmptyExactString = z.string()
   .max(STRUCTURED_QUESTION_LIMITS.maxStringLength)
@@ -44,7 +45,6 @@ const GrokQuestionSchema = z.object({
   id: NonEmptyExactIdentifier.optional(),
   question: NonEmptyExactString,
   options: z.array(GrokQuestionOptionSchema)
-    .min(1, 'A Grok question must contain at least one option')
     .max(STRUCTURED_QUESTION_LIMITS.maxOptionsPerQuestion),
   multiSelect: z.boolean().nullable().optional(),
 }).strict();
@@ -88,6 +88,7 @@ export type ParsedGrokAskUserQuestionRequest = Readonly<{
       question: string;
       multiSelect: boolean;
       options: ReadonlyArray<Readonly<{ label: string; description: string }>>;
+      freeform: Readonly<{ placeholder: typeof GROK_FREEFORM_OPTION_LABEL }>;
     }>>;
   }>;
 }>;
@@ -239,6 +240,7 @@ export function parseGrokAskUserQuestionRequest(
         label: option.label,
         description: option.description ?? option.label,
       })),
+      freeform: { placeholder: GROK_FREEFORM_OPTION_LABEL },
     })),
   } satisfies ParsedGrokAskUserQuestionRequest['askUserQuestionInput'];
   try {
@@ -289,12 +291,39 @@ export function buildGrokAskUserQuestionAcceptedResponse(
     const optionsByLabel = new Map(
       parsedQuestion.question.options.map((option) => [option.label, option] as const),
     );
-    responseAnswers[parsedQuestion.responseKey] = Object.freeze([...values]);
+    if (
+      optionsByLabel.has(GROK_FREEFORM_OPTION_LABEL) &&
+      values.includes(GROK_FREEFORM_OPTION_LABEL) &&
+      values.some((value) => !optionsByLabel.has(value))
+    ) {
+      throw new GrokAskUserQuestionCodecError(
+        'GROK_QUESTION_ANSWER_CONTRACT_VIOLATION',
+        'A Grok question response is ambiguous when a known Other option is combined with freeform text',
+      );
+    }
+    let freeformNotes: string | undefined;
+    const providerValues = values.map((value) => {
+      if (optionsByLabel.has(value)) return value;
+      if (freeformNotes !== undefined) {
+        throw new GrokAskUserQuestionCodecError(
+          'GROK_QUESTION_ANSWER_CONTRACT_VIOLATION',
+          'A Grok question response cannot encode multiple freeform answers',
+        );
+      }
+      freeformNotes = value;
+      return GROK_FREEFORM_OPTION_LABEL;
+    });
+    responseAnswers[parsedQuestion.responseKey] = Object.freeze(providerValues);
+    const annotation: { preview?: string; notes?: string } = {};
     if (parsedQuestion.question.multiSelect !== true) {
       const preview = optionsByLabel.get(values[0] ?? '')?.preview;
       if (typeof preview === 'string' && preview.trim().length > 0) {
-        responseAnnotations[parsedQuestion.responseKey] = { preview };
+        annotation.preview = preview;
       }
+    }
+    if (freeformNotes !== undefined) annotation.notes = freeformNotes;
+    if (Object.keys(annotation).length > 0) {
+      responseAnnotations[parsedQuestion.responseKey] = Object.freeze(annotation);
     }
   }
 

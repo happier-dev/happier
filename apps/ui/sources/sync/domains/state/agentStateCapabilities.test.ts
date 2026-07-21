@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     getPermissionsInUiWhileLocal,
     getStructuredQuestionAnswersV1Supported,
+    getModelScopedConfigTombstonesV1Supported,
 } from '@/sync/domains/state/agentStateCapabilities';
 
 describe('getPermissionsInUiWhileLocal', () => {
@@ -18,6 +19,15 @@ describe('getPermissionsInUiWhileLocal', () => {
         expect(getPermissionsInUiWhileLocal(null)).toBe(false);
         expect(getPermissionsInUiWhileLocal(undefined)).toBe(false);
         expect(getPermissionsInUiWhileLocal({})).toBe(false);
+    });
+});
+
+describe('getModelScopedConfigTombstonesV1Supported', () => {
+    it('fails closed unless support is literal true', () => {
+        expect(getModelScopedConfigTombstonesV1Supported({ modelScopedConfigTombstonesV1: true })).toBe(true);
+        expect(getModelScopedConfigTombstonesV1Supported({ modelScopedConfigTombstonesV1: false })).toBe(false);
+        expect(getModelScopedConfigTombstonesV1Supported({ modelScopedConfigTombstonesV1: 'true' })).toBe(false);
+        expect(getModelScopedConfigTombstonesV1Supported(undefined)).toBe(false);
     });
 });
 

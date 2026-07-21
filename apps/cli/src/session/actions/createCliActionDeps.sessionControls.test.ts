@@ -183,6 +183,109 @@ describe('createCliActionDeps session controls', () => {
     });
   });
 
+  it('lists models from the newest valid session-model alias', async () => {
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_1',
+      ctx: {
+        encryptionKey: new Uint8Array(32).fill(1),
+        encryptionVariant: 'legacy',
+      },
+      mode: 'plain',
+      rawSession: {
+        metadata: {
+          sessionModelsV1: {
+            v: 1,
+            provider: 'grok',
+            updatedAt: 10,
+            currentModelId: 'stale-model',
+            availableModels: [{ id: 'stale-model', name: 'Stale model' }],
+          },
+          acpSessionModelsV1: {
+            v: 1,
+            provider: 'grok',
+            updatedAt: 20,
+            currentModelId: 'grok-4.5',
+            availableModels: [{ id: 'grok-4.5', name: 'Grok 4.5' }],
+          },
+        },
+      },
+    });
+
+    await expect(deps.agentsModelsList?.({ agentId: 'grok' })).resolves.toMatchObject({
+      agentId: 'grok',
+      source: 'session_metadata',
+      items: [
+        { id: 'default', label: 'Default' },
+        { id: 'grok-4.5', label: 'Grok 4.5' },
+      ],
+    });
+  });
+
+  it.each([
+    { label: 'literal true', capabilities: { modelScopedConfigTombstonesV1: true }, expectedValue: null },
+    { label: 'literal false', capabilities: { modelScopedConfigTombstonesV1: false }, expectedValue: 'high' },
+    { label: 'missing', capabilities: {}, expectedValue: 'high' },
+    { label: 'malformed', capabilities: { modelScopedConfigTombstonesV1: 'true' }, expectedValue: 'high' },
+  ])('retires model-scoped config only when target agent state advertises $label support', async ({ capabilities, expectedValue }) => {
+    const sourceMetadata = {
+      sessionModelsV1: {
+        v: 1,
+        provider: 'grok',
+        updatedAt: 10,
+        currentModelId: 'model-a',
+        availableModels: [{
+          id: 'model-a',
+          name: 'Model A',
+          modelOptions: [{ id: 'reasoning_effort' }],
+        }],
+      },
+      sessionConfigOptionOverridesV1: {
+        v: 1,
+        updatedAt: 10,
+        overrides: { reasoning_effort: { updatedAt: 10, value: 'high' } },
+      },
+    };
+    let writtenMetadata: Record<string, unknown> | null = null;
+    mocks.resolveSessionTransportContext.mockResolvedValue({
+      ok: true as const,
+      sessionId: 'sess_1',
+      rawSession: { active: true, agentState: { capabilities } },
+      ctx: {
+        encryptionKey: new Uint8Array(32).fill(3),
+        encryptionVariant: 'legacy' as const,
+      },
+      mode: 'plain' as const,
+    });
+    mocks.updateSessionMetadataWithRetry.mockImplementationOnce(async (params: {
+      updater: (metadata: Record<string, unknown>) => Record<string, unknown>;
+    }) => {
+      writtenMetadata = params.updater(sourceMetadata);
+      return { version: 2, metadata: writtenMetadata };
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_1',
+      ctx: {
+        encryptionKey: new Uint8Array(32).fill(1),
+        encryptionVariant: 'legacy',
+      },
+      mode: 'plain',
+      rawSession: { metadata: {} },
+    });
+
+    await expect(deps.sessionModelSet?.({ sessionId: 'sess_1', modelId: 'model-b' }))
+      .resolves.toMatchObject({ ok: true, sessionId: 'sess_1', modelId: 'model-b' });
+
+    expect(writtenMetadata).toMatchObject({
+      sessionConfigOptionOverridesV1: {
+        overrides: { reasoning_effort: { value: expectedValue } },
+      },
+    });
+  });
+
   it('forwards session list preview and row shape options to the list service', async () => {
     const credentials = createCredentials();
     const deps = createCliActionDeps({

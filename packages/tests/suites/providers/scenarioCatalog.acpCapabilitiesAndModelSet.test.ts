@@ -78,6 +78,11 @@ describe('scenarioCatalog: ACP capability/model-set scenarios', () => {
 
     const cursorScenario = build(acpProvider('cursor'));
     expect(cursorScenario.id).toBe('acp_set_model_dynamic');
+    const grokStubScenario = build({
+      ...acpProvider('grok_acp_stub'),
+      cli: { subcommand: 'grok' },
+    });
+    expect(grokStubScenario.id).toBe('acp_set_model_dynamic');
   });
 
   it('rejects acp_set_model_dynamic for providers without known dynamic model probing', () => {

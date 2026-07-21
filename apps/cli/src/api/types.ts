@@ -734,6 +734,8 @@ export type AgentState = {
     canDetach?: boolean | null | undefined
   } | null | undefined
   capabilities?: {
+    /** New CLIs atomically retire config commands owned by the previous model. */
+    modelScopedConfigTombstonesV1?: boolean | null | undefined
     askUserQuestionAnswersInPermission?: boolean | null | undefined
     structuredQuestionAnswersV1Supported?: boolean | null | undefined
     inFlightSteer?: boolean | null | undefined

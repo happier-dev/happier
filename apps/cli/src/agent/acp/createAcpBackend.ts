@@ -18,6 +18,7 @@ import {
   type AcpBackendOptions,
   type AcpExtensionHandlers,
   type AcpPermissionHandler,
+  type AcpSessionModelAdapter,
 } from './AcpBackend';
 import type { AcpAuthentication } from './AcpAuthentication';
 import type { AgentBackend, McpServerConfig } from '../core';
@@ -65,6 +66,9 @@ export interface CreateAcpBackendOptions {
 
   /** Provider-owned handlers for non-standard ACP extension requests/notifications. */
   extensionHandlers?: AcpExtensionHandlers;
+
+  /** Provider-owned projection/application for model metadata not standardized by ACP. */
+  sessionModelAdapter?: AcpSessionModelAdapter;
 }
 
 /**
@@ -106,6 +110,7 @@ export function createAcpBackend(options: CreateAcpBackendOptions): AgentBackend
     initializeMeta: options.initializeMeta,
     initializeClientCapabilitiesMeta: options.initializeClientCapabilitiesMeta,
     extensionHandlers: options.extensionHandlers,
+    sessionModelAdapter: options.sessionModelAdapter,
   };
 
   return new AcpBackend(backendOptions);

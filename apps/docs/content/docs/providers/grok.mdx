@@ -45,16 +45,18 @@ Grok Build does not currently provide Happier with a reliable non-interactive ca
 ## Sessions and questions
 
 - Happier stores the Grok session identity and can request an experimental resume after the provider process restarts.
-- Grok's structured questions support multiple questions and multiple selected options without comma-delimited encoding.
+- Grok's structured questions use Happier's native structured-question UI. Zero-option questions accept freeform text, and questions with advertised choices can accept an additional freeform answer; Happier preserves commas and newlines and maps freeform text to Grok's `Other` answer with its notes annotation.
 - Cancellation uses the shared ACP lifecycle, so a cancelled prompt should not prevent a later prompt in the same Happier session.
 
 Resume and structured-question behavior depend on the installed Grok Build version. Use a current CLI release: Happier requires an authentication method advertised by Grok and separately validates every structured-question payload at the provider boundary.
 
 ## Current capability limits
 
-- **Models:** Happier reports the active `grok-build` model. Model switching remains disabled until the CLI advertises and proves a distinct ACP selection contract.
+- **Models:** Happier renders the models advertised by the active Grok ACP session and applies a selected model through the standard live model-switch request. Each model shows a reasoning-effort control only when that model advertises supported effort values. A single static `grok-build` entry remains the compatibility fallback when the installed CLI does not advertise a selectable model inventory or effort metadata.
+- **Model switch failures:** Grok switch errors are surfaced to the session instead of being treated as success, and the last provider-confirmed model remains authoritative.
 - **MCP tools:** native MCP delivery is experimental.
-- **Images and session media:** not currently advertised as supported through this integration.
+- **Images and session media:** not currently supported through this integration. Shared ACP image prompt blocks remain post-merge work in the current runtime owner.
+- **Prompt completion compatibility:** Happier uses the standard ACP completion path. Correlated support for Grok's private completion notifications, if still required by a supported CLI, remains post-merge hardening in the current shared completion owner; this integration does not add a private fallback.
 - **Session listing, forking, rollback, and vendor-state handoff:** not currently supported.
 - **Platforms:** the integration includes macOS, Linux, and Windows install/detection paths, but platform behavior still depends on the installed xAI CLI release.
 

@@ -4,6 +4,10 @@
     "smoke": [
       "grok_acp_stub_auth_create_resume",
       "grok_acp_stub_structured_question",
+      "grok_acp_stub_freeform_question",
+      "grok_acp_stub_mixed_freeform_question",
+      "acp_set_model_dynamic",
+      "grok_acp_stub_models_and_effort",
       "grok_acp_stub_cancel_and_capabilities"
     ],
     "extended": []

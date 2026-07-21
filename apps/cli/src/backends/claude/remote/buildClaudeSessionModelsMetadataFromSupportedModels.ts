@@ -1,5 +1,6 @@
 import type { Metadata } from '@/api/types';
 import { normalizeContextWindowTokens } from '@/backends/modelCapabilities/contextWindowTokens';
+import { readNewestSessionModelsMetadataStateV1 } from '@happier-dev/agents';
 
 type SessionModelsState = NonNullable<Metadata['sessionModelsV1']>;
 type SessionModelEntry = SessionModelsState['availableModels'][number];
@@ -109,17 +110,19 @@ function resolveCurrentModelId(metadata: Metadata | null | undefined): string {
     const preferred = normalizeNonEmptyString(metadata?.modelOverrideV1?.modelId);
     if (preferred) return preferred;
 
-    const sessionCurrent = metadata?.sessionModelsV1?.provider === 'claude'
-        ? normalizeNonEmptyString(metadata.sessionModelsV1.currentModelId)
+    const state = readNewestClaudeSessionModelsState(metadata);
+    const current = state?.provider === 'claude'
+        ? normalizeNonEmptyString(state.currentModelId)
         : '';
-    if (sessionCurrent) return sessionCurrent;
-
-    const acpCurrent = metadata?.acpSessionModelsV1?.provider === 'claude'
-        ? normalizeNonEmptyString(metadata.acpSessionModelsV1.currentModelId)
-        : '';
-    if (acpCurrent) return acpCurrent;
+    if (current) return current;
 
     return 'default';
+}
+
+function readNewestClaudeSessionModelsState(metadata: Metadata | null | undefined): SessionModelsState | null {
+    return readNewestSessionModelsMetadataStateV1(
+        metadata as unknown as Record<string, unknown> | null | undefined,
+    ) as SessionModelsState | null;
 }
 
 /**
@@ -174,12 +177,11 @@ export function buildClaudeSessionModelsMetadataWithCurrentModelId(params: Reado
     const currentModelId = normalizeNonEmptyString(params.currentModelId);
     if (!currentModelId) return null;
 
-    const existingSessionState = params.metadata?.sessionModelsV1?.provider === 'claude'
-        ? params.metadata.sessionModelsV1
+    const existingState = readNewestClaudeSessionModelsState(params.metadata);
+    const existingSessionState = existingState?.provider === 'claude'
+        ? existingState
         : null;
-    const existingAcpState = params.metadata?.acpSessionModelsV1?.provider === 'claude'
-        ? params.metadata.acpSessionModelsV1
-        : null;
+    const existingAcpState = existingSessionState;
 
     const contextWindowTokens = normalizePositiveTokens(params.currentModel?.contextWindowTokens);
     const windowAlreadyReflected = contextWindowTokens === null || (

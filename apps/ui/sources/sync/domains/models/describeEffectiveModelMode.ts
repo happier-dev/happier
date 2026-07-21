@@ -22,7 +22,11 @@ export function describeEffectiveModelMode(params: {
 
     const selectedModelId = typeof params.selectedModelId === 'string' ? params.selectedModelId.trim() : '';
     const hasExplicitSelection = selectedModelId.length > 0;
-    const effectiveModelId = hasExplicitSelection ? selectedModelId : core.model.defaultMode;
+    const providerModelState = readSessionModelsState(params.metadata);
+    const providerCurrentModelId = providerModelState?.provider === agentId
+        ? providerModelState.currentModelId.trim()
+        : '';
+    const effectiveModelId = providerCurrentModelId || (hasExplicitSelection ? selectedModelId : core.model.defaultMode);
 
     const isAcpSession = Boolean(readSessionModesState(params.metadata) || readSessionModelsState(params.metadata));
 

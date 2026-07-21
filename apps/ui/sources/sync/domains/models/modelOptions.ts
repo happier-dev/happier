@@ -3,12 +3,8 @@ import { t } from '@/text';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import type { Metadata } from '../state/storageTypes';
 import type { AcpConfigOption } from '@/sync/acp/configOptionsControl';
-import {
-    getAgentStaticModels,
-    LEGACY_ACP_SESSION_MODELS_STATE_KEY,
-    readMetadataAliasValue,
-    SESSION_MODELS_STATE_KEY,
-} from '@happier-dev/agents';
+import { getAgentStaticModels } from '@happier-dev/agents';
+import { readSessionModelsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
 
 export type AgentType = AgentId;
 
@@ -123,11 +119,7 @@ function appendSelectedFreeformModelOption(params: Readonly<{
 }
 
 function readSessionModelListState(metadata: Metadata | null | undefined): SessionModelListState | null {
-    return readMetadataAliasValue<SessionModelListState>(
-        (metadata as any) ?? {},
-        SESSION_MODELS_STATE_KEY,
-        LEGACY_ACP_SESSION_MODELS_STATE_KEY,
-    ) ?? null;
+    return readSessionModelsState(metadata);
 }
 
 function readSelectedModelOverrideId(metadata: Metadata | null | undefined): string {
@@ -251,7 +243,7 @@ export function getModelOptionsForAgentTypeOrPreflight(params: {
         return mergeModelOptionsWithCatalog({
             options: preflightOptions,
             catalogOptions,
-            appendMissingCatalogOptions: true,
+            appendMissingCatalogOptions: params.preflight.supportsFreeform === true,
         });
     }
     return getModelOptionsForAgentType(params.agentType);

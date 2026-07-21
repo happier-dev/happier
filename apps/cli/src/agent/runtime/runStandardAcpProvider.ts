@@ -220,6 +220,7 @@ export async function runStandardAcpProvider(
   let session: ApiSessionClient;
   let permissionHandler: ProviderEnforcedPermissionHandler;
   let rebindPermissionModeQueueSession: ((session: ApiSessionClient) => void) | null = null;
+  let rebindOverrideSynchronizerSession: ((session: ApiSessionClient) => Promise<void>) | null = null;
   let pendingPermissionModeQueueSessionSwap: ApiSessionClient | null = null;
   // Used by the message-queue binding to optionally steer additional user input into an in-flight turn.
   // This is late-bound because the queue binding is initialized before the runtime is created.
@@ -245,7 +246,25 @@ export async function runStandardAcpProvider(
       if (runtimeForInFlightSteer) {
         newSession.setSessionRuntimeControls?.(runtimeForInFlightSteer);
       }
-      await config.onSessionSwap?.({ session: newSession });
+      const swapFailures: unknown[] = [];
+      try {
+        await rebindOverrideSynchronizerSession?.(newSession);
+      } catch (error) {
+        swapFailures.push(error);
+        logger.debug(`${config.uiLogPrefix} Failed to rebind runtime override synchronizers after session swap (non-fatal)`, error);
+      }
+      try {
+        await config.onSessionSwap?.({ session: newSession });
+      } catch (error) {
+        swapFailures.push(error);
+        logger.debug(`${config.uiLogPrefix} Provider session-swap hook failed (non-fatal)`, error);
+      }
+      if (swapFailures.length === 1) {
+        throw swapFailures[0];
+      }
+      if (swapFailures.length > 1) {
+        throw new AggregateError(swapFailures, `${config.uiLogPrefix} Session-swap hooks failed`);
+      }
     },
     onAttachMetadataSnapshotMissing: config.onAttachMetadataSnapshotMissing,
     onAttachMetadataSnapshotError: config.onAttachMetadataSnapshotError,
@@ -496,11 +515,22 @@ export async function runStandardAcpProvider(
       messageQueue,
       permissionHandler,
       runtime,
-      createOverrideSynchronizer: (isStarted) => createRuntimeOverrideSynchronizers({
-        session,
-        runtime,
-        isStarted,
-      }),
+      createOverrideSynchronizer: (isStarted) => {
+        const synchronizer = createRuntimeOverrideSynchronizers({
+          session,
+          runtime,
+          isStarted,
+          reportTerminalFailure: (failure) => reportSessionControlTerminalFailure({
+            failure,
+            provider: config.agentMessageType,
+            session,
+            messageBuffer,
+            formatError: config.formatPromptErrorMessage,
+          }),
+        });
+        rebindOverrideSynchronizerSession = synchronizer.rebindSession;
+        return synchronizer;
+      },
       messageBuffer,
       shouldExit: () => shouldExit,
       getAbortSignal: () => abortController.signal,
@@ -540,4 +570,19 @@ export async function runStandardAcpProvider(
     terminationHandlers.dispose();
     await cleanupOnce();
   }
+}
+type SessionControlTerminalFailure =
+  | Readonly<{ kind: 'model'; requested: string; error: unknown }>
+  | Readonly<{ kind: 'config'; configId: string; requested: string; error: unknown }>;
+
+export function reportSessionControlTerminalFailure(params: Readonly<{
+  failure: SessionControlTerminalFailure;
+  provider: Parameters<ApiSessionClient['sendAgentMessage']>[0];
+  session: Pick<ApiSessionClient, 'sendAgentMessage'>;
+  messageBuffer: Pick<MessageBuffer, 'addMessage'>;
+  formatError: (error: unknown) => string;
+}>): void {
+  const message = params.formatError(params.failure.error);
+  params.session.sendAgentMessage(params.provider, { type: 'message', message });
+  params.messageBuffer.addMessage(message, 'status');
 }

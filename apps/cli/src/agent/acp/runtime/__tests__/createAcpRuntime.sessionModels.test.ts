@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { EventMessage } from '@/agent/core/AgentMessage';
 import type { SessionConfigOption } from '@/agent/acp/AcpBackend';
@@ -87,6 +87,54 @@ describe('createAcpRuntime (session models)', () => {
       ],
     });
     expect(typeof metadata.acpSessionModelsV1?.updatedAt).toBe('number');
+    expect(metadata.sessionModelsV1).toEqual(metadata.acpSessionModelsV1);
+  });
+
+  it('preserves available models from the newest valid alias on current-model updates', async () => {
+    const backend = createFakeAcpRuntimeBackend();
+    const { session, getMetadata } = createSessionClientWithMetadata({
+      initialMetadata: createTestMetadata({
+        sessionModelsV1: {
+          v: 1,
+          provider: 'grok',
+          updatedAt: 10,
+          currentModelId: 'stale-model',
+          availableModels: [{ id: 'stale-model', name: 'Stale model' }],
+        },
+        acpSessionModelsV1: {
+          v: 1,
+          provider: 'grok',
+          updatedAt: 20,
+          currentModelId: 'grok-4.5',
+          availableModels: [{ id: 'grok-4.5', name: 'Grok 4.5' }],
+        },
+      }),
+    });
+    const runtime = createAcpRuntime({
+      provider: 'grok',
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+    });
+
+    await runtime.startOrLoad({ resumeId: null });
+    backend.emit({
+      type: 'event',
+      name: 'current_model_update',
+      payload: { currentModelId: 'grok-4.5-fast' },
+    });
+
+    await vi.waitFor(() => {
+      expect(getMetadata().sessionModelsV1).toMatchObject({
+        currentModelId: 'grok-4.5-fast',
+        availableModels: [{ id: 'grok-4.5', name: 'Grok 4.5' }],
+      });
+    });
+    expect(getMetadata().acpSessionModelsV1).toEqual(getMetadata().sessionModelsV1);
   });
 
   it('publishes model options derived from ACP config options when models are absent', async () => {
@@ -457,7 +505,7 @@ describe('createAcpRuntime (session models)', () => {
     expect(calls).toEqual([]);
   });
 
-  it('applies startup metadata model overrides before deferred pending queue drain', async () => {
+  it('leaves metadata model overrides to the canonical runtime synchronizer', async () => {
     const calls: string[] = [];
     const backend = createFakeAcpRuntimeBackend({
       async startSession() {
@@ -504,7 +552,6 @@ describe('createAcpRuntime (session models)', () => {
 
     expect(calls).toEqual([
       'start',
-      'config:model:composer-2.5[fast=true]',
       'drain',
     ]);
   });
@@ -601,7 +648,7 @@ describe('createAcpRuntime (session models)', () => {
     expect(lastSetConfig).toEqual({ sessionId: 'sess_main', configId: 'model', value: 'model-b' });
   });
 
-  it('falls back to config option id "model" when provider model config lookup fails', async () => {
+  it('surfaces session/set_model errors when the provider declares no config-option fallback', async () => {
     let lastSetConfig: { sessionId: string; configId: string; value: unknown } | null = null;
     const backend = createFakeAcpRuntimeBackend({
       async setSessionConfigOption(sessionId: string, configId: string, value: unknown) {
@@ -613,7 +660,7 @@ describe('createAcpRuntime (session models)', () => {
     });
 
     const runtime = createAcpRuntime({
-      provider: 'not-a-real-provider' as any,
+      provider: 'grok',
       directory: '/tmp',
       session: createBasicSessionClient(),
       messageBuffer: new MessageBuffer(),
@@ -624,8 +671,8 @@ describe('createAcpRuntime (session models)', () => {
     });
 
     await runtime.startOrLoad({ resumeId: null });
-    await runtime.setSessionModel('model-b');
+    await expect(runtime.setSessionModel('model-b')).rejects.toThrow('ACP SDK does not support session/set_model');
 
-    expect(lastSetConfig).toEqual({ sessionId: 'sess_main', configId: 'model', value: 'model-b' });
+    expect(lastSetConfig).toBeNull();
   });
 });

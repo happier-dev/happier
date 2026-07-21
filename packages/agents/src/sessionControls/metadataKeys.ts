@@ -42,3 +42,20 @@ export function readMetadataAliasValue<T>(metadata: Record<string, unknown> | nu
     }
     return undefined;
 }
+
+/** Reads the newest well-formed timestamped alias; the first key wins ties. */
+export function readNewestMetadataAliasValue<T extends Readonly<{ updatedAt: number }>>(params: Readonly<{
+    metadata: Record<string, unknown> | null | undefined;
+    keys: readonly string[];
+    parse: (raw: unknown) => T | null;
+}>): T | undefined {
+    const { metadata } = params;
+    if (!metadata) return undefined;
+    let newest: T | undefined;
+    for (const key of params.keys) {
+        const candidate = params.parse(metadata[key]);
+        if (!candidate || !Number.isFinite(candidate.updatedAt)) continue;
+        if (!newest || candidate.updatedAt > newest.updatedAt) newest = candidate;
+    }
+    return newest;
+}

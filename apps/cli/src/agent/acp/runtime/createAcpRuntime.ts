@@ -22,8 +22,13 @@ import { extractAcpMediaContentBlocks } from '@/agent/acp/media/extractAcpMediaC
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 import { isAbortLikeError } from '@/agent/executionRuns/runtime/turnDelivery';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
-import type { AgentState } from '@/api/types';
-import { getAgentModelConfig, getAgentSessionModeDescriptor, type AgentId } from '@happier-dev/agents';
+import type { AgentState, Metadata } from '@/api/types';
+import {
+  getAgentModelConfig,
+  getAgentSessionModeDescriptor,
+  readNewestSessionModelsMetadataStateV1,
+  type AgentId,
+} from '@happier-dev/agents';
 import { updateAgentStateBestEffort, updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort';
 import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 import type { TurnAssistantPreviewTracker } from '@/agent/runtime/turnAssistantPreviewTracker';
@@ -47,7 +52,6 @@ import {
   isAcpModelConfigOptionLike,
 } from '@/agent/acp/configOptionChoiceNormalization';
 import {
-  computePendingModelOverrideApplication,
   computePendingSessionModeOverrideApplication,
 } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import { createSessionProviderPendingDrainAdapter } from '@/agent/runtime/sessionInput/SessionProviderInputConsumer';
@@ -1362,22 +1366,24 @@ export function createAcpRuntime(params: {
                 const now = Date.now();
                 const next: any = {
                   ...metadata,
-                  acpConfigOptionsV1: {
+                  sessionConfigOptionsV1: {
                     v: 1,
                     provider: params.provider,
                     updatedAt: now,
                     configOptions,
                   },
                 };
+                next.acpConfigOptionsV1 = next.sessionConfigOptionsV1;
 
                 if (derivedModels) {
-                  next.acpSessionModelsV1 = {
+                  next.sessionModelsV1 = {
                     v: 1,
                     provider: params.provider,
                     updatedAt: now,
                     currentModelId: derivedModels.currentModelId,
                     availableModels: derivedModels.availableModels,
                   };
+                  next.acpSessionModelsV1 = next.sessionModelsV1;
                 }
                 if (derivedModes) {
                   const sessionModes = {
@@ -1433,17 +1439,21 @@ export function createAcpRuntime(params: {
               updateMetadataBestEffort(
                 params.session,
                 (metadata) => {
-                  const prev = (metadata as any).acpSessionModelsV1 as any;
+                  const prev = readNewestSessionModelsMetadataStateV1(
+                    metadata as unknown as Record<string, unknown>,
+                  ) as Metadata['sessionModelsV1'] | null;
                   const availableModels = Array.isArray(prev?.availableModels) ? prev.availableModels : [];
+                  const sessionModelsV1 = {
+                    v: 1 as const,
+                    provider: params.provider,
+                    updatedAt: Date.now(),
+                    currentModelId,
+                    availableModels,
+                  };
                   return {
                     ...metadata,
-                    acpSessionModelsV1: {
-                      v: 1,
-                      provider: params.provider,
-                      updatedAt: Date.now(),
-                      currentModelId,
-                      availableModels,
-                    },
+                    sessionModelsV1,
+                    acpSessionModelsV1: sessionModelsV1,
                   };
                 },
                 `[${params.provider}]`,
@@ -1573,13 +1583,13 @@ export function createAcpRuntime(params: {
     const controlTimeoutMs = resolveSessionControlTimeoutMs();
     const modelConfigOptionId = (() => {
       try {
-        return getAgentModelConfig(params.provider as AgentId).acpModelConfigOptionId ?? 'model';
+        return getAgentModelConfig(params.provider as AgentId).acpModelConfigOptionId ?? null;
       } catch (error) {
         logger.debug(
-          `[${params.provider}] Failed to resolve provider model config option id; falling back to "model"`,
+          `[${params.provider}] Failed to resolve provider model config option id; config-option fallback is unavailable`,
           error
         );
-        return 'model';
+        return null;
       }
     })();
     const modelSetMethod = (() => {
@@ -1617,7 +1627,7 @@ export function createAcpRuntime(params: {
       }
     };
     if (modelSetMethod === 'config_option') {
-      if (b.setSessionConfigOption) {
+      if (b.setSessionConfigOption && modelConfigOptionId) {
         await b.setSessionConfigOption(activeSessionId, modelConfigOptionId, resolvedModelId);
         await applyCompanionConfigUpdates();
         return;
@@ -1649,7 +1659,7 @@ export function createAcpRuntime(params: {
       const e = outcome.error;
       // Some ACP agents may not support `session/set_model` but may expose an equivalent
       // `model` config option. Fall back best-effort; callers already treat this as non-fatal.
-      if (!b.setSessionConfigOption) throw e;
+      if (!b.setSessionConfigOption || !modelConfigOptionId) throw e;
 
       try {
         await b.setSessionConfigOption(activeSessionId, modelConfigOptionId, resolvedModelId);
@@ -1661,7 +1671,7 @@ export function createAcpRuntime(params: {
       }
     }
 
-    if (b.setSessionConfigOption) {
+    if (b.setSessionConfigOption && modelConfigOptionId) {
       await b.setSessionConfigOption(activeSessionId, modelConfigOptionId, resolvedModelId);
       await applyCompanionConfigUpdates();
     }
@@ -1671,18 +1681,11 @@ export function createAcpRuntime(params: {
     const explicitModelId = typeof params.startupOverrides?.model?.modelId === 'string'
       ? params.startupOverrides.model.modelId.trim()
       : '';
-    const pendingModel = explicitModelId && explicitModelId !== 'default'
-      ? { modelId: explicitModelId, updatedAt: params.startupOverrides?.model?.updatedAt ?? 0 }
-      : computePendingModelOverrideApplication({
-          metadata: params.session.getMetadataSnapshot?.() ?? null,
-          lastAppliedUpdatedAt: 0,
-        });
-    if (!pendingModel) return;
-    try {
-      await applySessionModelControl(pendingModel.modelId);
-    } catch (error) {
-      logger.debug(`[${params.provider}] Failed to apply startup model override before pending drain (non-fatal)`, error);
-    }
+    // Metadata-owned model changes are applied by the runtime override synchronizer after
+    // startOrLoad and before the pending queue drains. This path is only for an explicit
+    // caller-owned startup override, and a rejection must remain observable to that caller.
+    if (!explicitModelId || explicitModelId === 'default') return;
+    await applySessionModelControl(explicitModelId);
   };
 
   const applyStartupModeOverride = async (): Promise<void> => {

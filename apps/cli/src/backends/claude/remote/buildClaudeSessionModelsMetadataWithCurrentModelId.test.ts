@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import type { Metadata } from '@/api/types';
 
-import { buildClaudeSessionModelsMetadataWithCurrentModelId } from './buildClaudeSessionModelsMetadataFromSupportedModels';
+import {
+  buildClaudeSessionModelsMetadataFromSupportedModels,
+  buildClaudeSessionModelsMetadataWithCurrentModelId,
+} from './buildClaudeSessionModelsMetadataFromSupportedModels';
 
 describe('buildClaudeSessionModelsMetadataWithCurrentModelId', () => {
   it('returns null when the current model id is already adopted and no model facts are provided', () => {
@@ -115,5 +118,57 @@ describe('buildClaudeSessionModelsMetadataWithCurrentModelId', () => {
     });
 
     expect(update?.sessionModelsV1?.availableModels).toEqual([]);
+  });
+
+  it('converges current-model updates from the newest valid model-state alias', () => {
+    const metadata = {
+      sessionModelsV1: {
+        v: 1,
+        provider: 'claude',
+        updatedAt: 10,
+        currentModelId: 'claude-stale',
+        availableModels: [{ id: 'claude-stale', name: 'Claude Stale' }],
+      },
+      acpSessionModelsV1: {
+        v: 1,
+        provider: 'claude',
+        updatedAt: 20,
+        currentModelId: 'claude-new',
+        availableModels: [{ id: 'claude-new', name: 'Claude New' }],
+      },
+    } as unknown as Metadata;
+
+    const update = buildClaudeSessionModelsMetadataWithCurrentModelId({
+      currentModelId: 'claude-next',
+      metadata,
+      nowMs: () => 30,
+    });
+
+    expect(update?.sessionModelsV1).toEqual(update?.acpSessionModelsV1);
+    expect(update?.sessionModelsV1).toMatchObject({
+      updatedAt: 30,
+      currentModelId: 'claude-next',
+      availableModels: [{ id: 'claude-new', name: 'Claude New' }],
+    });
+  });
+
+  it('uses the newest valid alias current model when publishing a refreshed supported list', () => {
+    const metadata = {
+      sessionModelsV1: {
+        v: 1, provider: 'claude', updatedAt: 10, currentModelId: 'claude-stale', availableModels: [],
+      },
+      acpSessionModelsV1: {
+        v: 1, provider: 'claude', updatedAt: 20, currentModelId: 'claude-new', availableModels: [],
+      },
+    } as unknown as Metadata;
+
+    const update = buildClaudeSessionModelsMetadataFromSupportedModels({
+      modelsRaw: [{ value: 'claude-new', displayName: 'Claude New' }],
+      metadata,
+      nowMs: () => 30,
+    });
+
+    expect(update?.sessionModelsV1?.currentModelId).toBe('claude-new');
+    expect(update?.acpSessionModelsV1).toEqual(update?.sessionModelsV1);
   });
 });
