@@ -238,7 +238,12 @@ describe('createCliActionDeps session controls', () => {
         availableModels: [{
           id: 'model-a',
           name: 'Model A',
-          modelOptions: [{ id: 'reasoning_effort' }],
+          modelOptions: [{
+            id: 'reasoning_effort',
+            name: 'Thinking',
+            type: 'select',
+            currentValue: 'high',
+          }],
         }],
       },
       sessionConfigOptionOverridesV1: {
