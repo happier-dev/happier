@@ -15,6 +15,12 @@ export interface PiBackendOptions extends AgentFactoryOptions {
   mcpServers?: Record<string, McpServerConfig>;
   permissionMode?: PermissionMode;
   happierSessionId?: string | null;
+  /**
+   * System prompt text appended to pi's default system prompt via the
+   * `--append-system-prompt` spawn flag. Applied once at process startup
+   * (pi has no runtime RPC command to change it mid-session).
+   */
+  appendSystemPromptText?: string;
 }
 
 // `null` means Happier must not override Pi's native tool catalog. Passing
@@ -41,13 +47,15 @@ export function buildPiToolsForPermissionMode(permissionMode?: PermissionMode): 
   return ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'];
 }
 
-export function buildPiRpcArgs(opts?: Readonly<{ permissionMode?: PermissionMode; thinkingLevel?: string | null }>): string[] {
+export function buildPiRpcArgs(opts?: Readonly<{ permissionMode?: PermissionMode; thinkingLevel?: string | null; appendSystemPromptText?: string | null }>): string[] {
   const permissionMode = opts?.permissionMode;
   const tools = buildPiToolsForPermissionMode(permissionMode);
   const args: string[] = ['--mode', 'rpc'];
   if (tools) args.push('--tools', tools.join(','));
   const thinking = providers.pi.normalizePiThinkingLevel(opts?.thinkingLevel);
   if (thinking) args.push('--thinking', thinking);
+  const appendSystemPromptText = typeof opts?.appendSystemPromptText === 'string' ? opts.appendSystemPromptText.trim() : '';
+  if (appendSystemPromptText) args.push('--append-system-prompt', appendSystemPromptText);
   return args;
 }
 
@@ -116,7 +124,7 @@ export function createPiBackend(options: PiBackendOptions): AgentBackend {
           launchSelection.modelScope,
         ]
         : []),
-      ...buildPiRpcArgs({ permissionMode: options.permissionMode, thinkingLevel }),
+      ...buildPiRpcArgs({ permissionMode: options.permissionMode, thinkingLevel, appendSystemPromptText: options.appendSystemPromptText }),
     ],
     happierSessionId: options.happierSessionId ?? null,
     env: {

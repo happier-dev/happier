@@ -156,6 +156,61 @@ describe('pi backend argv', () => {
       resolvePiBrokerExtensionPath(agentDir),
     ]));
   });
+
+  it('forwards appendSystemPromptText as --append-system-prompt', () => {
+    process.env.PATH = '';
+    process.env.HAPPIER_PI_PATH = createFakeBin('pi');
+
+    const backend = createPiBackend({
+      cwd: '/tmp',
+      env: {},
+      permissionMode: 'default',
+      appendSystemPromptText: 'CLAUDE_PATTERN_PROMPT',
+    });
+
+    const args = (backend as any).options?.args as string[] | undefined;
+    expect(Array.isArray(args)).toBe(true);
+    const flagIndex = args!.indexOf('--append-system-prompt');
+    expect(flagIndex).toBeGreaterThan(-1);
+    expect(args![flagIndex + 1]).toBe('CLAUDE_PATTERN_PROMPT');
+  });
+
+  it('omits --append-system-prompt when appendSystemPromptText is blank', () => {
+    process.env.PATH = '';
+    process.env.HAPPIER_PI_PATH = createFakeBin('pi');
+
+    const backend = createPiBackend({
+      cwd: '/tmp',
+      env: {},
+      permissionMode: 'default',
+      appendSystemPromptText: '   ',
+    });
+
+    const args = (backend as any).options?.args as string[] | undefined;
+    expect(Array.isArray(args)).toBe(true);
+    expect(args).not.toContain('--append-system-prompt');
+  });
+});
+
+describe('buildPiRpcArgs', () => {
+  it('includes --append-system-prompt when appendSystemPromptText is provided', () => {
+    const args = buildPiRpcArgs({ appendSystemPromptText: 'extra instructions' });
+    const flagIndex = args.indexOf('--append-system-prompt');
+    expect(flagIndex).toBeGreaterThan(-1);
+    expect(args[flagIndex + 1]).toBe('extra instructions');
+  });
+
+  it('trims appendSystemPromptText before forwarding', () => {
+    const args = buildPiRpcArgs({ appendSystemPromptText: '  spaced  ' });
+    const flagIndex = args.indexOf('--append-system-prompt');
+    expect(args[flagIndex + 1]).toBe('spaced');
+  });
+
+  it('omits --append-system-prompt when appendSystemPromptText is empty/whitespace', () => {
+    expect(buildPiRpcArgs({ appendSystemPromptText: '' })).not.toContain('--append-system-prompt');
+    expect(buildPiRpcArgs({ appendSystemPromptText: '   ' })).not.toContain('--append-system-prompt');
+    expect(buildPiRpcArgs({})).not.toContain('--append-system-prompt');
+  });
 });
 
 describe('buildPiToolsForPermissionMode', () => {

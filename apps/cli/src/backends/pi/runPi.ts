@@ -39,6 +39,8 @@ export async function runPi(opts: StandardAcpProviderRunOptions & {
         getPermissionMode,
         pendingQueueDrainMaxPopPerWake,
         providerInputConsumer,
+        credentials: opts.credentials,
+        accountSettings: opts.accountSettingsContext?.settings ?? null,
       }),
     onAttachMetadataSnapshotMissing: (error) => {
       logger.debug(

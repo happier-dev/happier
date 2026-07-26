@@ -37,6 +37,13 @@ type CatalogAcpProviderRuntimeParams<TBackendOptions extends object> = {
   onThinkingChange: (thinking: boolean) => void;
   getSessionOpenAbortSignal?: () => AbortSignal | undefined;
   backendOptions?: Omit<TBackendOptions, 'cwd' | 'mcpServers' | 'permissionHandler' | 'permissionMode' | 'happierSessionId'>;
+  /**
+   * Async resolver invoked inside `ensureBackend` before the backend is constructed.
+   * Returns additional backend options merged on top of `backendOptions`. Useful when
+   * an option (e.g. a resolved system prompt) depends on the live session and cannot
+   * be computed synchronously at runtime-construction time.
+   */
+  resolveBackendOptions?: (ctx: { session: ApiSessionClient }) => Promise<Partial<TBackendOptions>>;
   getPermissionMode?: () => PermissionMode | null | undefined;
   resolvePermissionMode?: (args: {
     getPermissionMode?: () => PermissionMode | null | undefined;
@@ -162,10 +169,15 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends object =
         : params.getPermissionMode?.();
       const permissionMode = typeof permissionModeRaw === 'string' ? permissionModeRaw : undefined;
 
+      const resolvedBackendOptions = params.resolveBackendOptions
+        ? await params.resolveBackendOptions({ session: params.session })
+        : {};
+
       const created = await createCatalogAcpBackend<TBackendOptions>(params.provider, {
         cwd: params.directory,
         mcpServers: params.mcpServers,
         ...(params.backendOptions ?? {}),
+        ...(resolvedBackendOptions ?? {}),
         permissionHandler: params.permissionHandler,
         permissionMode,
         happierSessionId: params.session.sessionId,
