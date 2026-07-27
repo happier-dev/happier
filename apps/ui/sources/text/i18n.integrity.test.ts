@@ -159,8 +159,6 @@ const FUNCTION_SAMPLE_ARGS_BY_KEY = new Map<string, unknown[]>([
     ['transcript.selection.selectedCount', [{ count: 1 }, { count: 2 }]],
     ['transcript.selection.copyA11y', [{ count: 1 }, { count: 2 }]],
     ['transcript.selection.sendA11y', [{ count: 1 }, { count: 2 }]],
-    ['transcript.unsupportedContent.unsupportedAgentOutput', [{}, { recordType: 'foo' }]],
-    ['transcript.unsupportedContent.unsupportedTranscriptRecord', [{}, { recordType: 'foo' }]],
     ['connectedServices.detail.groups.memberQuotaExhaustedUntil', [{ time: '12:00' }]],
     ['connectedServices.detail.groups.memberRateLimitedUntil', [{ time: '12:00' }]],
     ['connectedServices.detail.groups.memberCapacityLimitedUntil', [{ time: '12:00' }]],

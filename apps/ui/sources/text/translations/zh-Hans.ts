@@ -725,10 +725,8 @@ export const zhHans: TranslationStructure = {
     unsupportedContent: {
       unparsedUserMessage: '无法解析的消息',
       unparsedAgentMessage: '无法解析的消息',
-      unsupportedAgentOutput: ({ recordType }: { recordType?: string }) =>
-        recordType ? `不支持的输出 (${recordType})` : '不支持的输出',
-      unsupportedTranscriptRecord: ({ recordType }: { recordType?: string }) =>
-        recordType ? `不支持的记录 (${recordType})` : '不支持的记录',
+      unsupportedAgentOutput: '不支持的输出',
+      unsupportedTranscriptRecord: '不支持的记录',
     },
 
   },

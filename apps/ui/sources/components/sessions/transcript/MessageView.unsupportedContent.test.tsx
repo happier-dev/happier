@@ -106,7 +106,7 @@ describe('MessageView unsupported-content rendering', () => {
                     localId: 'local-u1',
                     createdAt: 1,
                     text: '[Unparsed user message]',
-                    meta: { happierUnsupportedContentV1: { kind: 'unparsed-user-message' } },
+                    meta: { happierUnsupportedContentV1: 'unparsed-user-message' },
                 }}
             />,
         );
@@ -128,7 +128,7 @@ describe('MessageView unsupported-content rendering', () => {
                     localId: 'local-a1',
                     createdAt: 1,
                     text: '[Unparsed agent message]',
-                    meta: { happierUnsupportedContentV1: { kind: 'unparsed-agent-message' } },
+                    meta: { happierUnsupportedContentV1: 'unparsed-agent-message' },
                 }}
             />,
         );
@@ -137,7 +137,7 @@ describe('MessageView unsupported-content rendering', () => {
         expect(markdownView.props.markdown).toBe('transcript.unsupportedContent.unparsedAgentMessage');
     });
 
-    it('renders the localized label with the recordType param for unsupported agent output', async () => {
+    it('renders the localized label for unsupported agent output', async () => {
         const { MessageView } = await import('./MessageView');
 
         const screen = await renderScreen(
@@ -150,23 +150,16 @@ describe('MessageView unsupported-content rendering', () => {
                     localId: 'local-a2',
                     createdAt: 1,
                     text: '[Unsupported agent output]',
-                    meta: {
-                        happierUnsupportedContentV1: {
-                            kind: 'unsupported-agent-output',
-                            recordType: 'some_future_output_type',
-                        },
-                    },
+                    meta: { happierUnsupportedContentV1: 'unsupported-agent-output' },
                 }}
             />,
         );
 
         const markdownView = screen.findByType('MarkdownView' as any);
-        expect(markdownView.props.markdown).toBe(
-            'transcript.unsupportedContent.unsupportedAgentOutput::{"recordType":"some_future_output_type"}',
-        );
+        expect(markdownView.props.markdown).toBe('transcript.unsupportedContent.unsupportedAgentOutput');
     });
 
-    it('renders the localized label with the recordType param for an unsupported transcript record', async () => {
+    it('renders the localized label for an unsupported transcript record', async () => {
         const { MessageView } = await import('./MessageView');
 
         const screen = await renderScreen(
@@ -179,20 +172,13 @@ describe('MessageView unsupported-content rendering', () => {
                     localId: 'local-a3',
                     createdAt: 1,
                     text: '[Unsupported transcript record]',
-                    meta: {
-                        happierUnsupportedContentV1: {
-                            kind: 'unsupported-transcript-record',
-                            recordType: 'some_future_acp_type',
-                        },
-                    },
+                    meta: { happierUnsupportedContentV1: 'unsupported-transcript-record' },
                 }}
             />,
         );
 
         const markdownView = screen.findByType('MarkdownView' as any);
-        expect(markdownView.props.markdown).toBe(
-            'transcript.unsupportedContent.unsupportedTranscriptRecord::{"recordType":"some_future_acp_type"}',
-        );
+        expect(markdownView.props.markdown).toBe('transcript.unsupportedContent.unsupportedTranscriptRecord');
     });
 
     it('renders normal message text unaffected when no unsupported-content marker is present', async () => {

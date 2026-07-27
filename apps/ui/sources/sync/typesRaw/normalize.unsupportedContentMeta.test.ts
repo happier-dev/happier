@@ -15,7 +15,7 @@ describe('normalizeRawMessage unsupported-content meta marking', () => {
         expect(normalized).not.toBeNull();
         if (!normalized) return;
         expect(normalized.role).toBe('user');
-        expect(readUnsupportedContentMeta(normalized.meta)?.kind).toBe('unparsed-user-message');
+        expect(readUnsupportedContentMeta(normalized.meta)).toBe('unparsed-user-message');
     });
 
     it('marks a Zod parse failure for an agent record as unparsed-agent-message', () => {
@@ -28,10 +28,10 @@ describe('normalizeRawMessage unsupported-content meta marking', () => {
         expect(normalized).not.toBeNull();
         if (!normalized) return;
         expect(normalized.role).toBe('agent');
-        expect(readUnsupportedContentMeta(normalized.meta)?.kind).toBe('unparsed-agent-message');
+        expect(readUnsupportedContentMeta(normalized.meta)).toBe('unparsed-agent-message');
     });
 
-    it('marks an unrecognized output payload as unsupported-agent-output, carrying the raw data type', () => {
+    it('marks an unrecognized output payload as unsupported-agent-output', () => {
         const raw: any = {
             role: 'agent',
             content: {
@@ -44,13 +44,10 @@ describe('normalizeRawMessage unsupported-content meta marking', () => {
         expect(normalized).not.toBeNull();
         if (!normalized) return;
         expect(normalized.role).toBe('agent');
-        expect(readUnsupportedContentMeta(normalized.meta)).toEqual({
-            kind: 'unsupported-agent-output',
-            recordType: 'some_future_output_type',
-        });
+        expect(readUnsupportedContentMeta(normalized.meta)).toBe('unsupported-agent-output');
     });
 
-    it('marks an unrecognized ACP data payload as unsupported-transcript-record, carrying the raw data type', () => {
+    it('marks an unrecognized ACP data payload as unsupported-transcript-record', () => {
         const raw: any = {
             role: 'agent',
             content: {
@@ -64,9 +61,6 @@ describe('normalizeRawMessage unsupported-content meta marking', () => {
         expect(normalized).not.toBeNull();
         if (!normalized) return;
         expect(normalized.role).toBe('agent');
-        expect(readUnsupportedContentMeta(normalized.meta)).toEqual({
-            kind: 'unsupported-transcript-record',
-            recordType: 'some_future_acp_type',
-        });
+        expect(readUnsupportedContentMeta(normalized.meta)).toBe('unsupported-transcript-record');
     });
 });

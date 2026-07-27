@@ -821,10 +821,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
       unsupportedContent: {
         unparsedUserMessage: '無法解析的訊息',
         unparsedAgentMessage: '無法解析的訊息',
-        unsupportedAgentOutput: ({ recordType }: { recordType?: string }) =>
-          recordType ? `不支援的輸出 (${recordType})` : '不支援的輸出',
-        unsupportedTranscriptRecord: ({ recordType }: { recordType?: string }) =>
-          recordType ? `不支援的記錄 (${recordType})` : '不支援的記錄',
+        unsupportedAgentOutput: '不支援的輸出',
+        unsupportedTranscriptRecord: '不支援的記錄',
       },
 
     },

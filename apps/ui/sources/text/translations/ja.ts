@@ -710,10 +710,8 @@ export const ja: TranslationStructure = {
     unsupportedContent: {
       unparsedUserMessage: '解析できないメッセージ',
       unparsedAgentMessage: '解析できないメッセージ',
-      unsupportedAgentOutput: ({ recordType }: { recordType?: string }) =>
-        recordType ? `サポートされていない出力 (${recordType})` : 'サポートされていない出力',
-      unsupportedTranscriptRecord: ({ recordType }: { recordType?: string }) =>
-        recordType ? `サポートされていない記録 (${recordType})` : 'サポートされていない記録',
+      unsupportedAgentOutput: 'サポートされていない出力',
+      unsupportedTranscriptRecord: 'サポートされていない記録',
     },
 
   },

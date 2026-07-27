@@ -514,10 +514,8 @@ export const en = {
         unsupportedContent: {
             unparsedUserMessage: 'Unparsed message',
             unparsedAgentMessage: 'Unparsed message',
-            unsupportedAgentOutput: ({ recordType }: { recordType?: string }) =>
-                recordType ? `Unsupported output (${recordType})` : 'Unsupported output',
-            unsupportedTranscriptRecord: ({ recordType }: { recordType?: string }) =>
-                recordType ? `Unsupported record (${recordType})` : 'Unsupported record',
+            unsupportedAgentOutput: 'Unsupported output',
+            unsupportedTranscriptRecord: 'Unsupported record',
         },
     },
 

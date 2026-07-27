@@ -340,7 +340,6 @@ export function normalizeRawMessage(
             role === 'user'
                 ? '[Unparsed user message]'
                 : '[Unparsed agent message]';
-        const unparsedRecordType = typeof rawContentRecord?.type === 'string' ? rawContentRecord.type : undefined;
         return role === 'user'
             ? {
                 id,
@@ -350,10 +349,7 @@ export function normalizeRawMessage(
                 role: 'user',
                 isSidechain: false,
                 content: { type: 'text', text },
-                meta: markUnsupportedContentMeta(rawInputRecord?.meta as MessageMeta | undefined, {
-                    kind: 'unparsed-user-message',
-                    recordType: unparsedRecordType,
-                }),
+                meta: markUnsupportedContentMeta(rawInputRecord?.meta as MessageMeta | undefined, 'unparsed-user-message'),
             }
             : {
                 id,
@@ -363,10 +359,7 @@ export function normalizeRawMessage(
                 role: 'agent',
                 isSidechain: false,
                 content: [{ type: 'text', text, uuid: id, parentUUID: null }],
-                meta: markUnsupportedContentMeta(rawInputRecord?.meta as MessageMeta | undefined, {
-                    kind: 'unparsed-agent-message',
-                    recordType: unparsedRecordType,
-                }),
+                meta: markUnsupportedContentMeta(rawInputRecord?.meta as MessageMeta | undefined, 'unparsed-agent-message'),
             };
     }
     const raw = parsed.data as RawRecord;
@@ -761,10 +754,6 @@ export function normalizeRawMessage(
                 return filterNormalizedEventRoleOutput(normalized, opts?.messageRole);
             }
             // Any other output payload should be surfaced as an opaque message rather than dropped.
-            const unsupportedOutputRecordType = (() => {
-                const dataType = (raw.content.data as { type?: unknown } | undefined)?.type;
-                return typeof dataType === 'string' ? dataType : undefined;
-            })();
             const normalized = {
                 id,
                 ...(seq !== undefined ? { seq } : {}),
@@ -778,10 +767,7 @@ export function normalizeRawMessage(
                     uuid: id,
                     parentUUID: null,
                 }],
-                meta: markUnsupportedContentMeta(raw.meta, {
-                    kind: 'unsupported-agent-output',
-                    recordType: unsupportedOutputRecordType,
-                }),
+                meta: markUnsupportedContentMeta(raw.meta, 'unsupported-agent-output'),
             } satisfies NormalizedMessage;
             return filterNormalizedEventRoleOutput(normalized, opts?.messageRole);
         }
@@ -1180,12 +1166,6 @@ export function normalizeRawMessage(
             }
         }
     }
-    const unsupportedRecordType = (() => {
-        const dataType = (raw as any)?.content?.data?.type;
-        if (typeof dataType === 'string') return dataType;
-        const contentType = (raw as any)?.content?.type;
-        return typeof contentType === 'string' ? contentType : undefined;
-    })();
     return {
         id,
         ...(seq !== undefined ? { seq } : {}),
@@ -1199,9 +1179,6 @@ export function normalizeRawMessage(
             uuid: id,
             parentUUID: null,
         }],
-        meta: markUnsupportedContentMeta((raw as any)?.meta, {
-            kind: 'unsupported-transcript-record',
-            recordType: unsupportedRecordType,
-        }),
+        meta: markUnsupportedContentMeta((raw as any)?.meta, 'unsupported-transcript-record'),
     };
 }

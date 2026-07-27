@@ -681,10 +681,8 @@ export const ca: TranslationStructure = {
         unsupportedContent: {
             unparsedUserMessage: 'Missatge no analitzat',
             unparsedAgentMessage: 'Missatge no analitzat',
-            unsupportedAgentOutput: ({ recordType }: { recordType?: string }) =>
-                recordType ? `Sortida no compatible (${recordType})` : 'Sortida no compatible',
-            unsupportedTranscriptRecord: ({ recordType }: { recordType?: string }) =>
-                recordType ? `Registre no compatible (${recordType})` : 'Registre no compatible',
+            unsupportedAgentOutput: 'Sortida no compatible',
+            unsupportedTranscriptRecord: 'Registre no compatible',
         },
     },
 

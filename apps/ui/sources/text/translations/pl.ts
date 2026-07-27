@@ -738,10 +738,8 @@ export const pl: TranslationStructure = {
     unsupportedContent: {
       unparsedUserMessage: 'Nieprzeanalizowana wiadomość',
       unparsedAgentMessage: 'Nieprzeanalizowana wiadomość',
-      unsupportedAgentOutput: ({ recordType }: { recordType?: string }) =>
-        recordType ? `Nieobsługiwane wyjście (${recordType})` : 'Nieobsługiwane wyjście',
-      unsupportedTranscriptRecord: ({ recordType }: { recordType?: string }) =>
-        recordType ? `Nieobsługiwany rekord (${recordType})` : 'Nieobsługiwany rekord',
+      unsupportedAgentOutput: 'Nieobsługiwane wyjście',
+      unsupportedTranscriptRecord: 'Nieobsługiwany rekord',
     },
 
   },

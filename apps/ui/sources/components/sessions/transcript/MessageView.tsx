@@ -31,7 +31,7 @@ import { ThinkingTimelineRow } from '@/components/sessions/transcript/thinking/T
 import { TranscriptEventRow } from '@/components/sessions/transcript/events/TranscriptEventRow';
 import { transcriptMarkdownTextStyle } from '@/components/sessions/transcript/transcriptMarkdownTypography';
 import { parseHappierMetaEnvelope } from '@/components/sessions/transcript/structured/happierMetaEnvelope';
-import { readUnsupportedContentMeta, type UnsupportedContentMetaValue } from '@/sync/domains/messages/unsupportedContentMeta';
+import { readUnsupportedContentMeta, type UnsupportedContentKind } from '@/sync/domains/messages/unsupportedContentMeta';
 import { AttachmentsMessageRow } from '@/components/sessions/attachments/messages/AttachmentsMessageRow';
 import { SessionMediaInlineImages } from '@/components/sessions/sessionMedia/SessionMediaInlineImages';
 import { parseSessionMediaMessageMeta } from '@/sync/domains/sessionMedia/sessionMediaMessageMeta';
@@ -105,16 +105,16 @@ function shouldEnableFallbackTextNativeSelection(platformOS: typeof Platform.OS)
   return platformOS !== 'ios';
 }
 
-function resolveUnsupportedContentLabel(meta: UnsupportedContentMetaValue): string {
-  switch (meta.kind) {
+function resolveUnsupportedContentLabel(kind: UnsupportedContentKind): string {
+  switch (kind) {
     case 'unparsed-user-message':
       return t('transcript.unsupportedContent.unparsedUserMessage');
     case 'unparsed-agent-message':
       return t('transcript.unsupportedContent.unparsedAgentMessage');
     case 'unsupported-agent-output':
-      return t('transcript.unsupportedContent.unsupportedAgentOutput', { recordType: meta.recordType });
+      return t('transcript.unsupportedContent.unsupportedAgentOutput');
     case 'unsupported-transcript-record':
-      return t('transcript.unsupportedContent.unsupportedTranscriptRecord', { recordType: meta.recordType });
+      return t('transcript.unsupportedContent.unsupportedTranscriptRecord');
   }
 }
 
