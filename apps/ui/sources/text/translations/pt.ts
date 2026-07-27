@@ -773,6 +773,15 @@ export const pt: TranslationStructure = {
 
     },
 
+    unsupportedContent: {
+      unparsedUserMessage: 'Mensagem não analisada',
+      unparsedAgentMessage: 'Mensagem não analisada',
+      unsupportedAgentOutput: ({ recordType }: { recordType?: string }) =>
+        recordType ? `Saída não suportada (${recordType})` : 'Saída não suportada',
+      unsupportedTranscriptRecord: ({ recordType }: { recordType?: string }) =>
+        recordType ? `Registro não suportado (${recordType})` : 'Registro não suportado',
+    },
+
   },
 
 

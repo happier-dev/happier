@@ -31,6 +31,7 @@ import { ThinkingTimelineRow } from '@/components/sessions/transcript/thinking/T
 import { TranscriptEventRow } from '@/components/sessions/transcript/events/TranscriptEventRow';
 import { transcriptMarkdownTextStyle } from '@/components/sessions/transcript/transcriptMarkdownTypography';
 import { parseHappierMetaEnvelope } from '@/components/sessions/transcript/structured/happierMetaEnvelope';
+import { readUnsupportedContentMeta, type UnsupportedContentMetaValue } from '@/sync/domains/messages/unsupportedContentMeta';
 import { AttachmentsMessageRow } from '@/components/sessions/attachments/messages/AttachmentsMessageRow';
 import { SessionMediaInlineImages } from '@/components/sessions/sessionMedia/SessionMediaInlineImages';
 import { parseSessionMediaMessageMeta } from '@/sync/domains/sessionMedia/sessionMediaMessageMeta';
@@ -102,6 +103,19 @@ function useStructuredMessageJumpHandler(sessionId: string): StructuredMessageRe
 
 function shouldEnableFallbackTextNativeSelection(platformOS: typeof Platform.OS): boolean {
   return platformOS !== 'ios';
+}
+
+function resolveUnsupportedContentLabel(meta: UnsupportedContentMetaValue): string {
+  switch (meta.kind) {
+    case 'unparsed-user-message':
+      return t('transcript.unsupportedContent.unparsedUserMessage');
+    case 'unparsed-agent-message':
+      return t('transcript.unsupportedContent.unparsedAgentMessage');
+    case 'unsupported-agent-output':
+      return t('transcript.unsupportedContent.unsupportedAgentOutput', { recordType: meta.recordType });
+    case 'unsupported-transcript-record':
+      return t('transcript.unsupportedContent.unsupportedTranscriptRecord', { recordType: meta.recordType });
+  }
 }
 
 function normalizeStreamSegmentStateForRendering(value: unknown): StreamSegmentStateForRendering | null {
@@ -342,6 +356,11 @@ function UserTextBlock(props: {
     return envelope?.kind === 'voice_agent_turn.v1';
   }, [props.message.meta]);
 
+  const unsupportedContentMeta = React.useMemo(
+    () => readUnsupportedContentMeta(props.message.meta),
+    [props.message.meta],
+  );
+
   const structuredNode = renderStructuredMessage({
     message: props.message,
     sessionId: props.sessionId,
@@ -368,13 +387,14 @@ function UserTextBlock(props: {
   }, [pathname, props.sessionId, router]);
 
   const markdownText = React.useMemo(() => {
+    if (unsupportedContentMeta) return resolveUnsupportedContentLabel(unsupportedContentMeta);
     if (isVoiceAgentTurn && props.message.displayText === undefined) {
       return normalizeVoiceAgentTurnTranscriptText(props.message.text);
     }
     if (props.message.displayText !== undefined) return props.message.displayText;
     if (attachmentsMeta) return stripLegacyAttachmentsBlock(props.message.text);
     return props.message.text;
-  }, [attachmentsMeta, isVoiceAgentTurn, props.message.displayText, props.message.text]);
+  }, [attachmentsMeta, isVoiceAgentTurn, props.message.displayText, props.message.text, unsupportedContentMeta]);
   const renderedMarkdownText = markdownText ?? props.message.displayText ?? props.message.text;
 
   const linkedWorkspaceFiles = React.useMemo(
@@ -705,6 +725,10 @@ function AgentTextBlock(props: {
     const envelope = parseHappierMetaEnvelope(props.message.meta);
     return envelope?.kind === 'voice_agent_turn.v1';
   }, [props.message.meta]);
+  const unsupportedContentMeta = React.useMemo(
+    () => readUnsupportedContentMeta(props.message.meta),
+    [props.message.meta],
+  );
   const sessionThinkingDisplayMode = props.messageDisplayCommon.sessionThinkingDisplayMode;
   const sessionThinkingInlinePresentation = props.messageDisplayCommon.sessionThinkingInlinePresentation;
   const sessionThinkingInlineChrome = props.messageDisplayCommon.sessionThinkingInlineChrome;
@@ -729,14 +753,18 @@ function AgentTextBlock(props: {
   const handleOpenMediaPath = React.useCallback((filePath: string) => {
     pushSessionFileDeepLink(router, pathname, { sessionId: props.sessionId, filePath });
   }, [pathname, props.sessionId, router]);
-  const baseMarkdownText = isVoiceAgentTurn
-    ? normalizeVoiceAgentTurnTranscriptText(props.message.text)
-    : props.message.text;
-  if (isVoiceAgentTurn && baseMarkdownText == null) {
+  const baseMarkdownText = unsupportedContentMeta
+    ? resolveUnsupportedContentLabel(unsupportedContentMeta)
+    : isVoiceAgentTurn
+      ? normalizeVoiceAgentTurnTranscriptText(props.message.text)
+      : props.message.text;
+  if (!unsupportedContentMeta && isVoiceAgentTurn && baseMarkdownText == null) {
     return null;
   }
   const markdownSource = baseMarkdownText ?? props.message.text;
-  const markdown = props.message.isThinking ? unwrapLegacyThinkingWrapper(markdownSource) : markdownSource;
+  const markdown = (!unsupportedContentMeta && props.message.isThinking)
+    ? unwrapLegacyThinkingWrapper(markdownSource)
+    : markdownSource;
   const deriveThinkingSummary = (text: string) => {
     const trimmed = String(text ?? '').trim();
     if (!trimmed) return '';

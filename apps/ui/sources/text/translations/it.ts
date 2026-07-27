@@ -722,6 +722,15 @@ export const it: TranslationStructure = {
 
     },
 
+    unsupportedContent: {
+      unparsedUserMessage: 'Messaggio non analizzato',
+      unparsedAgentMessage: 'Messaggio non analizzato',
+      unsupportedAgentOutput: ({ recordType }: { recordType?: string }) =>
+        recordType ? `Output non supportato (${recordType})` : 'Output non supportato',
+      unsupportedTranscriptRecord: ({ recordType }: { recordType?: string }) =>
+        recordType ? `Record non supportato (${recordType})` : 'Record non supportato',
+    },
+
   },
 
 

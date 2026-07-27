@@ -724,6 +724,15 @@ export const es: TranslationStructure = {
 
     },
 
+    unsupportedContent: {
+      unparsedUserMessage: 'Mensaje no analizado',
+      unparsedAgentMessage: 'Mensaje no analizado',
+      unsupportedAgentOutput: ({ recordType }: { recordType?: string }) =>
+        recordType ? `Salida no compatible (${recordType})` : 'Salida no compatible',
+      unsupportedTranscriptRecord: ({ recordType }: { recordType?: string }) =>
+        recordType ? `Registro no compatible (${recordType})` : 'Registro no compatible',
+    },
+
   },
 
 
