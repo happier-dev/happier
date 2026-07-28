@@ -819,8 +819,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
       },
 
       unsupportedContent: {
-        unparsedUserMessage: '無法解析的訊息',
-        unparsedAgentMessage: '無法解析的訊息',
+        unparsedUserMessage: '無法解析的使用者訊息',
+        unparsedAgentMessage: '無法解析的助手訊息',
         unsupportedAgentOutput: '不支援的輸出',
         unsupportedTranscriptRecord: '不支援的記錄',
       },

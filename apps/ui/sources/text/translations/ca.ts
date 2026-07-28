@@ -679,8 +679,8 @@ export const ca: TranslationStructure = {
             catchingUp: 'Posant-se al dia…',
         },
         unsupportedContent: {
-            unparsedUserMessage: 'Missatge no analitzat',
-            unparsedAgentMessage: 'Missatge no analitzat',
+            unparsedUserMessage: 'Missatge d\'usuari no analitzat',
+            unparsedAgentMessage: 'Missatge d\'assistent no analitzat',
             unsupportedAgentOutput: 'Sortida no compatible',
             unsupportedTranscriptRecord: 'Registre no compatible',
         },

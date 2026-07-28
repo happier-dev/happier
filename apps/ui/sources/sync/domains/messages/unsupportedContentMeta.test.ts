@@ -8,8 +8,8 @@ describe('markUnsupportedContentMeta / readUnsupportedContentMeta', () => {
     });
 
     it('preserves unrelated existing meta fields', () => {
-        const meta = markUnsupportedContentMeta({ source: 'cli' } as any, 'unsupported-transcript-record');
-        expect((meta as any).source).toBe('cli');
+        const meta = markUnsupportedContentMeta({ source: 'cli' }, 'unsupported-transcript-record');
+        expect(meta.source).toBe('cli');
         expect(readUnsupportedContentMeta(meta)).toBe('unsupported-transcript-record');
     });
 

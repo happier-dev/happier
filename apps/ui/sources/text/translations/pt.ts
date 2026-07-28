@@ -774,8 +774,8 @@ export const pt: TranslationStructure = {
     },
 
     unsupportedContent: {
-      unparsedUserMessage: 'Mensagem não analisada',
-      unparsedAgentMessage: 'Mensagem não analisada',
+      unparsedUserMessage: 'Mensagem do usuário não analisada',
+      unparsedAgentMessage: 'Mensagem do assistente não analisada',
       unsupportedAgentOutput: 'Saída não suportada',
       unsupportedTranscriptRecord: 'Registro não suportado',
     },

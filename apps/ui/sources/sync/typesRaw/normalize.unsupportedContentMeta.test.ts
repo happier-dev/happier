@@ -5,7 +5,7 @@ import { readUnsupportedContentMeta } from '../domains/messages/unsupportedConte
 
 describe('normalizeRawMessage unsupported-content meta marking', () => {
     it('marks a Zod parse failure for a user record as unparsed-user-message', () => {
-        const raw: any = {
+        const raw = {
             role: 'user',
             // `content.type` outside the known 'output' | 'event' | 'codex' | 'acp' union fails schema validation.
             content: { type: 'totally-unknown-content-type' },
@@ -19,7 +19,7 @@ describe('normalizeRawMessage unsupported-content meta marking', () => {
     });
 
     it('marks a Zod parse failure for an agent record as unparsed-agent-message', () => {
-        const raw: any = {
+        const raw = {
             role: 'agent',
             content: { type: 'totally-unknown-content-type' },
         };
@@ -32,7 +32,7 @@ describe('normalizeRawMessage unsupported-content meta marking', () => {
     });
 
     it('marks an unrecognized output payload as unsupported-agent-output', () => {
-        const raw: any = {
+        const raw = {
             role: 'agent',
             content: {
                 type: 'output',
@@ -48,7 +48,7 @@ describe('normalizeRawMessage unsupported-content meta marking', () => {
     });
 
     it('marks an unrecognized ACP data payload as unsupported-transcript-record', () => {
-        const raw: any = {
+        const raw = {
             role: 'agent',
             content: {
                 type: 'acp',

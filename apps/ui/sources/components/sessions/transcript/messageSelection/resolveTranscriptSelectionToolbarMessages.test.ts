@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import { resolveUnsupportedContentLabel } from '@/sync/domains/messages/resolveUnsupportedContentLabel';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
 import { resolveTranscriptSelectionToolbarMessages } from './resolveTranscriptSelectionToolbarMessages';
@@ -49,5 +50,23 @@ describe('resolveTranscriptSelectionToolbarMessages', () => {
         ], { path: '/', host: 'localhost', discardedCommittedMessageLocalIds: ['local-discarded'] } as Metadata);
 
         expect(resolved).toEqual([{ id: 'done', role: 'assistant', text: 'complete' }]);
+    });
+
+    it('resolves the localized label, not the raw fallback text, for a message carrying an unsupported-content marker', () => {
+        const resolved = resolveTranscriptSelectionToolbarMessages([
+            message({
+                id: 'unsupported',
+                kind: 'agent-text',
+                text: '[Unsupported agent output]',
+                meta: { happierUnsupportedContentV1: 'unsupported-agent-output' },
+            }),
+        ]);
+
+        expect(resolved).toEqual([{
+            id: 'unsupported',
+            role: 'assistant',
+            text: resolveUnsupportedContentLabel('unsupported-agent-output'),
+        }]);
+        expect(resolved[0]?.text).not.toBe('[Unsupported agent output]');
     });
 });

@@ -38,9 +38,11 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: (props: any) => React.createElement('TextInput', props, props.children),
 }));
 
+let copyButtonsVisible = false;
+
 vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({
-    shouldShowMessageCopyButton: () => false,
-    shouldShowMessageSelectButton: () => false,
+    shouldShowMessageCopyButton: () => copyButtonsVisible,
+    shouldShowMessageSelectButton: () => copyButtonsVisible,
 }));
 
 vi.mock('@/components/sessions/transcript/structured/StructuredMessageBlock', () => ({
@@ -84,9 +86,19 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
+const setClipboardStringSafeMock = vi.fn(async (_text: string) => true);
+vi.mock('@/utils/ui/clipboard', () => ({
+    setClipboardStringSafe: (text: string) => setClipboardStringSafeMock(text),
+}));
+
+vi.mock('@/components/sessions/transcript/messageSelection/SelectMessageButton', () => ({
+    SelectMessageButton: (props: any) => React.createElement('SelectMessageButton', props),
+}));
+
 describe('MessageView unsupported-content rendering', () => {
     beforeEach(() => {
         vi.resetModules();
+        copyButtonsVisible = false;
     });
 
     afterEach(() => {
@@ -194,5 +206,55 @@ describe('MessageView unsupported-content rendering', () => {
 
         const markdownView = screen.findByType('MarkdownView' as any);
         expect(markdownView.props.markdown).toBe('hello world');
+    });
+
+    it.each([
+        ['[Unparsed user message]', undefined],
+        ['[Unparsed agent message]', undefined],
+        ['[Unsupported agent output]', { happierUnsupportedContentV1: 'not-a-real-kind' }],
+        ['[Unsupported transcript record]', { happierUnsupportedContentV1: 42 }],
+    ] as const)(
+        'renders the literal raw placeholder text %s unchanged when the meta marker is absent or malformed (no string-sniffing)',
+        async (rawText, meta) => {
+            const { MessageView } = await import('./MessageView');
+
+            const screen = await renderScreen(
+                <MessageView
+                    sessionId="s1"
+                    metadata={null}
+                    message={{ kind: 'agent-text', id: 'legacy', localId: 'local-legacy', createdAt: 1, text: rawText, meta }}
+                />,
+            );
+
+            const markdownView = screen.findByType('MarkdownView' as any);
+            expect(markdownView.props.markdown).toBe(rawText);
+        },
+    );
+
+    it('does not leak the raw fallback text into select-preview/copy text when an unsupported-content marker is present', async () => {
+        copyButtonsVisible = true;
+        setClipboardStringSafeMock.mockClear();
+        const { MessageView } = await import('./MessageView');
+
+        const screen = await renderScreen(
+            <MessageView
+                sessionId="s1"
+                metadata={null}
+                message={{
+                    kind: 'agent-text',
+                    id: 'a5',
+                    localId: 'local-a5',
+                    createdAt: 1,
+                    text: '[Unsupported agent output]',
+                    meta: { happierUnsupportedContentV1: 'unsupported-agent-output' },
+                }}
+            />,
+        );
+
+        const selectButton = screen.findByTestId('transcript-message-select:a5');
+        expect(selectButton?.props.previewText).toBe('transcript.unsupportedContent.unsupportedAgentOutput');
+
+        await screen.pressByTestIdAsync('transcript-message-copy:a5');
+        expect(setClipboardStringSafeMock).toHaveBeenCalledWith('transcript.unsupportedContent.unsupportedAgentOutput');
     });
 });

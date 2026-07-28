@@ -1,5 +1,7 @@
 import { parseSessionMediaMessageMeta } from '@/sync/domains/sessionMedia/sessionMediaMessageMeta';
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import { readUnsupportedContentMeta } from '@/sync/domains/messages/unsupportedContentMeta';
+import { resolveUnsupportedContentLabel } from '@/sync/domains/messages/resolveUnsupportedContentLabel';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { isCommittedMessageDiscarded } from '@/utils/sessions/discardedCommittedMessages';
 
@@ -27,7 +29,11 @@ export function resolveTranscriptSelectionToolbarMessages(
             hasAttachmentBlockToStrip: message.kind === 'user-text' && parsedSessionMediaMeta?.legacyAttachments != null,
         });
         if (!selectable) continue;
-        selectableMessages.push({ id: message.id, ...selectable });
+        const unsupportedContentMeta = readUnsupportedContentMeta(message.meta);
+        const resolved = unsupportedContentMeta
+            ? { ...selectable, text: resolveUnsupportedContentLabel(unsupportedContentMeta) }
+            : selectable;
+        selectableMessages.push({ id: message.id, ...resolved });
     }
     return selectableMessages;
 }

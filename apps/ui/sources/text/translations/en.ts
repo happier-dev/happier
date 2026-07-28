@@ -512,8 +512,8 @@ export const en = {
             catchingUp: 'Catching up…',
         },
         unsupportedContent: {
-            unparsedUserMessage: 'Unparsed message',
-            unparsedAgentMessage: 'Unparsed message',
+            unparsedUserMessage: 'Unparsed user message',
+            unparsedAgentMessage: 'Unparsed agent message',
             unsupportedAgentOutput: 'Unsupported output',
             unsupportedTranscriptRecord: 'Unsupported record',
         },

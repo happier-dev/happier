@@ -708,8 +708,8 @@ export const ja: TranslationStructure = {
     },
 
     unsupportedContent: {
-      unparsedUserMessage: '解析できないメッセージ',
-      unparsedAgentMessage: '解析できないメッセージ',
+      unparsedUserMessage: '解析できないユーザーメッセージ',
+      unparsedAgentMessage: '解析できないアシスタントメッセージ',
       unsupportedAgentOutput: 'サポートされていない出力',
       unsupportedTranscriptRecord: 'サポートされていない記録',
     },

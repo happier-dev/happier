@@ -31,7 +31,8 @@ import { ThinkingTimelineRow } from '@/components/sessions/transcript/thinking/T
 import { TranscriptEventRow } from '@/components/sessions/transcript/events/TranscriptEventRow';
 import { transcriptMarkdownTextStyle } from '@/components/sessions/transcript/transcriptMarkdownTypography';
 import { parseHappierMetaEnvelope } from '@/components/sessions/transcript/structured/happierMetaEnvelope';
-import { readUnsupportedContentMeta, type UnsupportedContentKind } from '@/sync/domains/messages/unsupportedContentMeta';
+import { readUnsupportedContentMeta } from '@/sync/domains/messages/unsupportedContentMeta';
+import { resolveUnsupportedContentLabel } from '@/sync/domains/messages/resolveUnsupportedContentLabel';
 import { AttachmentsMessageRow } from '@/components/sessions/attachments/messages/AttachmentsMessageRow';
 import { SessionMediaInlineImages } from '@/components/sessions/sessionMedia/SessionMediaInlineImages';
 import { parseSessionMediaMessageMeta } from '@/sync/domains/sessionMedia/sessionMediaMessageMeta';
@@ -103,19 +104,6 @@ function useStructuredMessageJumpHandler(sessionId: string): StructuredMessageRe
 
 function shouldEnableFallbackTextNativeSelection(platformOS: typeof Platform.OS): boolean {
   return platformOS !== 'ios';
-}
-
-function resolveUnsupportedContentLabel(kind: UnsupportedContentKind): string {
-  switch (kind) {
-    case 'unparsed-user-message':
-      return t('transcript.unsupportedContent.unparsedUserMessage');
-    case 'unparsed-agent-message':
-      return t('transcript.unsupportedContent.unparsedAgentMessage');
-    case 'unsupported-agent-output':
-      return t('transcript.unsupportedContent.unsupportedAgentOutput');
-    case 'unsupported-transcript-record':
-      return t('transcript.unsupportedContent.unsupportedTranscriptRecord');
-  }
 }
 
 function normalizeStreamSegmentStateForRendering(value: unknown): StreamSegmentStateForRendering | null {
@@ -426,11 +414,14 @@ function UserTextBlock(props: {
     return true;
   }, []);
 
-  const selectableMessage = isDiscarded ? null : resolveSelectableMessageText({
-    message: props.message,
-    isStructuredOnly,
-    hasAttachmentBlockToStrip: attachmentsMeta != null,
-  });
+  const selectableMessage = isDiscarded ? null : (() => {
+    const base = resolveSelectableMessageText({
+      message: props.message,
+      isStructuredOnly,
+      hasAttachmentBlockToStrip: attachmentsMeta != null,
+    });
+    return base && unsupportedContentMeta ? { ...base, text: resolveUnsupportedContentLabel(unsupportedContentMeta) } : base;
+  })();
   const selectionEnabled = props.messageDisplayCommon.transcriptMessageSelectionEnabled === true && selectableMessage != null;
   const selectionRow = useOptionalTranscriptSelectionRow(props.message.id);
   const selectionModeActionsVisible = selectionEnabled && selectionRow.isSelectionMode;
@@ -777,11 +768,14 @@ function AgentTextBlock(props: {
     if (cleaned.length <= 120) return cleaned;
     return cleaned.slice(0, 117) + '…';
   };
-  const selectableMessage = resolveSelectableMessageText({
-    message: props.message,
-    isStructuredOnly,
-    hasAttachmentBlockToStrip: false,
-  });
+  const selectableMessage = (() => {
+    const base = resolveSelectableMessageText({
+      message: props.message,
+      isStructuredOnly,
+      hasAttachmentBlockToStrip: false,
+    });
+    return base && unsupportedContentMeta ? { ...base, text: resolveUnsupportedContentLabel(unsupportedContentMeta) } : base;
+  })();
   const selectionEnabled = props.messageDisplayCommon.transcriptMessageSelectionEnabled === true && selectableMessage != null;
   const copyText = selectableMessage?.text ?? (isStructuredOnly ? props.message.text : markdown);
 
