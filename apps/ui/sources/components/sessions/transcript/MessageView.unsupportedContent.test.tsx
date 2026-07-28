@@ -29,6 +29,15 @@ installMessageViewCommonModuleMocks({
     },
 });
 
+// Developer diagnostics are enabled by a dev build or the `devModeEnabled` local setting. Tests run
+// with `__DEV__` fixed to true by the Vitest config, so drive the decision through its owner.
+const debugState = vi.hoisted(() => ({ enabled: true }));
+
+vi.mock('@/components/sessions/debug/sessionDebugInformation', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/sessions/debug/sessionDebugInformation')>();
+    return { ...actual, isSessionDebugInformationEnabled: () => debugState.enabled };
+});
+
 vi.mock('@/components/markdown/MarkdownView', () => ({
     MarkdownView: (props: any) => React.createElement('MarkdownView', props),
 }));
@@ -99,98 +108,144 @@ describe('MessageView unsupported-content rendering', () => {
     beforeEach(() => {
         vi.resetModules();
         copyButtonsVisible = false;
+        debugState.enabled = true;
     });
 
     afterEach(() => {
         standardCleanup();
     });
 
-    it('renders the localized label for an unparsed user message instead of the raw fallback text', async () => {
-        const { MessageView } = await import('./MessageView');
+    describe('with developer diagnostics enabled', () => {
+        it.each([
+            ['unparsed user message', 'user-text', '[Unparsed user message]', 'unparsed-user-message'],
+            ['unparsed agent message', 'agent-text', '[Unparsed agent message]', 'unparsed-agent-message'],
+            ['unsupported agent output', 'agent-text', '[Unsupported agent output: future-type]', 'unsupported-agent-output'],
+            ['unsupported transcript record', 'agent-text', '[Unsupported transcript record]', 'unsupported-transcript-record'],
+        ] as const)('keeps the raw diagnostic text for an %s', async (_name, kind, rawText, marker) => {
+            const { MessageView } = await import('./MessageView');
 
-        const screen = await renderScreen(
-            <MessageView
-                sessionId="s1"
-                metadata={null}
-                message={{
-                    kind: 'user-text',
-                    id: 'u1',
-                    localId: 'local-u1',
-                    createdAt: 1,
-                    text: '[Unparsed user message]',
-                    meta: { happierUnsupportedContentV1: 'unparsed-user-message' },
-                }}
-            />,
-        );
+            const screen = await renderScreen(
+                <MessageView
+                    sessionId="s1"
+                    metadata={null}
+                    message={{
+                        kind,
+                        id: 'd1',
+                        localId: 'local-d1',
+                        createdAt: 1,
+                        text: rawText,
+                        meta: { happierUnsupportedContentV1: marker },
+                    } as any}
+                />,
+            );
 
-        const markdownView = screen.findByType('MarkdownView' as any);
-        expect(markdownView.props.markdown).toBe('transcript.unsupportedContent.unparsedUserMessage');
+            const markdownView = screen.findByType('MarkdownView' as any);
+            expect(markdownView.props.markdown).toBe(rawText);
+        });
+
+        it('copies the raw diagnostic so the offending payload type can be reported', async () => {
+            copyButtonsVisible = true;
+            setClipboardStringSafeMock.mockClear();
+            const { MessageView } = await import('./MessageView');
+
+            const screen = await renderScreen(
+                <MessageView
+                    sessionId="s1"
+                    metadata={null}
+                    message={{
+                        kind: 'agent-text',
+                        id: 'a5',
+                        localId: 'local-a5',
+                        createdAt: 1,
+                        text: '[Unsupported agent output: future-type]',
+                        meta: { happierUnsupportedContentV1: 'unsupported-agent-output' },
+                    }}
+                />,
+            );
+
+            await screen.pressByTestIdAsync('transcript-message-copy:a5');
+            expect(setClipboardStringSafeMock).toHaveBeenCalledWith('[Unsupported agent output: future-type]');
+        });
     });
 
-    it('renders the localized label for an unparsed agent message instead of the raw fallback text', async () => {
-        const { MessageView } = await import('./MessageView');
+    describe('with developer diagnostics disabled', () => {
+        beforeEach(() => {
+            debugState.enabled = false;
+        });
 
-        const screen = await renderScreen(
-            <MessageView
-                sessionId="s1"
-                metadata={null}
-                message={{
-                    kind: 'agent-text',
-                    id: 'a1',
-                    localId: 'local-a1',
-                    createdAt: 1,
-                    text: '[Unparsed agent message]',
-                    meta: { happierUnsupportedContentV1: 'unparsed-agent-message' },
-                }}
-            />,
-        );
+        it.each([
+            ['unparsed agent message', '[Unparsed agent message]', 'unparsed-agent-message'],
+            ['unsupported agent output', '[Unsupported agent output: future-type]', 'unsupported-agent-output'],
+            ['unsupported transcript record', '[Unsupported transcript record]', 'unsupported-transcript-record'],
+        ] as const)('renders no transcript row for an %s', async (_name, rawText, marker) => {
+            const { MessageView } = await import('./MessageView');
 
-        const markdownView = screen.findByType('MarkdownView' as any);
-        expect(markdownView.props.markdown).toBe('transcript.unsupportedContent.unparsedAgentMessage');
-    });
+            const screen = await renderScreen(
+                <MessageView
+                    sessionId="s1"
+                    metadata={null}
+                    message={{
+                        kind: 'agent-text',
+                        id: 'h1',
+                        localId: 'local-h1',
+                        createdAt: 1,
+                        text: rawText,
+                        meta: { happierUnsupportedContentV1: marker },
+                    }}
+                />,
+            );
 
-    it('renders the localized label for unsupported agent output', async () => {
-        const { MessageView } = await import('./MessageView');
+            expect(screen.findAllByType('MarkdownView' as any)).toHaveLength(0);
+        });
 
-        const screen = await renderScreen(
-            <MessageView
-                sessionId="s1"
-                metadata={null}
-                message={{
-                    kind: 'agent-text',
-                    id: 'a2',
-                    localId: 'local-a2',
-                    createdAt: 1,
-                    text: '[Unsupported agent output]',
-                    meta: { happierUnsupportedContentV1: 'unsupported-agent-output' },
-                }}
-            />,
-        );
+        it('keeps a localized placeholder for the user own unparsed message instead of dropping it', async () => {
+            const { MessageView } = await import('./MessageView');
 
-        const markdownView = screen.findByType('MarkdownView' as any);
-        expect(markdownView.props.markdown).toBe('transcript.unsupportedContent.unsupportedAgentOutput');
-    });
+            const screen = await renderScreen(
+                <MessageView
+                    sessionId="s1"
+                    metadata={null}
+                    message={{
+                        kind: 'user-text',
+                        id: 'u1',
+                        localId: 'local-u1',
+                        createdAt: 1,
+                        text: '[Unparsed user message]',
+                        meta: { happierUnsupportedContentV1: 'unparsed-user-message' },
+                    }}
+                />,
+            );
 
-    it('renders the localized label for an unsupported transcript record', async () => {
-        const { MessageView } = await import('./MessageView');
+            const markdownView = screen.findByType('MarkdownView' as any);
+            expect(markdownView.props.markdown).toBe('transcript.unsupportedContent.unparsedUserMessage');
+        });
 
-        const screen = await renderScreen(
-            <MessageView
-                sessionId="s1"
-                metadata={null}
-                message={{
-                    kind: 'agent-text',
-                    id: 'a3',
-                    localId: 'local-a3',
-                    createdAt: 1,
-                    text: '[Unsupported transcript record]',
-                    meta: { happierUnsupportedContentV1: 'unsupported-transcript-record' },
-                }}
-            />,
-        );
+        it('does not leak the raw fallback text into select-preview/copy text for the user own message', async () => {
+            copyButtonsVisible = true;
+            setClipboardStringSafeMock.mockClear();
+            const { MessageView } = await import('./MessageView');
 
-        const markdownView = screen.findByType('MarkdownView' as any);
-        expect(markdownView.props.markdown).toBe('transcript.unsupportedContent.unsupportedTranscriptRecord');
+            const screen = await renderScreen(
+                <MessageView
+                    sessionId="s1"
+                    metadata={null}
+                    message={{
+                        kind: 'user-text',
+                        id: 'u2',
+                        localId: 'local-u2',
+                        createdAt: 1,
+                        text: '[Unparsed user message]',
+                        meta: { happierUnsupportedContentV1: 'unparsed-user-message' },
+                    }}
+                />,
+            );
+
+            const selectButton = screen.findByTestId('transcript-message-select:u2');
+            expect(selectButton?.props.previewText).toBe('transcript.unsupportedContent.unparsedUserMessage');
+
+            await screen.pressByTestIdAsync('transcript-message-copy:u2');
+            expect(setClipboardStringSafeMock).toHaveBeenCalledWith('transcript.unsupportedContent.unparsedUserMessage');
+        });
     });
 
     it('renders normal message text unaffected when no unsupported-content marker is present', async () => {
@@ -216,6 +271,7 @@ describe('MessageView unsupported-content rendering', () => {
     ] as const)(
         'renders the literal raw placeholder text %s unchanged when the meta marker is absent or malformed (no string-sniffing)',
         async (rawText, meta) => {
+            debugState.enabled = false;
             const { MessageView } = await import('./MessageView');
 
             const screen = await renderScreen(
@@ -230,31 +286,4 @@ describe('MessageView unsupported-content rendering', () => {
             expect(markdownView.props.markdown).toBe(rawText);
         },
     );
-
-    it('does not leak the raw fallback text into select-preview/copy text when an unsupported-content marker is present', async () => {
-        copyButtonsVisible = true;
-        setClipboardStringSafeMock.mockClear();
-        const { MessageView } = await import('./MessageView');
-
-        const screen = await renderScreen(
-            <MessageView
-                sessionId="s1"
-                metadata={null}
-                message={{
-                    kind: 'agent-text',
-                    id: 'a5',
-                    localId: 'local-a5',
-                    createdAt: 1,
-                    text: '[Unsupported agent output]',
-                    meta: { happierUnsupportedContentV1: 'unsupported-agent-output' },
-                }}
-            />,
-        );
-
-        const selectButton = screen.findByTestId('transcript-message-select:a5');
-        expect(selectButton?.props.previewText).toBe('transcript.unsupportedContent.unsupportedAgentOutput');
-
-        await screen.pressByTestIdAsync('transcript-message-copy:a5');
-        expect(setClipboardStringSafeMock).toHaveBeenCalledWith('transcript.unsupportedContent.unsupportedAgentOutput');
-    });
 });

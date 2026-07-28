@@ -1,7 +1,8 @@
 import * as React from 'react';
 
 import { useSessionMessages } from '@/sync/store/hooks';
-import { useSetting } from '@/sync/domains/state/storage';
+import { useLocalSetting, useSetting } from '@/sync/domains/state/storage';
+import { isSessionDebugInformationEnabled } from '@/components/sessions/debug/sessionDebugInformation';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
 import { useTranscriptSelectionState } from './TranscriptMessageSelectionContext';
@@ -24,14 +25,18 @@ export function TranscriptSelectionToolbarController(props: Readonly<{
     const enabled = props.enabled !== false;
     const shouldReadSelectableMessages = enabled && selection.isSelectionMode;
     const sessionThinkingDisplayMode = useSetting('sessionThinkingDisplayMode');
+    const debugInformationEnabled = isSessionDebugInformationEnabled(useLocalSetting('devModeEnabled'));
     const { messages } = useSessionMessages(props.sessionId, {
         enabled: shouldReadSelectableMessages,
     });
     const selectableMessages = React.useMemo(
         () => shouldReadSelectableMessages
-            ? resolveTranscriptSelectionToolbarMessages(messages, props.metadata, { sessionThinkingDisplayMode })
+            ? resolveTranscriptSelectionToolbarMessages(messages, props.metadata, {
+                sessionThinkingDisplayMode,
+                debugInformationEnabled,
+            })
             : EMPTY_SELECTABLE_MESSAGES,
-        [messages, props.metadata, sessionThinkingDisplayMode, shouldReadSelectableMessages],
+        [debugInformationEnabled, messages, props.metadata, sessionThinkingDisplayMode, shouldReadSelectableMessages],
     );
 
     if (!enabled) return null;

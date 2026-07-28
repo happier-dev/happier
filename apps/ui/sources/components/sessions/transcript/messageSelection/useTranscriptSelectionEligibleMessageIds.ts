@@ -4,11 +4,13 @@ import { useShallow } from 'zustand/react/shallow';
 import { parseSessionMediaMessageMeta } from '@/sync/domains/sessionMedia/sessionMediaMessageMeta';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { compareTranscriptMessagesOldestFirst } from '@/sync/domains/messages/transcriptOrdering';
-import { storage, useSetting } from '@/sync/domains/state/storage';
+import { storage, useLocalSetting, useSetting } from '@/sync/domains/state/storage';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
+import { isSessionDebugInformationEnabled } from '@/components/sessions/debug/sessionDebugInformation';
 
 import { isAgentTextMessageActivelyStreamingForSelection, resolveSelectableMessageText } from './resolveSelectableMessageText';
 import {
+    isTranscriptSelectionHiddenUnsupportedContent,
     normalizeTranscriptSelectionThinkingVisibility,
     shouldExcludeMessageFromTranscriptSelection,
 } from './transcriptSelectionMessageVisibility';
@@ -41,7 +43,7 @@ function listMessagesByFallbackOrder(messagesById: Record<string, Message | unde
         .sort(compareTranscriptMessagesOldestFirst);
 }
 
-function resolveMessageEligibility(message: Message, discarded: boolean, hiddenThinking: boolean): Readonly<{
+function resolveMessageEligibility(message: Message, discarded: boolean, hiddenThinking: boolean, debugInformationEnabled: boolean): Readonly<{
     token: string;
     eligible: boolean;
 }> {
@@ -51,6 +53,8 @@ function resolveMessageEligibility(message: Message, discarded: boolean, hiddenT
     if (message.kind === 'user-text' || message.kind === 'agent-text') {
         if (discarded) {
             token = `${message.id}:${message.kind}:discarded`;
+        } else if (isTranscriptSelectionHiddenUnsupportedContent(message, debugInformationEnabled)) {
+            token = `${message.id}:${message.kind}:unsupported-content-hidden`;
         } else if (hiddenThinking && shouldExcludeMessageFromTranscriptSelection(message, { sessionThinkingDisplayMode: 'hidden' })) {
             token = `${message.id}:${message.kind}:thinking-hidden`;
         } else if (isAgentTextMessageActivelyStreamingForSelection(message)) {
@@ -128,6 +132,7 @@ export function useTranscriptSelectionEligibleMessageIds(
     const sessionThinkingDisplayMode = useSetting('sessionThinkingDisplayMode');
     const thinkingVisibilitySignature = normalizeTranscriptSelectionThinkingVisibility(sessionThinkingDisplayMode);
     const hiddenThinking = thinkingVisibilitySignature === 'hidden';
+    const debugInformationEnabled = isSessionDebugInformationEnabled(useLocalSetting('devModeEnabled'));
     const discardedLocalIdsSignature = React.useMemo(
         () => buildDiscardedMessageLocalIdsSignature(options?.metadata ?? null),
         [options?.metadata],
@@ -137,7 +142,7 @@ export function useTranscriptSelectionEligibleMessageIds(
         if (!enabled) return EMPTY_ELIGIBLE_MESSAGE_IDS;
 
         const sessionMessages = state.sessionMessages[sessionId];
-        const cacheKey = `${sessionId}\0${discardedLocalIdsSignature}\0thinking:${thinkingVisibilitySignature}`;
+        const cacheKey = `${sessionId}\0${discardedLocalIdsSignature}\0thinking:${thinkingVisibilitySignature}\0debug:${debugInformationEnabled ? 'on' : 'off'}`;
         if (sessionMessages) {
             const cachedIds = readCachedEligibleIdsForSource(cacheKey, sessionMessages);
             if (cachedIds) return cachedIds;
@@ -171,7 +176,7 @@ export function useTranscriptSelectionEligibleMessageIds(
                 && typeof message.localId === 'string'
                 && discardedLocalIds !== null
                 && discardedLocalIds.has(message.localId);
-            const eligibility = resolveMessageEligibility(message, discarded, hiddenThinking);
+            const eligibility = resolveMessageEligibility(message, discarded, hiddenThinking, debugInformationEnabled);
             signatureParts.push(eligibility.token);
             if (eligibility.eligible) eligibleIds.push(message.id);
         };

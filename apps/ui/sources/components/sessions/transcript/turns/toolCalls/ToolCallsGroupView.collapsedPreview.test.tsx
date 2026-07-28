@@ -228,6 +228,7 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
             transcriptStreamingSmoothingEnabled: true,
             transcriptMessageSelectionEnabled: true,
             transcriptMessageSendToSessionEnabled: false,
+            debugInformationEnabled: false,
             workspacePath: null,
         } as const;
         const toolChromeCommon = {

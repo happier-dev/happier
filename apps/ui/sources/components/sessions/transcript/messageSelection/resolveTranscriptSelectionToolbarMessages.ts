@@ -2,6 +2,7 @@ import { parseSessionMediaMessageMeta } from '@/sync/domains/sessionMedia/sessio
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { readUnsupportedContentMeta } from '@/sync/domains/messages/unsupportedContentMeta';
 import { resolveUnsupportedContentLabel } from '@/sync/domains/messages/resolveUnsupportedContentLabel';
+import { resolveUnsupportedContentPresentation } from '@/sync/domains/messages/unsupportedContentPresentation';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { isCommittedMessageDiscarded } from '@/utils/sessions/discardedCommittedMessages';
 
@@ -30,7 +31,15 @@ export function resolveTranscriptSelectionToolbarMessages(
         });
         if (!selectable) continue;
         const unsupportedContentMeta = readUnsupportedContentMeta(message.meta);
-        const resolved = unsupportedContentMeta
+        // Copying a placeholder yields what the row shows: the raw diagnostic when developer
+        // diagnostics are on, the localized label otherwise.
+        const keepRawDiagnostic = unsupportedContentMeta != null
+            && resolveUnsupportedContentPresentation({
+                kind: unsupportedContentMeta,
+                debugInformationEnabled: visibilityOptions?.debugInformationEnabled === true,
+            }) === 'diagnostic'
+            && selectable.text.trim().length > 0;
+        const resolved = unsupportedContentMeta && !keepRawDiagnostic
             ? { ...selectable, text: resolveUnsupportedContentLabel(unsupportedContentMeta) }
             : selectable;
         selectableMessages.push({ id: message.id, ...resolved });

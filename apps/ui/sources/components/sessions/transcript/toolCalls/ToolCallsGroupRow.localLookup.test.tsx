@@ -77,6 +77,7 @@ describe('ToolCallsGroupRow', () => {
       transcriptStreamingSmoothingEnabled: false,
       transcriptMessageSelectionEnabled: true,
       transcriptMessageSendToSessionEnabled: false,
+      debugInformationEnabled: false,
       workspacePath: null,
     } satisfies TranscriptMessageDisplayCommon;
     const forkCommon = {

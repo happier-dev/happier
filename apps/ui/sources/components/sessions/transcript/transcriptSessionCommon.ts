@@ -5,7 +5,9 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import type { SessionForkSupportSource } from '@/sync/domains/sessionFork/forkUiSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import type { ReducerState } from '@/sync/reducer/reducer';
+import { isSessionDebugInformationEnabled } from '@/components/sessions/debug/sessionDebugInformation';
 import {
+    useLocalSetting,
     useSessionForkSupportSource,
     useSessionMessagesById,
     useSessionMessagesReducerState,
@@ -46,6 +48,11 @@ export type TranscriptMessageDisplayCommon = Pick<TranscriptSessionCommonSetting
     | 'transcriptStreamingSmoothingEnabled'
 > & Readonly<{
     workspacePath: string | null;
+    /**
+     * Resolved once per transcript rather than per row, so rendering a message does not add a
+     * settings-store subscription for every row in the list.
+     */
+    debugInformationEnabled: boolean;
 }>;
 
 export type TranscriptForkCommon = Pick<TranscriptSessionCommonSettings,
@@ -98,6 +105,8 @@ export function useTranscriptSessionCommon(sessionId: string): TranscriptSession
     const messagesById = useSessionMessagesById(sessionId);
     const reducerState = useSessionMessagesReducerState(sessionId);
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
+    const localDevModeEnabled = useLocalSetting('devModeEnabled');
+    const debugInformationEnabled = isSessionDebugInformationEnabled(localDevModeEnabled);
 
     const sessionReplayEnabled = useSetting('sessionReplayEnabled');
     const sessionReplayMaxSeedChars = useSetting('sessionReplayMaxSeedChars');
@@ -134,6 +143,7 @@ export function useTranscriptSessionCommon(sessionId: string): TranscriptSession
         ]);
 
     const messageDisplay = React.useMemo<TranscriptMessageDisplayCommon>(() => ({
+            debugInformationEnabled,
             sessionThinkingDisplayMode,
             sessionThinkingInlineChrome,
             sessionThinkingInlinePresentation,
@@ -146,6 +156,7 @@ export function useTranscriptSessionCommon(sessionId: string): TranscriptSession
             transcriptStreamingSmoothingEnabled,
             workspacePath,
         }), [
+            debugInformationEnabled,
             sessionThinkingDisplayMode,
             sessionThinkingInlineChrome,
             sessionThinkingInlinePresentation,

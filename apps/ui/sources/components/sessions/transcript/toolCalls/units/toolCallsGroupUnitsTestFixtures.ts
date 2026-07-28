@@ -27,6 +27,7 @@ export function createTranscriptSessionCommonPropsFixture(overrides?: Readonly<{
             transcriptStreamingPartialOutputEnabled: true,
             transcriptStreamingSettleDelayMs: 0,
             transcriptStreamingSmoothingEnabled: true,
+            debugInformationEnabled: false,
             workspacePath: null,
         },
         toolChromeCommon: {
