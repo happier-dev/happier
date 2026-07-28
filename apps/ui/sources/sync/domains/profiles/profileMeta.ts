@@ -9,6 +9,8 @@ export type BuiltInProfileId =
     | 'anthropic'
     | 'deepseek'
     | 'zai'
+    | 'minimax'
+    | 'minimax-cn'
     | 'codex'
     | 'openai'
     | 'azure-openai'
@@ -20,6 +22,8 @@ export type BuiltInProfileNameKey =
     | 'profiles.builtInNames.anthropic'
     | 'profiles.builtInNames.deepseek'
     | 'profiles.builtInNames.zai'
+    | 'profiles.builtInNames.minimax'
+    | 'profiles.builtInNames.minimaxCn'
     | 'profiles.builtInNames.codex'
     | 'profiles.builtInNames.openai'
     | 'profiles.builtInNames.azureOpenai'
@@ -84,6 +88,10 @@ export function getBuiltInProfileNameKey(id: string): BuiltInProfileNameKey | nu
             return 'profiles.builtInNames.deepseek';
         case 'zai':
             return 'profiles.builtInNames.zai';
+        case 'minimax':
+            return 'profiles.builtInNames.minimax';
+        case 'minimax-cn':
+            return 'profiles.builtInNames.minimaxCn';
         case 'codex':
             return 'profiles.builtInNames.codex';
         case 'openai':

@@ -9451,6 +9451,8 @@ settingsSession: {
       anthropic: "Anthropic（默认）",
       deepseek: "DeepSeek（推理）",
       zai: "Z.AI (GLM-4.6)",
+      minimax: "MiniMax (M3)",
+      minimaxCn: "MiniMax (M3, CN)",
       codex: "Codex（默认）",
       openai: "OpenAI (GPT-5)",
       azureOpenai: "Azure OpenAI",

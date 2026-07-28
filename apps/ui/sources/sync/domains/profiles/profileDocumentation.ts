@@ -148,6 +148,124 @@ export Z_AI_OPUS_MODEL="GLM-4.6"
 export Z_AI_SONNET_MODEL="GLM-4.6"
 export Z_AI_HAIKU_MODEL="GLM-4.5-Air"`,
             };
+        case 'minimax':
+            return {
+                setupGuideUrl: 'https://platform.minimax.io/docs/api-reference/api-overview',
+                description: 'MiniMax M3 API proxied through Anthropic- and OpenAI-compatible interfaces (global endpoint)',
+                environmentVariables: [
+                    {
+                        name: 'MINIMAX_BASE_URL',
+                        expectedValue: 'https://api.minimax.io/anthropic',
+                        description: 'MiniMax Anthropic-compatible API endpoint (global)',
+                        isSecret: false,
+                    },
+                    {
+                        name: 'MINIMAX_OPENAI_BASE_URL',
+                        expectedValue: 'https://api.minimax.io/v1',
+                        description: 'MiniMax OpenAI-compatible API endpoint (global)',
+                        isSecret: false,
+                    },
+                    {
+                        name: 'MINIMAX_AUTH_TOKEN',
+                        expectedValue: '',
+                        description: 'Your MiniMax API key',
+                        isSecret: true,
+                    },
+                    {
+                        name: 'MINIMAX_API_TIMEOUT_MS',
+                        expectedValue: '600000',
+                        description: 'API timeout (10 minutes)',
+                        isSecret: false,
+                    },
+                    {
+                        name: 'MINIMAX_MODEL',
+                        expectedValue: 'MiniMax-M3',
+                        description: 'Default model (1M context window; supports text, image, and video input)',
+                        isSecret: false,
+                    },
+                    {
+                        name: 'MINIMAX_SMALL_FAST_MODEL',
+                        expectedValue: 'MiniMax-M2.7',
+                        description: 'Fast model for quick responses',
+                        isSecret: false,
+                    },
+                    {
+                        name: 'MINIMAX_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+                        expectedValue: '1',
+                        description: 'Disable non-essential network traffic',
+                        isSecret: false,
+                    },
+                ],
+                shellConfigExample: `# Add to ~/.zshrc or ~/.bashrc:
+export MINIMAX_BASE_URL="https://api.minimax.io/anthropic"
+export MINIMAX_OPENAI_BASE_URL="https://api.minimax.io/v1"
+export MINIMAX_AUTH_TOKEN="YOUR_MINIMAX_API_KEY"
+export MINIMAX_API_TIMEOUT_MS="600000"
+export MINIMAX_MODEL="MiniMax-M3"
+export MINIMAX_SMALL_FAST_MODEL="MiniMax-M2.7"
+export MINIMAX_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
+
+# Model selection guide:
+# - MiniMax-M3: Default model, best for general tasks (1M context, multimodal)
+# - MiniMax-M2.7: Faster, lighter model for quick responses`,
+            };
+        case 'minimax-cn':
+            return {
+                setupGuideUrl: 'https://platform.minimaxi.com/docs/api-reference/api-overview',
+                description: 'MiniMax M3 API proxied through Anthropic- and OpenAI-compatible interfaces (China endpoint)',
+                environmentVariables: [
+                    {
+                        name: 'MINIMAX_CN_BASE_URL',
+                        expectedValue: 'https://api.minimaxi.com/anthropic',
+                        description: 'MiniMax Anthropic-compatible API endpoint (China)',
+                        isSecret: false,
+                    },
+                    {
+                        name: 'MINIMAX_CN_OPENAI_BASE_URL',
+                        expectedValue: 'https://api.minimaxi.com/v1',
+                        description: 'MiniMax OpenAI-compatible API endpoint (China)',
+                        isSecret: false,
+                    },
+                    {
+                        name: 'MINIMAX_CN_AUTH_TOKEN',
+                        expectedValue: '',
+                        description: 'Your MiniMax API key',
+                        isSecret: true,
+                    },
+                    {
+                        name: 'MINIMAX_CN_API_TIMEOUT_MS',
+                        expectedValue: '600000',
+                        description: 'API timeout (10 minutes)',
+                        isSecret: false,
+                    },
+                    {
+                        name: 'MINIMAX_CN_MODEL',
+                        expectedValue: 'MiniMax-M3',
+                        description: 'Default model (1M context window; supports text, image, and video input)',
+                        isSecret: false,
+                    },
+                    {
+                        name: 'MINIMAX_CN_SMALL_FAST_MODEL',
+                        expectedValue: 'MiniMax-M2.7',
+                        description: 'Fast model for quick responses',
+                        isSecret: false,
+                    },
+                    {
+                        name: 'MINIMAX_CN_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+                        expectedValue: '1',
+                        description: 'Disable non-essential network traffic',
+                        isSecret: false,
+                    },
+                ],
+                shellConfigExample: `# Add to ~/.zshrc or ~/.bashrc:
+export MINIMAX_CN_BASE_URL="https://api.minimaxi.com/anthropic"
+export MINIMAX_CN_OPENAI_BASE_URL="https://api.minimaxi.com/v1"
+export MINIMAX_CN_AUTH_TOKEN="YOUR_MINIMAX_API_KEY"
+export MINIMAX_CN_API_TIMEOUT_MS="600000"
+export MINIMAX_CN_MODEL="MiniMax-M3"
+export MINIMAX_CN_SMALL_FAST_MODEL="MiniMax-M2.7"
+export MINIMAX_CN_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"`,
+            };
         case 'openai':
             return {
                 setupGuideUrl: 'https://platform.openai.com/docs/api-reference',
