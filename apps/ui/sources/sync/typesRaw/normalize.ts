@@ -6,6 +6,7 @@ import {
     markSyntheticNoResponseMeta,
     SYNTHETIC_NO_RESPONSE_TEXT,
 } from '../domains/messages/syntheticNoResponseMessageMeta';
+import { markUnsupportedContentMeta } from '../domains/messages/unsupportedContentMeta';
 import { hasSessionMediaRenderItems } from '../domains/sessionMedia/sessionMediaMessageMeta';
 import { rawRecordSchema, type AgentEvent, type RawAgentContent, type RawRecord, type UsageData } from './schemas';
 import { buildUsageDataFromTokenCountMessage } from './tokenCountUsage';
@@ -348,7 +349,7 @@ export function normalizeRawMessage(
                 role: 'user',
                 isSidechain: false,
                 content: { type: 'text', text },
-                meta: rawInputRecord?.meta as MessageMeta | undefined,
+                meta: markUnsupportedContentMeta(rawInputRecord?.meta as MessageMeta | undefined, 'unparsed-user-message'),
             }
             : {
                 id,
@@ -358,7 +359,7 @@ export function normalizeRawMessage(
                 role: 'agent',
                 isSidechain: false,
                 content: [{ type: 'text', text, uuid: id, parentUUID: null }],
-                meta: rawInputRecord?.meta as MessageMeta | undefined,
+                meta: markUnsupportedContentMeta(rawInputRecord?.meta as MessageMeta | undefined, 'unparsed-agent-message'),
             };
     }
     const raw = parsed.data as RawRecord;
@@ -753,6 +754,12 @@ export function normalizeRawMessage(
                 return filterNormalizedEventRoleOutput(normalized, opts?.messageRole);
             }
             // Any other output payload should be surfaced as an opaque message rather than dropped.
+            // Name the payload type: agent CLIs keep adding record types, and an unnamed placeholder
+            // leaves nothing to grep for when one starts leaking into transcripts.
+            const unsupportedType = (raw.content.data as { type?: unknown }).type;
+            const unsupportedLabel = typeof unsupportedType === 'string' && unsupportedType.length > 0
+                ? `[Unsupported agent output: ${unsupportedType}]`
+                : '[Unsupported agent output]';
             const normalized = {
                 id,
                 ...(seq !== undefined ? { seq } : {}),
@@ -762,11 +769,11 @@ export function normalizeRawMessage(
                 isSidechain: false,
                 content: [{
                     type: 'text',
-                    text: '[Unsupported agent output]',
+                    text: unsupportedLabel,
                     uuid: id,
                     parentUUID: null,
                 }],
-                meta: raw.meta,
+                meta: markUnsupportedContentMeta(raw.meta, 'unsupported-agent-output'),
             } satisfies NormalizedMessage;
             return filterNormalizedEventRoleOutput(normalized, opts?.messageRole);
         }
@@ -1178,6 +1185,6 @@ export function normalizeRawMessage(
             uuid: id,
             parentUUID: null,
         }],
-        meta: (raw as any)?.meta,
+        meta: markUnsupportedContentMeta((raw as any)?.meta, 'unsupported-transcript-record'),
     };
 }

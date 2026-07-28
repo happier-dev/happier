@@ -11,6 +11,7 @@ import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHa
 import { createApiSessionClientFixture, createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { formatPiSessionDirectoryForCwd } from '@/backends/pi/utils/piSessionFiles';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import * as acpModule from '@/agent/acp';
 
 import { createPiAcpRuntime } from './runtime';
 
@@ -72,6 +73,35 @@ describe('Pi ACP runtime permission mode wiring', () => {
     await runtime.startOrLoad({});
     expect(createSpy).toHaveBeenCalledTimes(2);
     expect(createCalls[1]).toEqual({ agentId: 'pi', permissionMode: 'read-only' });
+  });
+
+  it('resumes an absolute Pi session-file reference while binding the returned bare vendor id', async () => {
+    const resumeReference = '/tmp/pi/sessions/2026-07-12T00-00-00_pi-session-1.jsonl';
+    const loadSession = vi.fn(async () => ({ sessionId: 'pi-session-1' }));
+    vi.spyOn(acpModule, 'createCatalogAcpBackend').mockResolvedValue({
+      backend: {
+        startSession: async () => ({ sessionId: 'unused' }),
+        loadSession,
+        sendPrompt: async () => {},
+        cancel: async () => {},
+        onMessage: () => {},
+        dispose: async () => {},
+      },
+    } as unknown as Awaited<ReturnType<typeof acpModule.createCatalogAcpBackend>>);
+
+    const runtime = createPiAcpRuntime({
+      directory: '/tmp',
+      machineId: 'machine-1',
+      session: createApiSessionClientFixture(),
+      messageBuffer: createMessageBufferFixture(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange() {},
+      getPermissionMode: () => 'default',
+    });
+
+    await expect(runtime.startOrLoad({ resumeId: resumeReference })).resolves.toBe('pi-session-1');
+    expect(loadSession).toHaveBeenCalledWith(resumeReference);
   });
 
   it('publishes piSessionFile metadata when the PI session file is discoverable from runtime env', async () => {

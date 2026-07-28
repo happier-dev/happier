@@ -52,6 +52,7 @@ const agentCoreState = vi.hoisted<{
     supportsFreeform: true,
     dynamicProbe: 'dynamic',
 }));
+const providerAgentIdState = vi.hoisted(() => ({ value: 'claude' }));
 
 const modeOptionsState = vi.hoisted(() => ({
     value: [
@@ -127,7 +128,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
 }));
 
 vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
-    resolveProviderAgentIdForBackendTarget: () => 'claude',
+    resolveProviderAgentIdForBackendTarget: () => providerAgentIdState.value,
 }));
 
 vi.mock('@/components/sessions/pickers/OptionPickerOverlay', () => ({
@@ -207,6 +208,7 @@ describe('NewSessionEngineOptionDetail', () => {
         preflightModelsState.value = { availableModels: [], supportsFreeform: false };
         agentCoreState.supportsFreeform = true;
         agentCoreState.dynamicProbe = 'dynamic';
+        providerAgentIdState.value = 'claude';
         modeOptionsState.value = [
             { id: 'default', name: 'Build', description: 'Default build mode.' },
             { id: 'review', name: 'Review', description: 'Review and critique mode.' },
@@ -871,6 +873,117 @@ describe('NewSessionEngineOptionDetail', () => {
                 reasoning_effort: 'high',
                 service_tier: 'fast',
             },
+        });
+    });
+
+    it('renders advertised Grok models with only each selected model\'s effort control and dispatches canonical overrides', async () => {
+        providerAgentIdState.value = 'grok';
+        modelOptionsState.value = [
+            {
+                value: 'grok-4.5',
+                label: 'Grok 4.5',
+                description: 'Current model.',
+                modelOptions: [{
+                    id: 'reasoning_effort',
+                    name: 'Reasoning effort',
+                    type: 'select',
+                    currentValue: 'medium',
+                    options: [
+                        { value: 'low', name: 'Low' },
+                        { value: 'medium', name: 'Medium' },
+                        { value: 'high', name: 'High' },
+                    ],
+                }],
+            },
+            {
+                value: 'grok-4.1-fast',
+                label: 'Grok 4.1 Fast',
+                description: 'Fast model.',
+                modelOptions: [{
+                    id: 'reasoning_effort',
+                    name: 'Reasoning effort',
+                    type: 'select',
+                    currentValue: 'medium',
+                    options: [
+                        { value: 'medium', name: 'Medium' },
+                        { value: 'high', name: 'High' },
+                    ],
+                }],
+            },
+            {
+                value: 'grok-build',
+                label: 'Grok Build',
+                description: 'Compatibility fallback without effort metadata.',
+            },
+        ];
+        preflightModelsState.value = {
+            availableModels: modelOptionsState.value.map((model) => ({ id: model.value, name: model.label })),
+            supportsFreeform: false,
+        };
+        agentCoreState.supportsFreeform = false;
+        let latestSelection: {
+            modelId: string;
+            sessionModeId: string;
+            configOverrides: Readonly<Record<string, string>>;
+        } | null = null;
+
+        const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
+        await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={{ kind: 'builtInAgent', agentId: 'grok' }}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="grok-4.5"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+            onSelectionChange={(selection) => {
+                latestSelection = selection;
+            }}
+        />);
+
+        expect(lastModelPickerOverlayProps.options.map((model: ModelOptionEntry) => model.value)).toEqual([
+            'grok-4.5',
+            'grok-4.1-fast',
+            'grok-build',
+        ]);
+        expect(lastModelPickerOverlayProps.selectedOptionControls).toEqual([
+            expect.objectContaining({
+                option: expect.objectContaining({
+                    id: 'reasoning_effort',
+                    options: [
+                        { value: 'low', name: 'Low' },
+                        { value: 'medium', name: 'Medium' },
+                        { value: 'high', name: 'High' },
+                    ],
+                }),
+            }),
+        ]);
+
+        act(() => {
+            lastModelPickerOverlayProps.onSelectOptionControlValue('reasoning_effort', 'high');
+        });
+        expect(latestSelection).toEqual({
+            modelId: 'grok-4.5',
+            sessionModeId: 'default',
+            configOverrides: { reasoning_effort: 'high' },
+        });
+
+        act(() => {
+            lastModelPickerOverlayProps.onSelect('grok-4.1-fast');
+        });
+        expect(lastModelPickerOverlayProps.selectedOptionControls[0].option.options).toEqual([
+            { value: 'medium', name: 'Medium' },
+            { value: 'high', name: 'High' },
+        ]);
+
+        act(() => {
+            lastModelPickerOverlayProps.onSelect('grok-build');
+        });
+        expect(lastModelPickerOverlayProps.selectedOptionControls).toBeUndefined();
+        expect(latestSelection).toEqual({
+            modelId: 'grok-build',
+            sessionModeId: 'default',
+            configOverrides: {},
         });
     });
 

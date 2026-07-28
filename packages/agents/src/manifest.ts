@@ -466,4 +466,31 @@ export const AGENTS_CORE = {
             nativeImageGeneration: NO_NATIVE_IMAGE_GENERATION,
         },
     },
+    grok: {
+        id: 'grok',
+        cliSubcommand: 'grok',
+        detectKey: providerDetectKey('grok'),
+        flavorAliases: ['grok-build', 'grok-cli'],
+        cloudConnect: null,
+        connectedServices: null,
+        resume: {
+            vendorResume: 'experimental',
+            vendorResumeIdField: 'grokSessionId',
+            experimentalResumePolicy: 'runtime_checked',
+        },
+        sessionStorage: { direct: true, persisted: true },
+        sessionCapabilities: {
+            sessionListing: 'unsupported',
+            sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
+            sessionRollback: { conversation: 'unsupported' },
+        },
+        handoff: { vendorStateTransfer: 'unsupported' },
+        localControl: { supported: true, topology: 'exclusive', attachStrategy: 'unsupported' },
+        tools: { delivery: 'native_mcp', support: 'experimental' },
+        media: {
+            acceptsImageInput: 'unsupported',
+            emitsSessionMedia: 'unsupported',
+            nativeImageGeneration: NO_NATIVE_IMAGE_GENERATION,
+        },
+    },
 } as const satisfies Record<AgentId, AgentCore>;

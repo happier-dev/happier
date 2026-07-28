@@ -11,7 +11,9 @@ export function createSessionModeOverrideSynchronizer(params: Readonly<{
 }>): {
   syncFromMetadata: () => void;
   flushPendingAfterStart: () => Promise<void>;
+  rebindSession: (session: { getMetadataSnapshot: () => Metadata | null }) => void;
 } {
+  let session = params.session;
   let lastAppliedUpdatedAt = 0;
   let pending: { modeId: string; updatedAt: number } | null = null;
   let applyingPromise: Promise<void> | null = null;
@@ -74,7 +76,7 @@ export function createSessionModeOverrideSynchronizer(params: Readonly<{
   };
 
   const syncFromMetadata = (): void => {
-    const snapshot = params.session.getMetadataSnapshot();
+    const snapshot = session.getMetadataSnapshot();
     const next = computePendingSessionModeOverrideApplication({
       metadata: snapshot,
       lastAppliedUpdatedAt,
@@ -101,7 +103,11 @@ export function createSessionModeOverrideSynchronizer(params: Readonly<{
     await applyPendingIfPossible();
   };
 
-  return { syncFromMetadata, flushPendingAfterStart };
+  return {
+    syncFromMetadata,
+    flushPendingAfterStart,
+    rebindSession: (nextSession) => { session = nextSession; },
+  };
 }
 
 export const createAcpSessionModeOverrideSynchronizer = createSessionModeOverrideSynchronizer;

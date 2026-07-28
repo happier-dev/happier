@@ -35,5 +35,10 @@ describe('agent media capabilities', () => {
     expect(agents.getAgentMediaCapability('opencode', 'nativeImageGeneration')).toBe('unsupported');
     expect(agents.getAgentMediaCapability('customAcp', 'emitsSessionMedia')).toBe('supported');
     expect(agents.isAgentMediaCapabilitySupported('customAcp', 'nativeImageGeneration')).toBe(false);
+    expect(agents.getAgentMediaCapabilities('grok')).toEqual({
+      acceptsImageInput: 'unsupported',
+      emitsSessionMedia: 'unsupported',
+      nativeImageGeneration: 'unsupported',
+    });
   });
 });

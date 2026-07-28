@@ -95,6 +95,7 @@ describe('cli.kilo capability (ACP)', () => {
             pi: makeUnavailableCliEntry(),
             copilot: makeUnavailableCliEntry(),
             cursor: makeUnavailableCliEntry(),
+            grok: makeUnavailableCliEntry(),
           },
           tmux: { available: false },
           windowsTerminal: { available: false },

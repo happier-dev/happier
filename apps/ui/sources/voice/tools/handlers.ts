@@ -505,10 +505,16 @@ export function createVoiceToolHandlers(
           .map((entry) => asPlainObject(entry))
           .filter(Boolean)
           .map((entry) => ({
-            question: typeof entry!.question === 'string' ? entry!.question.trim() : '',
-            answer: typeof entry!.answer === 'string' ? entry!.answer.trim() : '',
+            question: typeof entry!.question === 'string' ? entry!.question : '',
+            hasExplicitValues: Array.isArray(entry!.values),
+            values: Array.isArray(entry!.values)
+              ? entry!.values.filter((value): value is string => typeof value === 'string')
+              : typeof entry!.answer === 'string'
+                ? [entry!.answer]
+                : [],
           }))
-          .filter((entry) => entry.question.length > 0 && entry.answer.length > 0)
+          .filter((entry) => entry.question.trim().length > 0 && (entry.hasExplicitValues || entry.values.length > 0))
+          .map(({ question, values }) => ({ question, values }))
       : [];
     const decision = typeof data.decision === 'string' ? data.decision : null;
     const reason = typeof data.reason === 'string' ? data.reason.trim() : '';
@@ -527,7 +533,7 @@ export function createVoiceToolHandlers(
         ? resolveAskUserQuestionDecisionAnswers(requestRecord, directDecision)
         : null;
     const answersPayload = answers.length > 0 ? answers : derivedAnswers;
-    const decisionPayload = decision;
+    const decisionPayload = derivedAnswers ? null : decision;
     if (answers.length === 0 && !decision && (!derivedAnswers || derivedAnswers.length === 0)) {
       return jsonError('invalid_parameters', 'invalid_parameters', { sessionId });
     }

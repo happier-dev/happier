@@ -120,7 +120,7 @@ describe('CodexLikePermissionHandler', () => {
     await expect(promise).resolves.toEqual({
       decision: 'approved',
       answers: {
-        'Which session export behavior should the plan target?': 'Single JSON',
+        'Which session export behavior should the plan target?': ['Single JSON'],
       },
     });
   });

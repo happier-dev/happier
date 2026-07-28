@@ -389,5 +389,24 @@ describe('SDKToLogConverter core conversion', () => {
 
       expect(logMessage).toBeNull();
     });
+
+    it.each([
+      ['last-prompt', { type: 'last-prompt', lastPrompt: 'hi', leafUuid: 'leaf-1' }],
+      ['mode', { type: 'mode', mode: 'default' }],
+      ['pr-link', { type: 'pr-link', url: 'https://example.test/pr/1' }],
+    ])('does not convert %s records (internal session state, not transcript content)', (_label, sdkMessage) => {
+      // Boundary cast: these are raw internal SDK records outside the SDKMessage union by design.
+      expect(converter.convert(sdkMessage as any)).toBeNull();
+    });
+
+    it('does not convert attachment records (context injection, not transcript content)', () => {
+      // Boundary cast: raw attachment record shape is outside the typed SDKMessage union.
+      const logMessage = converter.convert({
+        type: 'attachment',
+        attachment: { type: 'hook_success', hookEvent: 'SessionStart', stdout: '{}' },
+      } as any);
+
+      expect(logMessage).toBeNull();
+    });
   });
 });

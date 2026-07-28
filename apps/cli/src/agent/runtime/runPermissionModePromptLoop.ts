@@ -199,6 +199,7 @@ export async function runPermissionModePromptLoop(opts: {
         // Avoid importing ACP replay history into Happier on normal resume; Happier transcript is the source of truth.
         await opts.runtime.startOrLoad(buildStartOrLoadOptions({ resumeId, importHistory: false }));
       } catch (error) {
+        if (opts.shouldExit()) return { startedFreshSessionForTurn };
         const shouldFailClosed =
           opts.failClosedOnResumeFailure === true ||
           (opts.strictInitialResume === true && resume?.origin === 'initial');
@@ -211,6 +212,7 @@ export async function runPermissionModePromptLoop(opts: {
           } catch {
             // ignore cleanup failure
           }
+          if (opts.shouldExit()) return { startedFreshSessionForTurn };
           strictAbort = opts.strictInitialResume === true && resume?.origin === 'initial'
             ? new StrictInitialResumeError('Strict initial resume failed', error)
             : new ResumeFailClosedError('Resume failed closed', error);
@@ -218,6 +220,7 @@ export async function runPermissionModePromptLoop(opts: {
           opts.messageBuffer.addMessage('Resume failed; starting a new session.', 'status');
           opts.session.sendAgentMessage(opts.agentMessageType, { type: 'message', message: 'Resume failed; starting a new session.' });
           await opts.runtime.reset();
+          if (opts.shouldExit()) return { startedFreshSessionForTurn };
           await opts.runtime.startOrLoad(buildStartOrLoadOptions());
           startedFreshSessionForTurn = true;
         }
@@ -227,24 +230,31 @@ export async function runPermissionModePromptLoop(opts: {
       startedFreshSessionForTurn = true;
     }
 
+    if (opts.shouldExit()) return { startedFreshSessionForTurn };
     if (strictAbort) throw strictAbort;
 
     await opts.onAfterStart?.();
+    if (opts.shouldExit()) return { startedFreshSessionForTurn };
     wasStarted = true;
     await overrideSync.flushPendingAfterStart();
+    if (opts.shouldExit()) return { startedFreshSessionForTurn };
     // Provider startup can publish metadata after the prompt-boundary refresh, so keep one post-start catch-up.
     await refreshSessionSnapshotBeforeTurnBestEffort();
+    if (opts.shouldExit()) return { startedFreshSessionForTurn };
     syncPermissionModeFromMetadata();
     overrideSync.syncFromMetadata();
     await overrideSync.flushPendingAfterStart();
+    if (opts.shouldExit()) return { startedFreshSessionForTurn };
     await opts.runtime.drainPendingAfterStartOrLoad?.();
     return { startedFreshSessionForTurn };
   };
 
   if (opts.startRuntimeBeforeFirstPrompt === true && !wasStarted) {
     await ensureFreshSessionSnapshotBeforeTurnBestEffort();
+    if (opts.shouldExit()) return;
     overrideSync.syncFromMetadata();
     const eagerStart = await ensureRuntimeStarted();
+    if (opts.shouldExit()) return;
     pendingFreshSessionSystemPrompt = eagerStart.startedFreshSessionForTurn;
   }
 
@@ -259,6 +269,7 @@ export async function runPermissionModePromptLoop(opts: {
         session: opts.session,
         onMetadataUpdate: async () => {
           await refreshSessionSnapshotBeforeTurnBestEffort();
+          if (opts.shouldExit()) return;
           syncPermissionModeFromMetadata();
           overrideSync.syncFromMetadata();
           if (!turnInFlight) {
@@ -266,6 +277,7 @@ export async function runPermissionModePromptLoop(opts: {
           }
         },
       });
+      if (opts.shouldExit()) break;
       if (!next) continue;
       message = { message: next.message, mode: next.mode, hash: next.hash };
     }
@@ -288,9 +300,11 @@ export async function runPermissionModePromptLoop(opts: {
 
       opts.messageBuffer.addMessage(`Restarting ${opts.providerName} session (permission settings changed)…`, 'status');
       await opts.runtime.reset();
+      if (opts.shouldExit()) break;
       wasStarted = false;
       pendingFreshSessionSystemPrompt = false;
       await opts.onAfterReset?.();
+      if (opts.shouldExit()) break;
       opts.permissionHandler.reset();
       opts.setThinking(false);
       opts.keepAlive();
@@ -301,18 +315,22 @@ export async function runPermissionModePromptLoop(opts: {
 
     currentModeHash = message.hash;
     await ensureFreshSessionSnapshotBeforeTurnBestEffort();
+    if (opts.shouldExit()) break;
     syncPermissionModeFromMetadata();
     overrideSync.syncFromMetadata();
     await overrideSync.flushPendingAfterStart();
+    if (opts.shouldExit()) break;
     opts.messageBuffer.addMessage(message.message.text, 'user');
 
     const special = parseSpecialCommand(message.message.text);
     if (special.type === 'clear') {
       opts.messageBuffer.addMessage(`Resetting ${opts.providerName} session…`, 'status');
       await opts.runtime.reset();
+      if (opts.shouldExit()) break;
       wasStarted = false;
       pendingFreshSessionSystemPrompt = false;
       await opts.onAfterReset?.();
+      if (opts.shouldExit()) break;
       opts.permissionHandler.reset();
       opts.setThinking(false);
       opts.keepAlive();
@@ -323,6 +341,7 @@ export async function runPermissionModePromptLoop(opts: {
 
     let shouldSendReady = true;
     let suppressFlushTurnFailure = false;
+    let didBeginRuntimeTurn = false;
     let readyTurnContext: ReadyNotificationTurnContext | undefined;
     try {
       turnInFlight = true;
@@ -330,6 +349,10 @@ export async function runPermissionModePromptLoop(opts: {
       pendingFreshSessionSystemPrompt = false;
       const localId = typeof message.message.localId === 'string' && message.message.localId ? message.message.localId : null;
       const committedUserMessageSeq = await waitForCommittedUserPromptBoundary(opts.session, localId);
+      if (opts.shouldExit()) {
+        shouldSendReady = false;
+        break;
+      }
       const lastObservedMessageSeq = typeof opts.session.getLastObservedMessageSeq === 'function'
         ? normalizePositiveSeq(opts.session.getLastObservedMessageSeq())
         : null;
@@ -343,8 +366,13 @@ export async function runPermissionModePromptLoop(opts: {
         readyTurnContext = { turnToken, startSeqExclusive };
       }
       opts.runtime.beginTurn();
+      didBeginRuntimeTurn = true;
       if (!wasStarted) {
         const runtimeStart = await ensureRuntimeStarted();
+        if (opts.shouldExit()) {
+          shouldSendReady = false;
+          break;
+        }
         shouldApplyFreshSessionSystemPrompt =
           runtimeStart.startedFreshSessionForTurn || shouldApplyFreshSessionSystemPrompt;
       }
@@ -364,6 +392,10 @@ export async function runPermissionModePromptLoop(opts: {
         nowMs,
         refreshMetadataBeforeRead: false,
       });
+      if (opts.shouldExit()) {
+        shouldSendReady = false;
+        break;
+      }
       snapshotFreshForNextPromptBoundary = false;
       didReplaySeedBootstrap = true;
       const explicitBaseOverride = shouldApplyFreshSessionSystemPrompt
@@ -374,6 +406,10 @@ export async function runPermissionModePromptLoop(opts: {
             baseOverride: explicitBaseOverride,
           })
         : undefined;
+      if (opts.shouldExit()) {
+        shouldSendReady = false;
+        break;
+      }
       const effectiveAppendSystemPrompt = typeof freshSessionSystemPrompt === 'string'
         ? freshSessionSystemPrompt.trim()
         : '';
@@ -402,18 +438,20 @@ export async function runPermissionModePromptLoop(opts: {
       }
     } finally {
       turnInFlight = false;
-      if (suppressFlushTurnFailure) {
-        try {
+      if (didBeginRuntimeTurn && !opts.shouldExit()) {
+        if (suppressFlushTurnFailure) {
+          try {
+            await opts.runtime.flushTurn();
+          } catch {}
+        } else {
           await opts.runtime.flushTurn();
-        } catch {}
-      } else {
-        await opts.runtime.flushTurn();
+        }
       }
       // Metadata updates can arrive while we're mid-turn.
       overrideSync.syncFromMetadata();
       opts.setThinking(false);
       opts.keepAlive();
-      if (shouldSendReady) {
+      if (shouldSendReady && !opts.shouldExit()) {
         opts.sendReady(readyTurnContext);
       }
     }

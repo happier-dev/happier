@@ -77,4 +77,29 @@ describe('typesRaw output schema (fail-soft)', () => {
             }),
         );
     });
+
+    it('names the unrecognized payload type in the fallback placeholder', () => {
+        // Without the type name the placeholder is undiagnosable: new Claude Code record types
+        // render as an opaque row with nothing to grep for.
+        const raw: any = {
+            role: 'agent',
+            content: {
+                type: 'output',
+                data: {
+                    type: 'some-future-record',
+                    uuid: 'future-1',
+                },
+            },
+        };
+
+        const normalized = normalizeRawMessage('msg-future-1', null, 1000, raw);
+        expect(normalized).not.toBeNull();
+        if (!normalized) return;
+        expect(normalized.role).toBe('agent');
+        if (normalized.role !== 'agent') return;
+
+        const block = normalized.content[0];
+        expect(block?.type).toBe('text');
+        expect(block?.type === 'text' && block.text).toContain('some-future-record');
+    });
 });

@@ -4,7 +4,7 @@ import type { AgentBackend } from '@/agent';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
-import { ensureGeminiAcpSession } from './ensureGeminiAcpSession';
+import { ensureGeminiAcpSession, importGeminiAcpSessionReplay } from './ensureGeminiAcpSession';
 
 const importAcpReplayHistoryV1Mock = vi.hoisted(() => vi.fn());
 
@@ -73,7 +73,7 @@ describe('ensureGeminiAcpSession', () => {
 
   it('loads an existing session and consumes stored resume id', async () => {
     const backend = createBackendFixture({
-      loadSession: vi.fn().mockResolvedValue(undefined),
+      loadSession: vi.fn().mockResolvedValue({ sessionId: 'resume-123' }),
       startSession: vi.fn(),
     });
 
@@ -116,6 +116,58 @@ describe('ensureGeminiAcpSession', () => {
       permissionHandler,
     });
     expect(result).toEqual({ acpSessionId: 'resume-456', storedResumeId: null, startedFreshSession: false });
+  });
+
+  it('rejects a mismatched loaded identity before importing replay history', async () => {
+    const backend = createBackendFixture({
+      loadSessionWithReplayCapture: vi.fn().mockResolvedValue({
+        sessionId: 'replacement-session',
+        replay: [{ type: 'message', role: 'agent', text: 'must not import' }],
+      }),
+      startSession: vi.fn(),
+    });
+
+    await expect(ensureGeminiAcpSession({
+      backend,
+      session: createSessionFixture(),
+      permissionHandler: createPermissionHandlerFixture(),
+      messageBuffer: new MessageBuffer(),
+      storedResumeId: 'expected-session',
+      onDebug: vi.fn(),
+    })).rejects.toMatchObject({ code: 'ACP_SESSION_IDENTITY_RESUME_MISMATCH' });
+
+    expect(importAcpReplayHistoryV1Mock).not.toHaveBeenCalled();
+  });
+
+  it('can defer replay import until the caller has durably published the validated identity', async () => {
+    const session = createSessionFixture();
+    const permissionHandler = createPermissionHandlerFixture();
+    const result = await ensureGeminiAcpSession({
+      backend: createBackendFixture({
+        loadSessionWithReplayCapture: vi.fn().mockResolvedValue({
+          sessionId: 'resume-deferred',
+          replay: [{ type: 'message', role: 'agent', text: 'deferred history' }],
+        }),
+        startSession: vi.fn(),
+      }),
+      session,
+      permissionHandler,
+      messageBuffer: new MessageBuffer(),
+      storedResumeId: 'resume-deferred',
+      deferReplayImport: true,
+      onDebug: vi.fn(),
+    });
+
+    expect(importAcpReplayHistoryV1Mock).not.toHaveBeenCalled();
+    expect(result.deferredReplay).toEqual([{ type: 'message', role: 'agent', text: 'deferred history' }]);
+
+    await importGeminiAcpSessionReplay({
+      session,
+      permissionHandler,
+      remoteSessionId: result.acpSessionId,
+      replay: result.deferredReplay ?? [],
+    });
+    expect(importAcpReplayHistoryV1Mock).toHaveBeenCalledTimes(1);
   });
 
   it('waits for replay history import before returning a loaded resumed session', async () => {

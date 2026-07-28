@@ -1406,7 +1406,7 @@ export async function runCodex(opts: {
             : useCodexAppServer
                 ? 'appServer'
                 : 'mcp';
-        publishCodexSessionIdMetadata({
+        void publishCodexSessionIdMetadata({
             session,
             getCodexThreadId: () => (client ? client.getSessionId() : (getCodexRemoteRuntime()?.getSessionId() ?? null)),
             backendMode: publishedBackendMode,
@@ -1415,7 +1415,7 @@ export async function runCodex(opts: {
             activeServerDir: configuration.activeServerDir,
             processEnv: process.env,
             lastPublished: lastCodexThreadIdPublished,
-        });
+        }).catch(() => undefined);
     };
 
     const readAttachedCodexAppServerThreadId = (): string | null => {
@@ -2187,6 +2187,7 @@ export async function runCodex(opts: {
                                 logger.debug('[Codex ACP] Resume failed; starting a new session instead', e);
                                 messageBuffer.addMessage('Resume failed; starting a new session.', 'status');
                                 session.sendSessionEvent({ type: 'message', message: 'Resume failed; starting a new session.' });
+                                await codexRuntime.reset();
                                 const startSignal = startOrLoadAbortController.signal;
                                 await seedCodexAppServerOverridesBeforeStartOrLoad();
                                 const fallbackPromise = Promise.resolve(codexRuntime.startOrLoad({

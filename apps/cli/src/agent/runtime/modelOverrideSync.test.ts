@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createModelOverrideSynchronizer } from './modelOverrideSync';
+import { SessionControlApplyError } from './sessionControlApplyError';
 
 describe('createModelOverrideSynchronizer', () => {
   it('queues pending overrides before runtime start and applies after start', async () => {
@@ -129,5 +130,105 @@ describe('createModelOverrideSynchronizer', () => {
     resolveFirst();
     await Promise.all([flushA, flushB]);
     expect(setSessionModel).toHaveBeenCalledTimes(1);
+  });
+
+  it('terminalizes a definitive rejection, clears only the matching command, and reports once', async () => {
+    let metadata: any = { modelOverrideV1: { v: 1, updatedAt: 21, modelId: 'model-b' } };
+    const report = vi.fn();
+    const sync = createModelOverrideSynchronizer({
+      session: {
+        getMetadataSnapshot: () => metadata,
+        updateMetadata: async (updater) => { metadata = updater(metadata); },
+      },
+      runtime: { setSessionModel: vi.fn(async () => { throw SessionControlApplyError.definitive(new Error('rejected')); }) },
+      isStarted: () => true,
+      reportTerminalFailure: report,
+    });
+
+    sync.syncFromMetadata();
+    await sync.flushPendingAfterStart();
+    await sync.flushPendingAfterStart();
+
+    expect(metadata.modelOverrideV1).toEqual({ v: 1, updatedAt: 22, modelId: null });
+    expect(report).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not clear a newer model choice after an older rejection settles', async () => {
+    let metadata: any = { modelOverrideV1: { v: 1, updatedAt: 21, modelId: 'model-b' } };
+    let reject!: (error: unknown) => void;
+    const applying = new Promise<void>((_resolve, rejectPromise) => { reject = rejectPromise; });
+    const sync = createModelOverrideSynchronizer({
+      session: {
+        getMetadataSnapshot: () => metadata,
+        updateMetadata: async (updater) => { metadata = updater(metadata); },
+      },
+      runtime: { setSessionModel: vi.fn(() => applying) },
+      isStarted: () => true,
+      reportTerminalFailure: vi.fn(),
+    });
+
+    sync.syncFromMetadata();
+    metadata = { modelOverrideV1: { v: 1, updatedAt: 22, modelId: 'model-c' } };
+    reject(SessionControlApplyError.definitive(new Error('rejected')));
+    await sync.flushPendingAfterStart();
+
+    expect(metadata.modelOverrideV1).toEqual({ v: 1, updatedAt: 22, modelId: 'model-c' });
+  });
+
+  it('reports a definitive rejection once even when metadata cleanup fails', async () => {
+    let metadata: any = { modelOverrideV1: { v: 1, updatedAt: 21, modelId: 'model-b' } };
+    let cleanupAttempts = 0;
+    const setSessionModel = vi.fn(async () => {
+      throw SessionControlApplyError.definitive(new Error('rejected'));
+    });
+    const report = vi.fn();
+    const sync = createModelOverrideSynchronizer({
+      session: {
+        getMetadataSnapshot: () => metadata,
+        updateMetadata: async (updater) => {
+          cleanupAttempts += 1;
+          if (cleanupAttempts === 1) throw new Error('offline');
+          metadata = updater(metadata);
+        },
+      },
+      runtime: { setSessionModel },
+      isStarted: () => true,
+      reportTerminalFailure: report,
+    });
+
+    sync.syncFromMetadata();
+    await sync.flushPendingAfterStart();
+    await sync.flushPendingAfterStart();
+
+    expect(setSessionModel).toHaveBeenCalledTimes(1);
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(cleanupAttempts).toBe(2);
+    expect(metadata.modelOverrideV1).toEqual({ v: 1, updatedAt: 22, modelId: null });
+  });
+
+  it('applies a same-timestamp different model that replaces a rejected in-flight command', async () => {
+    let metadata: any = { modelOverrideV1: { v: 1, updatedAt: 21, modelId: 'model-b' } };
+    let rejectFirst!: (error: unknown) => void;
+    const firstApply = new Promise<void>((_resolve, reject) => { rejectFirst = reject; });
+    const setSessionModel = vi.fn()
+      .mockImplementationOnce(() => firstApply)
+      .mockResolvedValue(undefined);
+    const sync = createModelOverrideSynchronizer({
+      session: {
+        getMetadataSnapshot: () => metadata,
+        updateMetadata: async (updater) => { metadata = updater(metadata); },
+      },
+      runtime: { setSessionModel },
+      isStarted: () => true,
+    });
+
+    sync.syncFromMetadata();
+    metadata = { modelOverrideV1: { v: 1, updatedAt: 21, modelId: 'model-c' } };
+    sync.syncFromMetadata();
+    rejectFirst(SessionControlApplyError.definitive(new Error('rejected')));
+    await sync.flushPendingAfterStart();
+    await sync.flushPendingAfterStart();
+
+    expect(setSessionModel.mock.calls).toEqual([['model-b'], ['model-c']]);
   });
 });

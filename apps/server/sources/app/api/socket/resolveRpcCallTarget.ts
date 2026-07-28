@@ -2,6 +2,7 @@ import { Socket } from "socket.io";
 import { db } from "@/storage/db";
 import { canApprovePermissions } from "@/app/share/accessControl";
 import { log } from "@/utils/logging/log";
+import { isDelegatedSessionApprovalRpcMethod } from '@happier-dev/protocol/rpc';
 
 export type RpcCallTargetResolution =
     | {
@@ -20,16 +21,16 @@ export async function resolveRpcCallTarget(params: {
 }): Promise<RpcCallTargetResolution> {
     const { callerUserId, method, allRpcListeners } = params;
 
-    // Delegated permission approvals (cross-user forwarding) are allowed ONLY for `${sessionId}:permission`.
+    // Delegated permission approvals are allowed only for the protocol-owned approval method family.
     // All other RPC methods are restricted to "same-user" forwarding.
     let targetUserId = callerUserId;
     let targetSocket: Socket | undefined = undefined;
 
     const lastColon = method.lastIndexOf(':');
     const suffix = lastColon >= 0 ? method.slice(lastColon + 1) : '';
-    if (suffix === 'permission') {
+    if (isDelegatedSessionApprovalRpcMethod(suffix)) {
         const sessionId = lastColon >= 0 ? method.slice(0, lastColon) : '';
-        if (sessionId && sessionId !== 'permission') {
+        if (sessionId) {
             const session = await db.session.findUnique({
                 where: { id: sessionId },
                 select: { accountId: true },

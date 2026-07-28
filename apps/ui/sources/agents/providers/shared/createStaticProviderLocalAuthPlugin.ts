@@ -6,18 +6,18 @@ export function createStaticProviderLocalAuthPlugin(params: Readonly<{
     providerId: AgentId;
     support: ProviderLocalAuthSupport;
     docsUrl?: string | null;
-    buildLoginLaunch?: (params: Readonly<{
+    buildAuthLaunches?: (params: Readonly<{
         resolvedPath?: string | null;
         resolvedCommand?: string | null;
         platform?: NodeJS.Platform | string | null;
-    }>) => ProviderLocalAuthLaunch | null;
+    }>) => ReadonlyArray<ProviderLocalAuthLaunch>;
     statusHelpText?: string;
 }>): ProviderLocalAuthPlugin {
     return {
         providerId: params.providerId,
         support: params.support,
         ...(params.docsUrl !== undefined ? { docsUrl: params.docsUrl } : {}),
-        ...(params.buildLoginLaunch ? { buildLoginLaunch: params.buildLoginLaunch } : {}),
+        ...(params.buildAuthLaunches ? { buildAuthLaunches: params.buildAuthLaunches } : {}),
         ...(params.statusHelpText ? { statusHelpText: params.statusHelpText } : {}),
     };
 }

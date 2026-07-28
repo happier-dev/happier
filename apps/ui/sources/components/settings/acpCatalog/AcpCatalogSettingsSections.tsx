@@ -3,7 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { getBuiltInAcpConfig, type AgentId } from '@happier-dev/agents';
+import { getBuiltInAcpConfig } from '@happier-dev/agents';
 
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { Item } from '@/components/ui/lists/Item';
@@ -13,8 +13,9 @@ import { t } from '@/text';
 import { deleteAcpBackendDefinitionV1 } from '@/sync/domains/acpCatalog/acpCatalogCrud';
 import { normalizeAcpCatalogSettingsV1 } from '@/sync/domains/acpCatalog/normalizeAcpCatalogSettingsV1';
 import { useSettingMutable } from '@/sync/domains/state/storage';
+import { getBuiltInGenericAcpAgentIds } from './builtInGenericAcpAgentIds';
 
-const BUILT_IN_GENERIC_ACP_AGENT_IDS: readonly AgentId[] = ['kiro'];
+const BUILT_IN_GENERIC_ACP_AGENT_IDS = getBuiltInGenericAcpAgentIds();
 
 function formatBackendSubtitle(command: string, args: readonly string[]): string {
     return [command, ...args].filter(Boolean).join(' ');

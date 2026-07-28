@@ -304,6 +304,7 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
                 </ItemGroup>
             </ItemList>
             <SettingsActionFooter
+                reserveBottomChromeInset={true}
                 primaryLabel={t('common.save')}
                 onPrimaryPress={handleSave}
                 primaryTestID="settings.acpCatalog.backendEditor.save"

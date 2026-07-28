@@ -98,6 +98,7 @@ describe('cli.codex capability (ACP)', () => {
               pi: makeUnavailableCliEntry(),
               copilot: makeUnavailableCliEntry(),
               cursor: makeUnavailableCliEntry(),
+              grok: makeUnavailableCliEntry(),
             },
             tmux: { available: false },
             windowsTerminal: { available: false },

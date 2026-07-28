@@ -126,7 +126,9 @@ describe('buildVoiceInitialContext', () => {
     expect(out).not.toContain('Hidden transcript');
   });
 
-  it('includes already-pending user-action requests from the current target session', () => {
+  it.each(['AskUserQuestion', 'ask_user_question'] as const)(
+    'includes already-pending %s requests from the current target session',
+    (toolName) => {
     storage.setState((state: any) => ({
       ...state,
       sessions: {
@@ -143,7 +145,7 @@ describe('buildVoiceInitialContext', () => {
           agentState: {
             requests: {
               req_question: {
-                tool: 'AskUserQuestion',
+                tool: toolName,
                 kind: 'user_action',
                 arguments: {
                   questions: [
@@ -178,7 +180,8 @@ describe('buildVoiceInitialContext', () => {
     expect(out).not.toContain('(session s1)');
     expect(out).toContain('What do you want me to work on in this repo?');
     expect(out).toContain('Reply with answerUserActionRequest');
-  });
+    },
+  );
 
   it('includes already-pending permission requests from transcript tool calls when agentState is missing', () => {
     storage.setState((state: any) => ({

@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import type { Metadata } from '@/api/types';
 import { buildCodexAgentRuntimeDescriptor, type CodexBackendMode } from '@happier-dev/agents';
@@ -6,6 +7,12 @@ import { normalizeCodexBackendMode, type DirectSessionsSource } from '@happier-d
 import { findConnectedServiceChildSelection } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { inferCodexDirectSessionsSourceFromHome } from '../directSessions/resolveCodexHomeEntriesForDirectSessionsSource';
 import { resolveConfiguredCodexHome } from './resolveConfiguredCodexHome';
+
+function normalizeOptionalString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
 
 function resolveCodexHome(params: Readonly<{
   codexHome?: string | null;
@@ -105,6 +112,7 @@ function buildDirectSessionMetadata(
     codexHome?: string | null;
     activeServerDir?: string | null;
     processEnv?: NodeJS.ProcessEnv;
+    linkedAtMs?: number;
   }>,
 ): Metadata {
   if (params.transcriptStorage !== 'direct') {
@@ -136,13 +144,13 @@ function buildDirectSessionMetadata(
       machineId,
       remoteSessionId: sessionId,
       source: resolveCodexDirectSource(params),
-      linkedAtMs: Date.now(),
+      linkedAtMs: params.linkedAtMs ?? Date.now(),
       ...(runtimeDescriptor ? { agentRuntimeDescriptorV1: runtimeDescriptor } : {}),
     },
   };
 }
 
-export function maybeUpdateCodexSessionIdMetadata(params: {
+type UpdateCodexSessionIdMetadataParams = {
   getCodexThreadId: () => string | null;
   backendMode?: CodexBackendMode | null;
   transcriptStorage?: 'persisted' | 'direct' | null;
@@ -150,8 +158,80 @@ export function maybeUpdateCodexSessionIdMetadata(params: {
   activeServerDir?: string | null;
   processEnv?: NodeJS.ProcessEnv;
   updateHappySessionMetadata: (updater: (metadata: Metadata) => Metadata) => Promise<void> | void;
+  getMetadataSnapshot?: () => Metadata | null;
+  operation?: 'create' | 'resume';
   lastPublished: { value: string | null; fingerprint?: string | null };
-}): void {
+};
+
+function buildUpdatedCodexSessionMetadata(
+  metadata: Metadata,
+  sessionId: string,
+  params: Omit<UpdateCodexSessionIdMetadataParams, 'getCodexThreadId' | 'updateHappySessionMetadata' | 'getMetadataSnapshot' | 'operation' | 'lastPublished'>,
+  linkedAtMs?: number,
+): Metadata {
+  const backendMode = normalizeCodexBackendMode(params.backendMode);
+  const nextMetadata = { ...metadata } as Metadata;
+  const runtimeDescriptor = nextMetadata.agentRuntimeDescriptorV1 as { providerId?: string } | undefined;
+
+  if (!backendMode) {
+    delete nextMetadata.codexBackendMode;
+    if (runtimeDescriptor?.providerId === 'codex') {
+      delete nextMetadata.agentRuntimeDescriptorV1;
+    }
+  }
+
+  return buildDirectSessionMetadata({
+    ...nextMetadata,
+    codexSessionId: sessionId,
+    ...(backendMode ? { codexBackendMode: backendMode } : {}),
+    ...(backendMode
+      ? {
+        agentRuntimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
+          backendMode,
+          vendorSessionId: sessionId,
+          ...resolveCodexRuntimeSourceAffinity(params),
+        }),
+      }
+      : {}),
+  }, sessionId, { ...params, backendMode, linkedAtMs });
+}
+
+function readStableDirectSessionLinkedAtMs(metadata: Metadata): number | undefined {
+  const directSession = metadata.directSessionV1;
+  if (!directSession || typeof directSession !== 'object' || Array.isArray(directSession)) return undefined;
+  const linkedAtMs = (directSession as { linkedAtMs?: unknown }).linkedAtMs;
+  return typeof linkedAtMs === 'number' && Number.isFinite(linkedAtMs) && linkedAtMs > 0
+    ? linkedAtMs
+    : undefined;
+}
+
+function codexOwnedMetadataSlice(metadata: Metadata): Readonly<{
+  codexSessionId: unknown;
+  codexBackendMode: unknown;
+  agentRuntimeDescriptorV1: unknown;
+  directSessionV1: unknown;
+}> {
+  return {
+    codexSessionId: normalizeOptionalString(metadata.codexSessionId),
+    codexBackendMode: metadata.codexBackendMode,
+    agentRuntimeDescriptorV1: metadata.agentRuntimeDescriptorV1,
+    directSessionV1: metadata.directSessionV1,
+  };
+}
+
+function isPersistedCodexPublicationEquivalent(
+  metadata: Metadata,
+  sessionId: string,
+  params: Omit<UpdateCodexSessionIdMetadataParams, 'getCodexThreadId' | 'updateHappySessionMetadata' | 'getMetadataSnapshot' | 'operation' | 'lastPublished'>,
+): boolean {
+  if (normalizeOptionalString(metadata.codexSessionId) !== sessionId) return false;
+  const linkedAtMs = readStableDirectSessionLinkedAtMs(metadata);
+  const expected = buildUpdatedCodexSessionMetadata(metadata, sessionId, params, linkedAtMs ?? 0);
+  if (expected.directSessionV1 && linkedAtMs === undefined) return false;
+  return isDeepStrictEqual(codexOwnedMetadataSlice(metadata), codexOwnedMetadataSlice(expected));
+}
+
+async function updateCodexSessionIdMetadata(params: UpdateCodexSessionIdMetadataParams): Promise<void> {
   const raw = params.getCodexThreadId();
   const next = typeof raw === 'string' ? raw.trim() : '';
   const backendMode = normalizeCodexBackendMode(params.backendMode);
@@ -165,57 +245,48 @@ export function maybeUpdateCodexSessionIdMetadata(params: {
   });
 
   if (params.lastPublished.value === next && (params.lastPublished.fingerprint ?? null) === publishFingerprint) return;
+  if (params.operation === 'resume' && params.getMetadataSnapshot) {
+    let metadataSnapshot: Metadata | null = null;
+    try {
+      metadataSnapshot = params.getMetadataSnapshot();
+    } catch {
+      // A snapshot read cannot prove durability. Fall through to the acknowledged write.
+    }
+    if (metadataSnapshot && isPersistedCodexPublicationEquivalent(metadataSnapshot, next, params)) {
+      params.lastPublished.value = next;
+      params.lastPublished.fingerprint = publishFingerprint;
+      return;
+    }
+  }
   const prev = params.lastPublished.value;
   const prevFingerprint = params.lastPublished.fingerprint ?? null;
   params.lastPublished.value = next;
   params.lastPublished.fingerprint = publishFingerprint;
 
   try {
-    const res = params.updateHappySessionMetadata((metadata) => {
-      const nextMetadata = { ...metadata } as Metadata;
-      const runtimeDescriptor = nextMetadata.agentRuntimeDescriptorV1 as { providerId?: string } | undefined;
-
-      if (!backendMode) {
-        delete nextMetadata.codexBackendMode;
-        if (runtimeDescriptor?.providerId === 'codex') {
-          delete nextMetadata.agentRuntimeDescriptorV1;
-        }
-      }
-
-      return buildDirectSessionMetadata({
-        ...nextMetadata,
-        // Happy metadata field name. Value is Codex threadId (Codex uses "threadId" as the stable resume id).
-        codexSessionId: next,
-        ...(backendMode ? { codexBackendMode: backendMode } : {}),
-        ...(backendMode
-          ? {
-            agentRuntimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
-              backendMode,
-              vendorSessionId: next,
-              ...resolveCodexRuntimeSourceAffinity(params),
-            }),
-          }
-          : {}),
-      }, next, { ...params, backendMode });
+    await params.updateHappySessionMetadata((metadata) => {
+      return buildUpdatedCodexSessionMetadata(metadata, next, params);
     });
-    void Promise.resolve(res).catch(() => {
-      // Revert optimistic publish so future calls can retry.
-      if (params.lastPublished.value === next) {
-        params.lastPublished.value = prev;
-        params.lastPublished.fingerprint = prevFingerprint;
-      }
-    });
-  } catch {
+  } catch (error) {
     // Revert optimistic publish so future calls can retry.
     if (params.lastPublished.value === next) {
       params.lastPublished.value = prev;
       params.lastPublished.fingerprint = prevFingerprint;
     }
+    throw error;
   }
 }
 
-export function publishCodexSessionIdMetadata(params: {
-  session: Readonly<{ updateMetadata: (updater: (metadata: Metadata) => Metadata) => Promise<void> | void }>;
+export function maybeUpdateCodexSessionIdMetadata(params: UpdateCodexSessionIdMetadataParams): void {
+  void updateCodexSessionIdMetadata(params).catch(() => undefined);
+}
+
+export async function publishCodexSessionIdMetadata(params: {
+  session: Readonly<{
+    updateMetadata: (updater: (metadata: Metadata) => Metadata) => Promise<void> | void;
+    getMetadataSnapshot?: () => Metadata | null;
+  }>;
+  operation?: 'create' | 'resume';
   getCodexThreadId: () => string | null;
   backendMode?: CodexBackendMode | null;
   transcriptStorage?: 'persisted' | 'direct' | null;
@@ -223,14 +294,18 @@ export function publishCodexSessionIdMetadata(params: {
   activeServerDir?: string | null;
   processEnv?: NodeJS.ProcessEnv;
   lastPublished: { value: string | null; fingerprint?: string | null };
-}): void {
-  maybeUpdateCodexSessionIdMetadata({
+}): Promise<void> {
+  await updateCodexSessionIdMetadata({
     getCodexThreadId: params.getCodexThreadId,
     backendMode: params.backendMode,
     transcriptStorage: params.transcriptStorage,
     codexHome: params.codexHome,
     activeServerDir: params.activeServerDir,
     processEnv: params.processEnv,
+    operation: params.operation,
+    getMetadataSnapshot: params.session.getMetadataSnapshot
+      ? () => params.session.getMetadataSnapshot?.() ?? null
+      : undefined,
     updateHappySessionMetadata: (updater) => params.session.updateMetadata(updater),
     lastPublished: params.lastPublished,
   });

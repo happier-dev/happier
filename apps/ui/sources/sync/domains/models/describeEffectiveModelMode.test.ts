@@ -119,4 +119,39 @@ describe('describeEffectiveModelMode', () => {
         expect(out.effectiveModelId).toBe(getAgentCore('codex').model.defaultMode);
         expect(out.notes.join(' ')).not.toMatch(/custom model ids|not validated/i);
     });
+
+    it('shows provider-confirmed current model instead of a pending requested model', () => {
+        const out = describeEffectiveModelMode({
+            agentType: 'grok',
+            selectedModelId: 'model-b',
+            metadata: buildMetadata({
+                sessionModelsV1: {
+                    v: 1,
+                    provider: 'grok',
+                    updatedAt: 5,
+                    currentModelId: 'model-a',
+                    availableModels: [{ id: 'model-a', name: 'A' }, { id: 'model-b', name: 'B' }],
+                },
+            }),
+        });
+        expect(out.effectiveModelId).toBe('model-a');
+    });
+
+    it('uses a newer valid legacy provider model state over an older canonical alias', () => {
+        const out = describeEffectiveModelMode({
+            agentType: 'grok',
+            selectedModelId: 'pending-model',
+            metadata: buildMetadata({
+                sessionModelsV1: {
+                    v: 1, provider: 'grok', updatedAt: 5, currentModelId: 'model-a',
+                    availableModels: [{ id: 'model-a', name: 'A' }],
+                },
+                acpSessionModelsV1: {
+                    v: 1, provider: 'grok', updatedAt: 6, currentModelId: 'model-b',
+                    availableModels: [{ id: 'model-b', name: 'B' }],
+                },
+            }),
+        });
+        expect(out.effectiveModelId).toBe('model-b');
+    });
 });

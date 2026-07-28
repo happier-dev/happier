@@ -33,6 +33,7 @@ import {
 import { CHANGE_TITLE_TOOL_NAME_ALIASES } from '@happier-dev/protocol/tools/v2';
 import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 import { resolveGeminiAcpFlag } from '@/backends/gemini/cli/detect';
+import type { AcpAuthentication } from '@/agent/acp/AcpAuthentication';
 
 function isTruthyEnv(value: string | undefined): boolean {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -53,28 +54,42 @@ function parseGeminiAuthMeta(value: string | undefined): Record<string, unknown>
 }
 
 function resolveGeminiAuthConfig(env: Readonly<Record<string, string | undefined>>, apiKey: string | null): {
-  authMethodId: string;
-  authMeta?: Record<string, unknown>;
+  authentication: AcpAuthentication;
   shouldInjectApiKeyEnv: boolean;
 } {
   const configuredMethod = env[GEMINI_ACP_AUTH_METHOD_ENV]?.trim();
   const configuredMeta = parseGeminiAuthMeta(env[GEMINI_ACP_AUTH_META_ENV]);
   if (configuredMethod === 'gateway') {
     return {
-      authMethodId: 'gateway',
-      ...(configuredMeta ? { authMeta: configuredMeta } : {}),
+      authentication: {
+        kind: 'static',
+        methodId: 'gateway',
+        ...(configuredMeta ? { meta: configuredMeta } : {}),
+      },
       shouldInjectApiKeyEnv: false,
     };
   }
   if (configuredMethod === 'vertex-ai') {
-    return { authMethodId: 'vertex-ai', shouldInjectApiKeyEnv: false };
+    return {
+      authentication: { kind: 'static', methodId: 'vertex-ai' },
+      shouldInjectApiKeyEnv: false,
+    };
   }
   if (isTruthyEnv(env.GOOGLE_GENAI_USE_VERTEXAI)) {
-    return { authMethodId: 'vertex-ai', shouldInjectApiKeyEnv: false };
+    return {
+      authentication: { kind: 'static', methodId: 'vertex-ai' },
+      shouldInjectApiKeyEnv: false,
+    };
   }
   return apiKey
-    ? { authMethodId: 'gemini-api-key', shouldInjectApiKeyEnv: true }
-    : { authMethodId: 'oauth-personal', shouldInjectApiKeyEnv: false };
+    ? {
+        authentication: { kind: 'static', methodId: 'gemini-api-key' },
+        shouldInjectApiKeyEnv: true,
+      }
+    : {
+        authentication: { kind: 'static', methodId: 'oauth-personal' },
+        shouldInjectApiKeyEnv: false,
+      };
 }
 
 /**
@@ -267,8 +282,7 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
     mcpServers: options.mcpServers,
     permissionHandler: options.permissionHandler,
     transportHandler: geminiTransport,
-    authMethodId: authConfig.authMethodId,
-    authMeta: authConfig.authMeta,
+    authentication: authConfig.authentication,
 	    // Check if prompt instructs the agent to change title (for auto-approval of change_title tool)
 	    hasChangeTitleInstruction: (prompt: string) => {
 	      const lower = prompt.toLowerCase();

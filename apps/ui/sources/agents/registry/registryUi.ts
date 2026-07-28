@@ -16,6 +16,7 @@ import { CUSTOM_ACP_UI } from '@/agents/providers/customAcp/ui';
 import { PI_UI } from '@/agents/providers/pi/ui';
 import { COPILOT_UI } from '@/agents/providers/copilot/ui';
 import { CURSOR_UI } from '@/agents/providers/cursor/ui';
+import { GROK_UI } from '@/agents/providers/grok/ui';
 
 export type AgentIconSvgXmlResolver = (
     theme: UnistylesThemes[keyof UnistylesThemes],
@@ -61,6 +62,7 @@ export const AGENTS_UI: Readonly<Record<AgentId, AgentUiConfig>> = Object.freeze
     pi: PI_UI,
     copilot: COPILOT_UI,
     cursor: CURSOR_UI,
+    grok: GROK_UI,
 });
 
 export function getAgentIconSource(agentId: AgentId): ImageSourcePropType | null {

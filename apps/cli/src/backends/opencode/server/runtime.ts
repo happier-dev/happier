@@ -353,6 +353,7 @@ export function createOpenCodeServerRuntime(params: {
   let handledQuestionIds: Set<string> | null = null;
   let inFlightPermissionIds: Set<string> | null = null;
   let inFlightQuestionIds: Set<string> | null = null;
+  let pendingFailClosedQuestionRejectionKeys: Set<string> | null = null;
   let userMessageIdLastTimestampMs = 0;
   let userMessageIdCounter = 0;
   const observedRemoteTextMessageIds = new Set<string>();
@@ -1120,6 +1121,7 @@ export function createOpenCodeServerRuntime(params: {
     handledQuestionIds = null;
     inFlightPermissionIds = null;
     inFlightQuestionIds = null;
+    pendingFailClosedQuestionRejectionKeys = null;
     activeLifecycleMarkerId = null;
     pendingProviderAutonomousBackgroundWake = null;
   };
@@ -2579,6 +2581,16 @@ export function createOpenCodeServerRuntime(params: {
   const handleQuestionAsked = async (req: OpenCodeQuestionRequest) => {
     if (req.sessionID !== sessionId && !sidechainIdByRemoteSessionId.has(req.sessionID)) return;
 
+    const rejectionKey = `${req.sessionID}\u0000${req.id}`;
+    const rejectionKeysForOwningTurn = pendingFailClosedQuestionRejectionKeys ?? new Set<string>();
+    pendingFailClosedQuestionRejectionKeys = rejectionKeysForOwningTurn;
+    if (rejectionKeysForOwningTurn.has(rejectionKey)) {
+      const c = await ensureClient();
+      await c.questionReject({ requestId: req.id });
+      rejectionKeysForOwningTurn.delete(rejectionKey);
+      return;
+    }
+
     setThinking(false);
     idleSignalSeen = false;
     idleSignalSeenViaControlPlane = false;
@@ -2651,15 +2663,36 @@ export function createOpenCodeServerRuntime(params: {
     let decision: Awaited<ReturnType<typeof params.permissionHandler.handleToolCall>>;
     try {
       decision = await params.permissionHandler.handleToolCall(req.id, 'AskUserQuestion', askUserQuestionInput);
+    } catch (error) {
+      logger.debug('[OpenCodeServer] question handler threw; rejecting question request (fail-closed)', {
+        requestId: req.id,
+        sessionId: req.sessionID,
+      }, error);
+      params.session.sendAgentMessage(provider, {
+        type: 'message',
+        message: 'Question request handling failed. For safety, the request was rejected.',
+      });
+      rejectionKeysForOwningTurn.add(rejectionKey);
+      try {
+        const c = await ensureClient();
+        await c.questionReject({ requestId: req.id });
+        rejectionKeysForOwningTurn.delete(rejectionKey);
+      } catch (replyError) {
+        logger.debug('[OpenCodeServer] failed to reject question request after handler error', {
+          requestId: req.id,
+          sessionId: req.sessionID,
+        }, replyError);
+        throw replyError;
+      }
+      return;
     } finally {
       turnAwaitingUserResponseCount = Math.max(0, turnAwaitingUserResponseCount - 1);
     }
-    const c = await ensureClient();
-
     if (decision.decision === 'approved' || decision.decision === 'approved_for_session' || decision.decision === 'approved_execpolicy_amendment') {
-      const answersByKey = (decision as any).answers as Record<string, string> | undefined;
+      const answersByKey = decision.answers;
       const answers = answersByKey && typeof answersByKey === 'object' && !Array.isArray(answersByKey) ? answersByKey : {};
       const answerArray = buildQuestionAnswersArray({ questions, answersByQuestionKey: answers });
+      const c = await ensureClient();
       await c.questionReply({ requestId: req.id, answers: answerArray });
       params.session.sendAgentMessage(provider, {
         type: 'tool-result',
@@ -2670,11 +2703,7 @@ export function createOpenCodeServerRuntime(params: {
       return;
     }
 
-    if (decision.decision === 'abort') {
-      await c.questionReject({ requestId: req.id });
-      return;
-    }
-
+    const c = await ensureClient();
     await c.questionReject({ requestId: req.id });
   };
 
@@ -2687,7 +2716,6 @@ export function createOpenCodeServerRuntime(params: {
 
     const mode = params.getPermissionMode?.() ?? 'default';
     const c = await ensureClient();
-
     // Mirror Happier permission mode semantics for provider-native permission prompts.
     if (mode === 'read-only' || mode === 'plan') {
       await c.permissionReply({ requestId: req.id, reply: 'reject' });

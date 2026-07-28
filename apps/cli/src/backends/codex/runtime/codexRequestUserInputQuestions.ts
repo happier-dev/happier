@@ -1,4 +1,4 @@
-import { looksLikeFreeformQuestionHintLabel, splitCommaSeparatedLabels } from '@/agent/questions/structuredQuestionAnswerText';
+import { looksLikeFreeformQuestionHintLabel } from '@/agent/questions/structuredQuestionAnswerText';
 
 type RecordLike = Record<string, unknown>;
 
@@ -120,46 +120,36 @@ export function normalizeCodexRequestUserInputQuestionsToAskUserQuestionInput(qu
     return { questions: normalizedQuestions };
 }
 
-function resolveAnswerText(params: Readonly<{
+function resolveAnswerValues(params: Readonly<{
     question: RecordLike;
-    answersByKey: Record<string, string>;
-}>): string {
+    answersByKey: Readonly<Record<string, readonly string[]>>;
+}>): readonly string[] {
     const questionId = normalizeString(params.question.id);
     const questionText = normalizeString(params.question.question);
     const header = normalizeString(params.question.header);
 
-    if (questionId && typeof params.answersByKey[questionId] === 'string') {
-        return params.answersByKey[questionId]!.trim();
-    }
-    if (questionText && typeof params.answersByKey[questionText] === 'string') {
-        return params.answersByKey[questionText]!.trim();
-    }
-    if (header && typeof params.answersByKey[header] === 'string') {
-        return params.answersByKey[header]!.trim();
-    }
-    return '';
+    if (questionId && Array.isArray(params.answersByKey[questionId])) return params.answersByKey[questionId]!;
+    if (questionText && Array.isArray(params.answersByKey[questionText])) return params.answersByKey[questionText]!;
+    if (header && Array.isArray(params.answersByKey[header])) return params.answersByKey[header]!;
+    return [];
 }
 
 export function buildCodexRequestUserInputAnswers(params: Readonly<{
     questions: unknown;
-    answersByKey: Record<string, string>;
+    answersByKey: Readonly<Record<string, readonly string[]>>;
 }>): Record<string, { answers: string[] }> {
-    if (!Array.isArray(params.questions)) return {};
+    if (!Array.isArray(params.questions)) return Object.create(null) as Record<string, { answers: string[] }>;
 
-    const answers: Record<string, { answers: string[] }> = {};
+    const answers = Object.create(null) as Record<string, { answers: string[] }>;
     for (const rawQuestion of params.questions) {
         const question = asRecord(rawQuestion);
         if (!question) continue;
         const questionId = normalizeString(question.id);
         if (!questionId) continue;
 
-        const answerText = resolveAnswerText({ question, answersByKey: params.answersByKey });
-        if (!answerText) continue;
-
-        const multiSelect = question.multiSelect === true || question.multiple === true;
-        answers[questionId] = {
-            answers: multiSelect ? splitCommaSeparatedLabels(answerText) : [answerText],
-        };
+        const answerValues = resolveAnswerValues({ question, answersByKey: params.answersByKey });
+        if (answerValues.length === 0) continue;
+        answers[questionId] = { answers: [...answerValues] };
     }
 
     return answers;

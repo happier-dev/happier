@@ -107,8 +107,28 @@ describe('agents/registryCore', () => {
         expect(customAcp.cli.detectKey).toBe('custom-acp');
     });
 
+    it('provides a conservative first-class Grok core config', () => {
+        const grok = getAgentCore('grok');
+        expect(grok).toMatchObject({
+            id: 'grok',
+            displayNameKey: 'agentInput.agent.grok',
+            subtitleKey: 'profiles.aiBackend.grokSubtitleExperimental',
+            availability: { experimental: true },
+            cli: { detectKey: 'grok', machineLoginKey: 'grok', spawnAgent: 'grok' },
+            sessionModes: { kind: 'none' },
+            model: { supportsSelection: false, supportsFreeform: false },
+            resume: {
+                vendorResumeIdField: 'grokSessionId',
+                uiVendorResumeIdLabelKey: 'sessionInfo.grokSessionId',
+                uiVendorResumeIdCopiedKey: 'sessionInfo.grokSessionIdCopied',
+                supportsVendorResume: true,
+                experimental: true,
+            },
+        });
+    });
+
     it('uses generic installer guidance instead of hardcoded package-manager commands', () => {
-        for (const agentId of ['codex', 'opencode', 'qwen', 'kilo', 'kiro', 'customAcp', 'pi', 'copilot'] as const) {
+        for (const agentId of ['codex', 'opencode', 'qwen', 'kilo', 'kiro', 'customAcp', 'pi', 'copilot', 'grok'] as const) {
             const core = getAgentCore(agentId);
             expect(core.cli.installBanner.installKind).toBe('ifAvailable');
             expect(core.cli.installBanner.installCommand).toBeUndefined();

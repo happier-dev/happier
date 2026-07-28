@@ -11,49 +11,69 @@ describe('provider local auth registry', () => {
 
     it('returns a Claude launch strategy that starts the CLI and submits /login as terminal input', () => {
         const plugin = getProviderLocalAuthPlugin('claude');
-        const launch = plugin?.buildLoginLaunch?.({ resolvedPath: '/usr/local/bin/claude' }) ?? null;
+        const launches = plugin?.buildAuthLaunches?.({ resolvedPath: '/usr/local/bin/claude' }) ?? [];
 
-        expect(launch).toEqual({
+        expect(launches).toEqual([{
+            kind: 'primary',
             initialCommand: '/usr/local/bin/claude',
             initialInput: '/login\r',
-        });
+        }]);
     });
 
     it('returns a Codex launch strategy that runs the direct login command', () => {
         const plugin = getProviderLocalAuthPlugin('codex');
-        const launch = plugin?.buildLoginLaunch?.({ resolvedPath: '/usr/local/bin/codex' }) ?? null;
+        const launches = plugin?.buildAuthLaunches?.({ resolvedPath: '/usr/local/bin/codex' }) ?? [];
 
-        expect(launch).toEqual({
+        expect(launches).toEqual([{
+            kind: 'primary',
             initialCommand: '/usr/local/bin/codex login',
-        });
+        }]);
     });
 
     it('returns a Copilot launch strategy that runs the direct login command', () => {
         const plugin = getProviderLocalAuthPlugin('copilot');
-        const launch = plugin?.buildLoginLaunch?.({ resolvedPath: '/usr/local/bin/copilot' }) ?? null;
+        const launches = plugin?.buildAuthLaunches?.({ resolvedPath: '/usr/local/bin/copilot' }) ?? [];
 
-        expect(launch).toEqual({
+        expect(launches).toEqual([{
+            kind: 'primary',
             initialCommand: '/usr/local/bin/copilot login',
-        });
+        }]);
     });
 
     it('returns a Kilo launch strategy that starts the CLI and submits /connect as terminal input', () => {
         const plugin = getProviderLocalAuthPlugin('kilo');
-        const launch = plugin?.buildLoginLaunch?.({ resolvedPath: '/usr/local/bin/kilo' }) ?? null;
+        const launches = plugin?.buildAuthLaunches?.({ resolvedPath: '/usr/local/bin/kilo' }) ?? [];
 
-        expect(launch).toEqual({
+        expect(launches).toEqual([{
+            kind: 'primary',
             initialCommand: '/usr/local/bin/kilo',
             initialInput: '/connect\r',
-        });
+        }]);
     });
 
     it('returns a Kiro launch strategy that runs the direct login command', () => {
         const plugin = getProviderLocalAuthPlugin('kiro');
-        const launch = plugin?.buildLoginLaunch?.({ resolvedPath: '/usr/local/bin/kiro-cli' }) ?? null;
+        const launches = plugin?.buildAuthLaunches?.({ resolvedPath: '/usr/local/bin/kiro-cli' }) ?? [];
 
-        expect(launch).toEqual({
+        expect(launches).toEqual([{
+            kind: 'primary',
             initialCommand: '/usr/local/bin/kiro-cli login',
-        });
+        }]);
+    });
+
+    it('projects Grok primary and device-code actions through the generic ordered contract', () => {
+        const plugin = getProviderLocalAuthPlugin('grok');
+
+        expect(plugin?.buildAuthLaunches?.({ resolvedPath: '/Applications/Grok Build/grok' })).toEqual([
+            {
+                kind: 'primary',
+                initialCommand: "'/Applications/Grok Build/grok' login",
+            },
+            {
+                kind: 'device_code',
+                initialCommand: "'/Applications/Grok Build/grok' login --device-auth",
+            },
+        ]);
     });
 
     it('uses centralized provider setup guide URLs for local auth plugins', () => {
@@ -64,27 +84,29 @@ describe('provider local auth registry', () => {
 
     it('prefers a resolved shell command when the CLI requires a runtime wrapper', () => {
         const plugin = getProviderLocalAuthPlugin('codex');
-        const launch = plugin?.buildLoginLaunch?.({
+        const launches = plugin?.buildAuthLaunches?.({
             resolvedPath: '/opt/tools/fake-codex.js',
             resolvedCommand: `'bun' '/opt/tools/fake-codex.js'`,
             platform: 'darwin',
         }) ?? null;
 
-        expect(launch).toEqual({
+        expect(launches).toEqual([{
+            kind: 'primary',
             initialCommand: `'bun' '/opt/tools/fake-codex.js' login`,
-        });
+        }]);
     });
 
     it('quotes a fallback resolvedPath when the CLI path contains spaces', () => {
         const plugin = getProviderLocalAuthPlugin('codex');
-        const launch = plugin?.buildLoginLaunch?.({
+        const launches = plugin?.buildAuthLaunches?.({
             resolvedPath: '/Applications/Codex App/bin/codex',
             resolvedCommand: null,
             platform: 'darwin',
         }) ?? null;
 
-        expect(launch).toEqual({
+        expect(launches).toEqual([{
+            kind: 'primary',
             initialCommand: `'/Applications/Codex App/bin/codex' login`,
-        });
+        }]);
     });
 });

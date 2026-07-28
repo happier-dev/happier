@@ -21,6 +21,7 @@ describe('providers: parallel preset helpers', () => {
       'pi',
       'cursor',
       'copilot',
+      'grok',
     ]);
   });
 
@@ -60,6 +61,7 @@ describe('providers: parallel preset helpers', () => {
       'pi',
       'cursor',
       'copilot',
+      'grok',
     ]);
   });
 

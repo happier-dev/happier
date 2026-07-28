@@ -370,6 +370,30 @@ describe('modelOptions', () => {
 
         expect(out.map((o) => o.value)).toEqual(['default', 'model-a']);
     });
+
+    it('uses the newest valid model-state alias when canonical and legacy values diverge', () => {
+        const out = getModelOptionsForSession(
+            'grok',
+            withMetadata({
+                sessionModelsV1: {
+                    v: 1,
+                    provider: 'grok',
+                    updatedAt: 10,
+                    currentModelId: 'stale-model',
+                    availableModels: [{ id: 'stale-model', name: 'Stale model' }],
+                },
+                acpSessionModelsV1: {
+                    v: 1,
+                    provider: 'grok',
+                    updatedAt: 20,
+                    currentModelId: 'grok-4.5',
+                    availableModels: [{ id: 'grok-4.5', name: 'Grok 4.5' }],
+                },
+            }),
+        );
+
+        expect(out.map((option) => option.value)).toEqual(['default', 'grok-4.5']);
+    });
 });
 
 describe('modelOptions — ultracode and extended context (Claude)', () => {

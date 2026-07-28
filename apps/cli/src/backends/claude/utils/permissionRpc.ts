@@ -1,4 +1,5 @@
 import type { PermissionMode } from '@/api/types';
+import type { StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
 
 export type PermissionRpcPayload = {
   id: string;
@@ -17,6 +18,7 @@ export type PermissionRpcPayload = {
    * Claude Code may use this to complete the interaction without a TUI.
    */
   answers?: Record<string, string>;
+  structuredAnswersV1?: StructuredQuestionAnswersV1;
   /**
    * Optional client-provided timestamp for telemetry/debugging.
    */

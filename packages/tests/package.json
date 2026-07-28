@@ -44,6 +44,8 @@
     "providers:pi:extended": "yarn -s providers:run pi extended",
     "providers:cursor:smoke": "yarn -s providers:run cursor smoke",
     "providers:cursor:extended": "yarn -s providers:run cursor extended",
+    "providers:grok:smoke": "yarn -s providers:run grok smoke",
+    "providers:grok:extended": "yarn -s providers:run grok extended",
     "providers:all:smoke": "yarn -s providers:run all smoke",
     "providers:all:extended": "yarn -s providers:run all extended",
     "providers:all:smoke:parallel": "yarn -s providers:run:parallel all smoke",
@@ -58,7 +60,8 @@
     "providers:kimi:smoke:update-baselines": "yarn -s providers:run kimi smoke --update-baselines",
     "providers:auggie:smoke:update-baselines": "yarn -s providers:run auggie smoke --update-baselines",
     "providers:pi:smoke:update-baselines": "yarn -s providers:run pi smoke --update-baselines",
-    "providers:cursor:smoke:update-baselines": "yarn -s providers:run cursor smoke --update-baselines"
+    "providers:cursor:smoke:update-baselines": "yarn -s providers:run cursor smoke --update-baselines",
+    "providers:grok:smoke:update-baselines": "yarn -s providers:run grok smoke --update-baselines"
   },
   "dependencies": {
     "@happier-dev/cli-common": "0.0.0",

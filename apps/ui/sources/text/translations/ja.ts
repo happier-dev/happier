@@ -707,6 +707,13 @@ export const ja: TranslationStructure = {
 
     },
 
+    unsupportedContent: {
+      unparsedUserMessage: '解析できないユーザーメッセージ',
+      unparsedAgentMessage: '解析できないアシスタントメッセージ',
+      unsupportedAgentOutput: 'サポートされていない出力',
+      unsupportedTranscriptRecord: 'サポートされていない記録',
+    },
+
   },
 
 
@@ -1458,6 +1465,7 @@ export const ja: TranslationStructure = {
       kimiSubtitleExperimental: "Kimi CLI（実験）",
       kiloSubtitleExperimental: "Kilo CLI（実験）",
       kiroSubtitleExperimental: "Kiro CLI（実験）",
+      grokSubtitleExperimental: "Grok Build CLI（実験）",
       customAcpSubtitleExperimental: "カスタム ACP CLI（実験）",
       piSubtitleExperimental: "Pi CLI（実験）",
       copilotSubtitleExperimental: "GitHub Copilot CLI（実験的）",
@@ -4068,6 +4076,8 @@ localTailscale: {
         logInSubtitle: "このマシンでターミナルを開き、プロバイダーのサインインを実行します。",
         reauthenticateTitle: "再認証",
         reauthenticateSubtitle: "このマシンでターミナルを開き、プロバイダーのサインインを更新します。",
+        deviceCodeTitle: "デバイスコードを使用",
+        deviceCodeSubtitle: "ヘッドレスまたはリモートマシンでデバイスコードを使って認証します。",
         checkNowTitle: "今すぐ確認",
         checkNowSubtitle: "検出されたローカル認証状態を更新します。",
         statusTitle: "状態",
@@ -4361,6 +4371,9 @@ localTailscale: {
             },
             kiro: {
                 title: "Kiro"
+            },
+            grok: {
+                title: "Grok Build"
             },
             pi: {
                 title: "Pi"
@@ -6091,6 +6104,8 @@ localTailscale: {
     kiloSessionIdCopied: "Kilo セッション ID をクリップボードにコピーしました",
     kiroSessionId: "Kiro セッション ID",
     kiroSessionIdCopied: "Kiro セッション ID をクリップボードにコピーしました",
+    grokSessionId: "Grok セッション ID",
+    grokSessionIdCopied: "Grok セッション ID をクリップボードにコピーしました",
     customAcpSessionId: "カスタム ACP セッション ID",
     customAcpSessionIdCopied: "カスタム ACP セッション ID をクリップボードにコピーしました",
     piSessionId: "Pi セッション ID",
@@ -6316,6 +6331,7 @@ localTailscale: {
       kimi: "Kimi",
       kilo: "Kilo",
       kiro: "Kiro",
+      grok: "Grok",
       customAcp: "カスタム ACP",
       pi: "Pi",
       copilot: "Copilot",
@@ -6564,6 +6580,7 @@ localTailscale: {
       other: "その他",
       otherDescription: "自分の回答を入力",
       otherPlaceholder: "回答を入力...",
+      selectionLimit: ({ count }: { count: number }) => `最大${count}件まで選択できます。別の回答を選ぶには、1件選択を解除してください。`,
     },
     exitPlanMode: {
       approve: "プランを承認",

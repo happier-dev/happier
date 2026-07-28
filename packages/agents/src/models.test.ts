@@ -131,6 +131,24 @@ describe('agent model config', () => {
     expect(codexModels.map((model) => model.id)).toContain('gpt-5.4');
   });
 
+  it('uses provider-advertised Grok models with grok-build as the non-freeform fallback', () => {
+    const grok = getAgentModelConfig('grok');
+    const grokModels = getAgentStaticModels('grok');
+
+    expect(grok.supportsSelection).toBe(true);
+    expect(grok.supportsFreeform).toBe(false);
+    expect(grok.acpApplyBehavior).toBe('set_model');
+    expect(grok.acpModelConfigOptionId).toBeUndefined();
+    expect(grokModels.map((model) => model.id)).toEqual(['grok-build']);
+    expect(grok.allowedModes).toEqual(['grok-build']);
+    expect(grok.staticModels?.map((model) => model.id)).toEqual(grok.allowedModes);
+    expect(grokModels[0]).toMatchObject({
+      id: 'grok-build',
+      name: 'Grok Build',
+      description: 'Fallback Grok Build model when the provider does not advertise selectable models.',
+    });
+  });
+
   it('treats Cursor models as dynamic ACP/CLI controls without freeform fallback', () => {
     expect(getAgentModelConfig(cursorAgentId)).toMatchObject({
       supportsSelection: true,

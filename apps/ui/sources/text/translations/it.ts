@@ -722,6 +722,13 @@ export const it: TranslationStructure = {
 
     },
 
+    unsupportedContent: {
+      unparsedUserMessage: 'Messaggio utente non analizzato',
+      unparsedAgentMessage: 'Messaggio assistente non analizzato',
+      unsupportedAgentOutput: 'Output non supportato',
+      unsupportedTranscriptRecord: 'Record non supportato',
+    },
+
   },
 
 
@@ -1475,6 +1482,7 @@ export const it: TranslationStructure = {
       kimiSubtitleExperimental: "Kimi CLI (sperimentale)",
       kiloSubtitleExperimental: "Kilo CLI (sperimentale)",
       kiroSubtitleExperimental: "Kiro CLI (sperimentale)",
+      grokSubtitleExperimental: "Grok Build CLI (sperimentale)",
       customAcpSubtitleExperimental: "CLI ACP personalizzata (sperimentale)",
       piSubtitleExperimental: "Pi CLI (sperimentale)",
       copilotSubtitleExperimental: "GitHub Copilot CLI (sperimentale)",
@@ -4120,6 +4128,8 @@ export const it: TranslationStructure = {
         logInSubtitle: "Apri un terminale ed esegui il flusso di accesso del provider su questa macchina.",
         reauthenticateTitle: "Riautentica",
         reauthenticateSubtitle: "Apri un terminale e rinnova l'accesso del provider su questa macchina.",
+        deviceCodeTitle: "Usa codice dispositivo",
+        deviceCodeSubtitle: "Autenticati da una macchina remota o senza interfaccia con un codice dispositivo.",
         checkNowTitle: "Controlla ora",
         checkNowSubtitle: "Aggiorna lo stato di autenticazione locale rilevato.",
         statusTitle: "Stato",
@@ -4413,6 +4423,9 @@ export const it: TranslationStructure = {
             },
             kiro: {
                 title: "Kiro"
+            },
+            grok: {
+                title: "Grok Build"
             },
             pi: {
                 title: "Pi"
@@ -6164,6 +6177,8 @@ export const it: TranslationStructure = {
     kiloSessionIdCopied: "ID sessione Kilo copiato negli appunti",
     kiroSessionId: "ID sessione Kiro",
     kiroSessionIdCopied: "ID sessione Kiro copiato negli appunti",
+    grokSessionId: "ID sessione Grok",
+    grokSessionIdCopied: "ID sessione Grok copiato negli appunti",
     customAcpSessionId: "ID sessione ACP personalizzata",
     customAcpSessionIdCopied: "ID sessione ACP personalizzata copiato negli appunti",
     piSessionId: "ID sessione Pi",
@@ -6387,6 +6402,7 @@ export const it: TranslationStructure = {
       kimi: "Kimi",
       kilo: "Kilo",
       kiro: "Kiro",
+      grok: "Grok",
       customAcp: "ACP personalizzato",
       pi: "Pi",
       copilot: "Copilot",
@@ -6637,6 +6653,7 @@ export const it: TranslationStructure = {
       other: "Altro",
       otherDescription: "Scrivi la tua risposta",
       otherPlaceholder: "Scrivi la tua risposta...",
+      selectionLimit: ({ count }: { count: number }) => `Seleziona fino a ${count} risposte. Deselezionane una per sceglierne un'altra.`,
     },
     exitPlanMode: {
       approve: "Approva piano",

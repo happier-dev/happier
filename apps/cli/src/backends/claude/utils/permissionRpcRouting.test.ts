@@ -117,19 +117,16 @@ describe('permission RPC routing', () => {
     const permissionRpc = client.rpcHandlerManager.getHandler('permission');
     expect(permissionRpc).toBeDefined();
 
-    await expect(permissionRpc?.({ id: 'toolu_missing_ask_1', approved: true, answers: { Continue: 'Yes' } })).resolves.toEqual({
-      ok: false,
-      errorCode: 'permission_request_not_found',
-      errorMessage: 'permission_request_not_found',
-      requestId: 'toolu_missing_ask_1',
+    await expect(permissionRpc?.({ id: 'toolu_missing_ask_1', approved: true, answers: { Continue: 'Yes' } })).rejects.toMatchObject({
+      rpcErrorCode: 'STRUCTURED_QUESTION_RECEIVER_NOT_OWNER',
     });
   });
 
   it('maps an expired consumer outcome to a typed permission_request_expired result', async () => {
-    let registered: ((payload: PermissionRpcPayload) => unknown) | null = null;
+    const registered = new Map<string, (payload: PermissionRpcPayload) => unknown>();
     const router = new ClaudePermissionRpcRouter({
-      registerHandler: (_method, handler) => {
-        registered = handler;
+      registerHandler: (method, handler) => {
+        registered.set(method, handler);
       },
     });
     router.registerConsumer({
@@ -137,8 +134,7 @@ describe('permission RPC routing', () => {
       tryHandlePermissionRpc: () => ({ status: 'expired' }),
     });
 
-    expect(registered).not.toBeNull();
-    await expect(registered!({ id: 'toolu_expired_1', approved: true })).resolves.toEqual({
+    await expect(registered.get('permission')!({ id: 'toolu_expired_1', approved: true })).resolves.toEqual({
       ok: false,
       errorCode: 'permission_request_expired',
       errorMessage: 'permission_request_expired',
@@ -147,17 +143,16 @@ describe('permission RPC routing', () => {
   });
 
   it('treats a handled object outcome like a boolean true and continues past unhandled outcomes', async () => {
-    let registered: ((payload: PermissionRpcPayload) => unknown) | null = null;
+    const registered = new Map<string, (payload: PermissionRpcPayload) => unknown>();
     const router = new ClaudePermissionRpcRouter({
-      registerHandler: (_method, handler) => {
-        registered = handler;
+      registerHandler: (method, handler) => {
+        registered.set(method, handler);
       },
     });
     router.registerConsumer({ name: 'skip', tryHandlePermissionRpc: () => ({ status: 'unhandled' }) });
     router.registerConsumer({ name: 'take', tryHandlePermissionRpc: () => ({ status: 'handled' }) });
 
-    expect(registered).not.toBeNull();
-    await expect(registered!({ id: 'toolu_handled_1', approved: true })).resolves.toEqual({ ok: true });
+    await expect(registered.get('permission')!({ id: 'toolu_handled_1', approved: true })).resolves.toEqual({ ok: true });
   });
 
   it('does not let remote permission cleanup cancel local-bridge requests', async () => {
@@ -215,12 +210,7 @@ describe('permission RPC routing', () => {
       id: 'claude_resume_choice_1',
       approved: true,
       answers: { 'How should Claude resume this session?': 'Resume from summary' },
-    })).resolves.toEqual({
-      ok: false,
-      errorCode: 'permission_request_not_found',
-      errorMessage: 'permission_request_not_found',
-      requestId: 'claude_resume_choice_1',
-    });
+    })).rejects.toMatchObject({ rpcErrorCode: 'STRUCTURED_QUESTION_RECEIVER_NOT_OWNER' });
 
     expect(client.getAgentStateSnapshot().requests.claude_resume_choice_1).toBeDefined();
     expect(client.getAgentStateSnapshot().completedRequests.claude_resume_choice_1).toBeUndefined();

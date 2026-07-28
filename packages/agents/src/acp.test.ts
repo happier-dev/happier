@@ -8,6 +8,11 @@ describe('built-in ACP config', () => {
     expect(Object.keys(BUILT_IN_ACP_CONFIG).sort()).toEqual(['customAcp', 'kiro']);
   });
 
+  it('keeps first-class Grok provider wiring out of the generic ACP catalog', () => {
+    expect(hasBuiltInAcpConfig('grok')).toBe(false);
+    expect(getBuiltInAcpConfig('grok')).toBeNull();
+  });
+
   it('exposes Custom ACP as a built-in generic ACP agent family', () => {
     expect(hasBuiltInAcpConfig('customAcp')).toBe(true);
     expect(getBuiltInAcpConfig('customAcp')).toMatchObject({

@@ -1,4 +1,6 @@
-export type KnownProviderId = 'opencode' | 'codex' | 'claude' | 'kilo' | 'qwen' | 'kimi' | 'gemini' | 'auggie' | 'pi' | 'cursor' | 'copilot';
+import type { StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
+
+export type KnownProviderId = 'opencode' | 'codex' | 'claude' | 'kilo' | 'qwen' | 'kimi' | 'gemini' | 'auggie' | 'pi' | 'cursor' | 'copilot' | 'grok';
 export type ProviderId = KnownProviderId | (string & { readonly __providerIdBrand?: unique symbol });
 
 export type ProviderProtocol = 'acp' | 'codex' | 'claude';
@@ -169,9 +171,12 @@ export type ProviderScenario = {
     toolResults?: number;
     permissionRequests?: number;
   };
-  // When YOLO is disabled, the harness will auto-respond to permission requests via `${sessionId}:permission`.
+  // When YOLO is disabled, the harness auto-responds through the canonical legacy permission
+  // or structured-question RPC method, according to the pending request shape.
   // Defaults to `approved`.
   permissionAutoDecision?: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
+  /** Exact structured answers for deterministic AskUserQuestion provider fixtures. */
+  permissionAutoStructuredAnswersV1?: StructuredQuestionAnswersV1;
   // Optional override for YOLO scenarios: when true, the harness will auto-respond to provider
   // permission requests even in YOLO mode. This is useful for providers that occasionally surface
   // external-directory prompts despite running with a permissive policy.

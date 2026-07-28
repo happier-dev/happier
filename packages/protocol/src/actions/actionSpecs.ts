@@ -22,6 +22,7 @@ import {
 } from '../sessionWorkState/sessionWorkStateRpc.js';
 import { SessionTerminalComposerClearRequestV1Schema } from '../sessionControl/sessionTerminalComposerClearV1.js';
 import { SessionWorkStateStatusV1Schema } from '../sessionWorkState/sessionWorkStateV1.js';
+import { STRUCTURED_QUESTION_LIMITS } from '../tools/structuredQuestionAnswersV1.js';
 
 export {
   ActionApprovalFlowSchema,
@@ -589,20 +590,50 @@ const SessionPermissionRespondInputSchema = z.object({
 }).passthrough();
 
 const SessionUserActionAnswerItemSchema = z.object({
-  question: z.string().trim().min(1),
-  answer: z.string().trim().min(1),
-}).strict();
+  question: z.string()
+    .min(1)
+    .max(STRUCTURED_QUESTION_LIMITS.maxStringLength)
+    .refine((value) => value.trim().length > 0, { message: 'question must not be blank' }),
+  values: z.array(z.string().max(STRUCTURED_QUESTION_LIMITS.maxStringLength))
+    .min(1)
+    .max(STRUCTURED_QUESTION_LIMITS.maxAnswersPerQuestion)
+    .optional(),
+  answer: z.string().min(1).max(STRUCTURED_QUESTION_LIMITS.maxStringLength).optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.answer !== undefined && value.values !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'answer and values cannot both be provided' });
+  }
+  if (value.answer === undefined && value.values === undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'answer or values is required' });
+  }
+});
 
 const SessionUserActionAnswerInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
   requestId: z.string().min(1).optional(),
   decision: z.enum(['approve', 'reject', 'request_changes']).optional(),
   reason: z.string().trim().min(1).optional(),
-  answers: z.array(SessionUserActionAnswerItemSchema).min(1).optional(),
+  answers: z.array(SessionUserActionAnswerItemSchema)
+    .min(1)
+    .max(STRUCTURED_QUESTION_LIMITS.maxQuestions)
+    .optional(),
   updatedPermissions: z.unknown().optional(),
 }).passthrough().superRefine((value, ctx) => {
   const hasAnswers = Array.isArray(value.answers) && value.answers.length > 0;
+  const seenQuestions = new Set<string>();
+  for (const [index, entry] of (value.answers ?? []).entries()) {
+    if (seenQuestions.has(entry.question)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'duplicate question', path: ['answers', index, 'question'] });
+    }
+    seenQuestions.add(entry.question);
+    if (entry.values && new Set(entry.values).size !== entry.values.length) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'duplicate answer value', path: ['answers', index, 'values'] });
+    }
+  }
   const decision = typeof value.decision === 'string' ? value.decision : null;
+  if (hasAnswers && decision && decision !== 'approve') {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'answers cannot accompany a rejecting decision', path: ['decision'] });
+  }
   if (!hasAnswers && !decision) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -2497,7 +2528,7 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
     examples: {
       voice: {
         argsExample:
-          '{"sessionId":"{{sessionId}}","answers":[{"question":"Continue?","answer":"Yes"}]}',
+        '{"sessionId":"{{sessionId}}","answers":[{"question":"Continue?","values":["Yes"]}]}',
       },
     },
     surfaces: {
@@ -2551,9 +2582,9 @@ export const ACTION_SPECS: readonly ActionSpec[] = Object.freeze([
           required: true,
         },
         {
-          path: 'answers.[].answer',
-          title: 'Answer',
-          description: 'The answer text to send back for that question.',
+          path: 'answers.[].values',
+          title: 'Answer values',
+          description: 'The exact ordered answer values to send back for that question.',
           widget: 'text',
           required: true,
         },

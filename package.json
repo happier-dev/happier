@@ -127,6 +127,8 @@
     "test:providers:pi:extended": "yarn workspace @happier-dev/tests providers:pi:extended",
     "test:providers:cursor:smoke": "yarn workspace @happier-dev/tests providers:cursor:smoke",
     "test:providers:cursor:extended": "yarn workspace @happier-dev/tests providers:cursor:extended",
+    "test:providers:grok:smoke": "yarn workspace @happier-dev/tests providers:grok:smoke",
+    "test:providers:grok:extended": "yarn workspace @happier-dev/tests providers:grok:extended",
     "test:providers:all:smoke": "yarn workspace @happier-dev/tests providers:all:smoke",
     "test:providers:all:extended": "yarn workspace @happier-dev/tests providers:all:extended",
     "typecheck:inner": "yarn workspace @happier-dev/protocol typecheck && yarn workspace @happier-dev/transfers typecheck && yarn workspace @happier-dev/agents typecheck && yarn workspace @happier-dev/cli-common typecheck && yarn workspace @happier-dev/connection-supervisor typecheck && yarn workspace @happier-dev/bootstrap typecheck && yarn workspace @happier-dev/app typecheck && yarn workspace @happier-dev/cli typecheck && yarn --cwd apps/server typecheck && yarn workspace @happier-dev/tests typecheck",

@@ -15,7 +15,7 @@ type ProviderAuthenticationTerminalPaneProps = Readonly<{
     providerId: AgentId;
     machineId: string | null;
     machineHomeDir: string | null;
-    loginLaunch: ProviderLocalAuthLaunch | null;
+    authLaunch: ProviderLocalAuthLaunch | null;
     onRequestClose: () => void;
     onTerminalExit?: () => void;
 }>;
@@ -30,8 +30,8 @@ export const ProviderAuthenticationTerminalPane = React.memo(function ProviderAu
         return machineHomeDir || '/';
     }, [props.machineHomeDir]);
     const terminalKey = React.useMemo(
-        () => `provider-login:${props.machineId ?? 'none'}:${props.providerId}`,
-        [props.machineId, props.providerId],
+        () => `provider-login:${props.machineId ?? 'none'}:${props.providerId}:${props.authLaunch?.kind ?? 'none'}`,
+        [props.authLaunch?.kind, props.machineId, props.providerId],
     );
     const controller = useMachineTerminalSession({
         machineId: props.machineId,
@@ -40,8 +40,8 @@ export const ProviderAuthenticationTerminalPane = React.memo(function ProviderAu
         machineRpcTargetAvailable,
         terminalKey,
         terminalRef: terminalRendererRef,
-        initialCommand: props.loginLaunch?.initialCommand
-            ? buildTerminalAutoExitCommand(props.loginLaunch.initialCommand, machine?.metadata?.platform)
+        initialCommand: props.authLaunch?.initialCommand
+            ? buildTerminalAutoExitCommand(props.authLaunch.initialCommand, machine?.metadata?.platform)
             : null,
         closeOnUnmount: true,
     });
@@ -65,11 +65,11 @@ export const ProviderAuthenticationTerminalPane = React.memo(function ProviderAu
 
     React.useEffect(() => {
         if (controller.status !== 'connected') return;
-        const initialInput = props.loginLaunch?.initialInput;
+        const initialInput = props.authLaunch?.initialInput;
         if (!initialInput || didSendInitialInputRef.current) return;
         didSendInitialInputRef.current = true;
         controller.onInput(initialInput);
-    }, [controller, props.loginLaunch?.initialInput]);
+    }, [controller, props.authLaunch?.initialInput]);
 
     return (
         <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>

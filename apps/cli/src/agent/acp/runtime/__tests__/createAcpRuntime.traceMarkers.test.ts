@@ -9,7 +9,7 @@ import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHa
 import { createSessionClientWithMetadata } from '@/testkit/backends/sessionFixtures';
 import { withToolTraceFile } from '@/testkit/logger/toolTraceFile';
 
-import { createAcpRuntime } from '../createAcpRuntime';
+import { createTestAcpRuntime as createAcpRuntime } from '@/testkit/backends/acpRuntime';
 
 async function withTraceMarkerCapture(
   prefix: string,

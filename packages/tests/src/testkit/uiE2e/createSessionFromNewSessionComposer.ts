@@ -141,6 +141,22 @@ export async function openNewSessionMachineSelection(
   return 'picker_open';
 }
 
+export async function selectFirstAvailableMachineForNewSession(
+  params: Readonly<{
+    page: Page;
+    uiBaseUrl: string;
+    popoverWaitMs?: number;
+    routeFallbackWaitMs?: number;
+  }>,
+): Promise<void> {
+  const result = await openNewSessionMachineSelection(params);
+  if (result === 'returned_to_new') return;
+
+  const firstMachine = machineOptionLocator(params.page).first();
+  await expect(firstMachine).toHaveCount(1, { timeout: 120_000 });
+  await firstMachine.click();
+}
+
 export async function openNewSessionPathSelection(
   params: Readonly<{
     page: Page;

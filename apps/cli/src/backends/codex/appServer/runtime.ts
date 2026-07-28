@@ -260,7 +260,7 @@ type PendingTurn = Readonly<{
 type PermissionResult = Readonly<{
     decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
     execPolicyAmendment?: Readonly<{ command: string[] }>;
-    answers?: Record<string, string>;
+    answers?: Readonly<Record<string, readonly string[]>>;
 }>;
 
 type StreamUpdateContext = Readonly<{
@@ -1569,7 +1569,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
     };
 
     const publishThreadId = (): void => {
-        publishCodexSessionIdMetadata({
+        void publishCodexSessionIdMetadata({
             session: params.session,
             getCodexThreadId: () => threadId,
             backendMode: 'appServer',
@@ -1578,7 +1578,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
             activeServerDir: params.activeServerDir ?? null,
             processEnv: runtimeEnv,
             lastPublished: lastPublishedThreadId,
-        });
+        }).catch(() => undefined);
     };
 
     const publishRequestedResumeThreadId = (requestedThreadId: string): void => {

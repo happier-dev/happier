@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
     CLAUDE_LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
     CLAUDE_LOCAL_PERMISSION_BRIDGE_STOPPED_REASON,
 } from '@happier-dev/agents';
 import type { AgentState } from '@/api/types';
+import { InvalidAskUserQuestionInputError } from '@/agent/questions/normalizeAskUserQuestionInput';
 import { AgentStateRequestStore } from './agentStateRequestStore';
 
 class FakeSession {
@@ -13,17 +14,76 @@ class FakeSession {
         requests: Object.create(null),
         completedRequests: Object.create(null),
     };
+    updateCount = 0;
 
     getAgentStateSnapshot() {
         return this.agentState;
     }
 
     updateAgentState(updater: (state: AgentState) => AgentState) {
+        this.updateCount += 1;
         this.agentState = updater(this.agentState);
     }
 }
 
+class DeferredSession extends FakeSession {
+    pendingUpdater: ((state: AgentState) => AgentState) | null = null;
+
+    override updateAgentState(updater: (state: AgentState) => AgentState) {
+        this.updateCount += 1;
+        this.pendingUpdater = updater;
+    }
+
+    flushAgentStateUpdate() {
+        const updater = this.pendingUpdater;
+        this.pendingUpdater = null;
+        if (updater) this.agentState = updater(this.agentState);
+    }
+}
+
 describe('AgentStateRequestStore', () => {
+    it('rejects oversized direct AskUserQuestion publication before state or push side effects', () => {
+        const session = new FakeSession();
+        const sendToAllDevicesAsync = vi.fn(async () => {});
+        const pushSender = { sendToAllDevicesAsync };
+        const store = new AgentStateRequestStore({ session, logPrefix: '[Test]', pushSender });
+        const toolInput = { questions: [{ question: 'x'.repeat(16_385), options: [] }] };
+
+        expect(() => store.publishRequest({
+            requestId: 'oversized',
+            toolName: 'ask_user_question',
+            toolInput,
+            createdAt: 1,
+        })).toThrow(InvalidAskUserQuestionInputError);
+        expect(session.updateCount).toBe(0);
+        expect(session.agentState.requests!.oversized).toBeUndefined();
+        expect(sendToAllDevicesAsync).not.toHaveBeenCalled();
+    });
+
+    it('publishes a detached AskUserQuestion snapshot when the session applies its update later', () => {
+        const session = new DeferredSession();
+        const store = new AgentStateRequestStore({ session, logPrefix: '[Test]' });
+        const toolInput = {
+            provider: { correlation: 'original' },
+            questions: [{ question: 'Original?', options: [{ label: 'Original' }] }],
+        };
+
+        store.publishRequest({
+            requestId: 'deferred',
+            toolName: 'AskUserQuestion',
+            toolInput,
+            createdAt: 1,
+        });
+        toolInput.provider.correlation = 'mutated';
+        toolInput.questions[0]!.question = 'Mutated?';
+        toolInput.questions[0]!.options[0]!.label = 'Mutated';
+        session.flushAgentStateUpdate();
+
+        expect(session.agentState.requests!.deferred?.arguments).toEqual({
+            provider: { correlation: 'original' },
+            questions: [{ question: 'Original?', options: [{ label: 'Original' }] }],
+        });
+    });
     it('publishes and completes a request', () => {
         const session = new FakeSession();
         const store = new AgentStateRequestStore({

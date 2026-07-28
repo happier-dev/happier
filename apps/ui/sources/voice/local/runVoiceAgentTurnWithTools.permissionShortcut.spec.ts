@@ -201,6 +201,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
           updatedAt: 1,
           agentState: {
             controlledByUser: null,
+            capabilities: { structuredQuestionAnswersV1Supported: true },
             requests: {
               req_question: {
                 id: 'req_question',
@@ -261,11 +262,10 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 's1',
-        method: 'permission',
+        method: 'session.structuredQuestion.respond.v1',
         payload: {
           id: 'req_question',
-          approved: false,
-          answers: { 'May I create QA_DENY_PATH.txt?': `No, don't create it` },
+          structuredAnswersV1: { 'May I create QA_DENY_PATH.txt?': [`No, don't create it`] },
         },
       }),
     );

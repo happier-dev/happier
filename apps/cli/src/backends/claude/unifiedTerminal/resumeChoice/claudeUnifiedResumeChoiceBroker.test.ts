@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICE_REQUEST_SOURCE } from '@happier-dev/agents';
+import { SESSION_RPC_METHODS, type StructuredQuestionResponseV1 } from '@happier-dev/protocol';
+import { PUBLIC_RPC_HANDLER_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 import { createPermissionHandlerSessionStub } from '../../utils/permissionHandler.testkit';
 import {
@@ -24,6 +26,93 @@ async function expectRejectsWithin<T>(promise: Promise<T>, ms = 250): Promise<un
 }
 
 describe('ClaudeUnifiedResumeChoiceBroker', () => {
+  it('resolves a modern structured answer through the receiver-enforced v1 router', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('resume-choice-session');
+    const broker = new ClaudeUnifiedResumeChoiceBroker(session, {
+      createRequestId: () => 'claude_resume_choice_modern',
+      nowMs: () => 123,
+    });
+    broker.activate();
+
+    const pending = broker.requestResumeChoice();
+    const structuredRpc = client.rpcHandlerManager.getHandler<StructuredQuestionResponseV1>(
+      SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1,
+    );
+    await expect(structuredRpc?.({
+      id: 'claude_resume_choice_modern',
+      structuredAnswersV1: {
+        [CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION]: ['Resume full session'],
+      },
+    })).resolves.toEqual({ ok: true });
+
+    await expect(pending).resolves.toBe('resume_full_session');
+    expect(client.getAgentStateSnapshot().completedRequests.claude_resume_choice_modern).toMatchObject({
+      status: 'approved',
+      source: CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICE_REQUEST_SOURCE,
+      structuredAnswersV1: {
+        [CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION]: ['Resume full session'],
+      },
+      resumeChoice: 'resume_full_session',
+    });
+  });
+
+  it('keeps an owned modern request retryable after semantic validation fails', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('resume-choice-session');
+    const broker = new ClaudeUnifiedResumeChoiceBroker(session, {
+      createRequestId: () => 'claude_resume_choice_retry',
+    });
+    broker.activate();
+
+    const pending = broker.requestResumeChoice();
+    const structuredRpc = client.rpcHandlerManager.getHandler<StructuredQuestionResponseV1>(
+      SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1,
+    );
+    await expect(structuredRpc?.({
+      id: 'claude_resume_choice_retry',
+      structuredAnswersV1: {
+        [CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION]: ['Mystery mode'],
+      },
+    })).rejects.toMatchObject({
+      rpcErrorCode: PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_INVALID,
+    });
+    expect(client.getAgentStateSnapshot().requests.claude_resume_choice_retry).toBeDefined();
+    expect(client.getAgentStateSnapshot().completedRequests.claude_resume_choice_retry).toBeUndefined();
+    expect(broker.hasPendingChoice()).toBe(true);
+
+    await expect(structuredRpc?.({
+      id: 'claude_resume_choice_retry',
+      structuredAnswersV1: {
+        [CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION]: ['Resume from summary'],
+      },
+    })).resolves.toEqual({ ok: true });
+    await expect(pending).resolves.toBe('resume_from_summary');
+  });
+
+  it('rejects a modern answer for an unowned request without disturbing the owned waiter', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('resume-choice-session');
+    const broker = new ClaudeUnifiedResumeChoiceBroker(session, {
+      createRequestId: () => 'claude_resume_choice_owned',
+    });
+    broker.activate();
+
+    const pending = broker.requestResumeChoice();
+    const structuredRpc = client.rpcHandlerManager.getHandler<StructuredQuestionResponseV1>(
+      SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1,
+    );
+    await expect(structuredRpc?.({
+      id: 'another_request',
+      structuredAnswersV1: {
+        [CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION]: ['Resume from summary'],
+      },
+    })).rejects.toMatchObject({
+      rpcErrorCode: PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_RECEIVER_NOT_OWNER,
+    });
+    expect(client.getAgentStateSnapshot().requests.claude_resume_choice_owned).toBeDefined();
+
+    broker.dispose();
+    await expectRejectsWithin(pending);
+  });
+
   it('publishes one source-marked AskUserQuestion and resolves a summary answer through the shared permission RPC', async () => {
     const { session, client } = createPermissionHandlerSessionStub('resume-choice-session');
     const broker = new ClaudeUnifiedResumeChoiceBroker(session, {
@@ -56,6 +145,9 @@ describe('ClaudeUnifiedResumeChoiceBroker', () => {
     expect(client.getAgentStateSnapshot().completedRequests.claude_resume_choice_1).toMatchObject({
       status: 'approved',
       source: CLAUDE_UNIFIED_TERMINAL_RESUME_CHOICE_REQUEST_SOURCE,
+      structuredAnswersV1: {
+        [CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION]: ['Resume from summary'],
+      },
       resumeChoice: 'resume_from_summary',
     });
     expect(broker.hasPendingChoice()).toBe(false);
@@ -99,18 +191,21 @@ describe('ClaudeUnifiedResumeChoiceBroker', () => {
       id: 'claude_resume_choice_1',
       approved: true,
       answers: { [CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION]: 'Use a mystery mode' },
-    })).resolves.toEqual({
-      ok: false,
-      errorCode: 'permission_response_failed',
-      errorMessage: 'permission_response_failed',
-      requestId: 'claude_resume_choice_1',
+    })).rejects.toMatchObject({
+      rpcErrorCode: PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_LEGACY_INVALID,
     });
 
     expect(client.getAgentStateSnapshot().requests.claude_resume_choice_1).toBeDefined();
     expect(broker.hasPendingChoice()).toBe(true);
 
+    await expect(permissionRpc?.({
+      id: 'claude_resume_choice_1',
+      approved: true,
+      answers: { [CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION]: 'Resume from summary' },
+    })).resolves.toEqual({ ok: true });
+    await expect(pending).resolves.toBe('resume_from_summary');
+
     broker.dispose();
-    await expectRejectsWithin(pending);
   });
 
   it('cancels the pending user action without sending a choice when disposed', async () => {

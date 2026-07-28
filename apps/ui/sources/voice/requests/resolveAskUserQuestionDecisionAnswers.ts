@@ -1,15 +1,10 @@
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
+import {
+    isAskUserQuestionToolName,
+    normalizeStructuredQuestionDescriptors,
+} from '@happier-dev/protocol';
 
 type DirectPermissionDecision = 'allow' | 'deny';
-
-type AskUserQuestionOptionLike = Readonly<{
-    label?: unknown;
-}>;
-
-type AskUserQuestionLike = Readonly<{
-    question?: unknown;
-    options?: unknown;
-}>;
 
 const ALLOW_OPTION_PATTERNS = [
     /\byes\b/i,
@@ -35,14 +30,15 @@ const DENY_OPTION_PATTERNS = [
     /\brequest changes\b/i,
 ];
 
-function normalizeText(value: unknown): string {
-    return typeof value === 'string' ? value.trim() : '';
-}
+type DecisionOption = Readonly<{
+    displayLabel: string;
+    answerValue: string;
+}>;
 
-function pickOptionLabel(options: readonly string[], decision: DirectPermissionDecision): string | null {
+function pickOption(options: readonly DecisionOption[], decision: DirectPermissionDecision): DecisionOption | null {
     const patterns = decision === 'allow' ? ALLOW_OPTION_PATTERNS : DENY_OPTION_PATTERNS;
     for (const option of options) {
-        if (patterns.some((pattern) => pattern.test(option))) {
+        if (patterns.some((pattern) => pattern.test(option.displayLabel))) {
             return option;
         }
     }
@@ -57,27 +53,25 @@ function pickOptionLabel(options: readonly string[], decision: DirectPermissionD
 export function resolveAskUserQuestionDecisionAnswers(
     request: PendingPermissionRequest | null | undefined,
     decision: DirectPermissionDecision,
-): ReadonlyArray<Readonly<{ question: string; answer: string }>> | null {
-    if (!request || request.tool !== 'AskUserQuestion') return null;
+): ReadonlyArray<Readonly<{ question: string; values: readonly string[] }>> | null {
+    if (!request || !isAskUserQuestionToolName(request.tool)) return null;
 
-    const questions = Array.isArray((request.arguments as { questions?: unknown })?.questions)
-        ? ((request.arguments as { questions: readonly AskUserQuestionLike[] }).questions ?? [])
-        : [];
-    if (questions.length === 0) return null;
+    const questions = normalizeStructuredQuestionDescriptors(
+        (request.arguments as { questions?: unknown })?.questions,
+    );
+    if (!questions.ok) return null;
 
-    const answers: Array<Readonly<{ question: string; answer: string }>> = [];
-    for (const rawQuestion of questions) {
-        const question = normalizeText(rawQuestion?.question);
-        const options = Array.isArray(rawQuestion?.options)
-            ? (rawQuestion.options as readonly AskUserQuestionOptionLike[])
-                  .map((option) => normalizeText(option?.label))
-                  .filter((label) => label.length > 0)
-            : [];
-        if (!question || options.length === 0) return null;
+    const answers: Array<Readonly<{ question: string; values: readonly string[] }>> = [];
+    for (const question of questions.questions) {
+        const options = question.options.map((option) => ({
+            displayLabel: option.label.trim(),
+            answerValue: option.answerValue,
+        }));
+        if (options.length === 0) return null;
 
-        const answer = pickOptionLabel(options, decision);
+        const answer = pickOption(options, decision);
         if (!answer) return null;
-        answers.push({ question, answer });
+        answers.push({ question: question.responseKey, values: [answer.answerValue] });
     }
 
     return answers.length > 0 ? answers : null;

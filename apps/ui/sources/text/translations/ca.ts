@@ -678,6 +678,12 @@ export const ca: TranslationStructure = {
         progress: {
             catchingUp: 'Posant-se al dia…',
         },
+        unsupportedContent: {
+            unparsedUserMessage: 'Missatge d\'usuari no analitzat',
+            unparsedAgentMessage: 'Missatge d\'assistent no analitzat',
+            unsupportedAgentOutput: 'Sortida no compatible',
+            unsupportedTranscriptRecord: 'Registre no compatible',
+        },
     },
 
     inbox: {
@@ -3584,6 +3590,8 @@ export const ca: TranslationStructure = {
               logInSubtitle: 'Obre un terminal i executa el flux d’inici de sessió del proveïdor en aquesta màquina.',
               reauthenticateTitle: 'Torna a autenticar',
               reauthenticateSubtitle: 'Obre un terminal i renova l’inici de sessió del proveïdor en aquesta màquina.',
+              deviceCodeTitle: 'Utilitza un codi de dispositiu',
+              deviceCodeSubtitle: 'Autentica’t en una màquina remota o sense interfície amb un codi de dispositiu.',
               checkNowTitle: 'Comprova-ho ara',
               checkNowSubtitle: 'Actualitza l’estat d’autenticació local detectat.',
               statusTitle: 'Estat',
@@ -3877,6 +3885,9 @@ export const ca: TranslationStructure = {
             },
             kiro: {
                 title: "Kiro"
+            },
+            grok: {
+                title: "Grok Build"
             },
             pi: {
                 title: "Pi"
@@ -5469,6 +5480,8 @@ deps: {
         kiloSessionIdCopied: 'ID de la sessió de Kilo copiat al porta-retalls',
         kiroSessionId: 'ID de la sessió de Kiro',
         kiroSessionIdCopied: 'ID de la sessió de Kiro copiat al porta-retalls',
+        grokSessionId: 'ID de la sessió de Grok',
+        grokSessionIdCopied: 'ID de la sessió de Grok copiat al porta-retalls',
         customAcpSessionId: 'ID de la sessió d’ACP personalitzat',
         customAcpSessionIdCopied: 'ID de la sessió d’ACP personalitzat copiat al porta-retalls',
         piSessionId: 'ID de la sessio de Pi',
@@ -5670,6 +5683,7 @@ deps: {
             kimi: 'Kimi',
             kilo: 'Kilo',
             kiro: 'Kiro',
+            grok: 'Grok',
         customAcp: 'ACP personalitzat',
             pi: 'Pi',
             copilot: 'Copilot',
@@ -5949,6 +5963,7 @@ deps: {
             other: 'Altres',
             otherDescription: 'Escriu la teva pròpia resposta',
             otherPlaceholder: 'Escriu la teva resposta...',
+            selectionLimit: ({ count }: { count: number }) => `Selecciona fins a ${count} respostes. Desmarca'n una per triar-ne una altra.`,
         },
         exitPlanMode: {
             approve: 'Aprovar el pla',
@@ -9173,6 +9188,7 @@ settingsSession: {
             kimiSubtitleExperimental: 'CLI de Kimi (experimental)',
             kiloSubtitleExperimental: 'CLI de Kilo (experimental)',
             kiroSubtitleExperimental: 'CLI de Kiro (experimental)',
+            grokSubtitleExperimental: 'CLI de Grok Build (experimental)',
             customAcpSubtitleExperimental: 'CLI d’ACP personalitzat (experimental)',
             piSubtitleExperimental: 'CLI de Pi (experimental)',
             copilotSubtitleExperimental: 'GitHub Copilot CLI (en proves)',

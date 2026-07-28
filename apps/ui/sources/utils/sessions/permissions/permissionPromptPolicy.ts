@@ -1,3 +1,5 @@
+import { isAskUserQuestionToolName } from '@happier-dev/protocol';
+
 export type PermissionPromptSurfaceSetting = 'composer' | 'transcript' | 'both';
 
 export type ResolvedPermissionPromptSurface = 'composer' | 'transcript';
@@ -12,9 +14,7 @@ export function resolvePermissionPromptSurface(setting: unknown): ResolvedPermis
     return setting === 'transcript' ? 'transcript' : 'composer';
 }
 
-export const TOOLS_WITH_CUSTOM_PERMISSION_UI = new Set<string>([
-    'AskUserQuestion',
-    'ask_user_question',
+const OTHER_TOOLS_WITH_CUSTOM_PERMISSION_UI = new Set<string>([
     'ExitPlanMode',
     'exit_plan_mode',
     'AcpHistoryImport',
@@ -34,7 +34,7 @@ export function resolveAgentRequestKind(params: Readonly<{ toolName: string; req
 
     // Back-compat / defensive fallback: older agents may not publish requestKind, so we infer using
     // the existing "custom UI tool" list (these should never render a generic permission prompt).
-    if (TOOLS_WITH_CUSTOM_PERMISSION_UI.has(params.toolName)) {
+    if (isAskUserQuestionToolName(params.toolName) || OTHER_TOOLS_WITH_CUSTOM_PERMISSION_UI.has(params.toolName)) {
         return 'user_action';
     }
 

@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { layout } from '@/components/ui/layout/layout';
 import { SplitActionButtons } from '@/components/ui/forms/SplitActionButtons';
+import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 
 export const SettingsActionFooter = React.memo(function SettingsActionFooter(props: Readonly<{
     primaryLabel: string;
@@ -14,10 +15,18 @@ export const SettingsActionFooter = React.memo(function SettingsActionFooter(pro
     onSecondaryPress?: (() => void) | null;
     secondaryTestID?: string;
     secondaryTone?: 'default' | 'destructive';
+    reserveBottomChromeInset?: boolean;
 }>) {
+    const bottomChromeHeight = useSessionCockpitBottomChromeHeight();
+
     return (
         <View style={styles.wrapper}>
-            <View style={styles.container}>
+            <View style={[
+                styles.container,
+                props.reserveBottomChromeInset && bottomChromeHeight > 0
+                    ? { paddingBottom: 16 + bottomChromeHeight }
+                    : null,
+            ]}>
                 <SplitActionButtons
                     secondaryLabel={props.secondaryLabel}
                     onSecondaryPress={props.onSecondaryPress ?? undefined}

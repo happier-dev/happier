@@ -4,6 +4,7 @@ import type { SDKAssistantMessage } from '../sdk';
 import type { EnhancedMode } from '../loop';
 import { createPermissionHandlerSessionStub } from './permissionHandler.testkit';
 import type { PermissionRpcPayload } from './permissionRpc';
+import type { StructuredQuestionResponseV1 } from '@happier-dev/protocol';
 
 vi.mock('@/lib', () => ({
   logger: {
@@ -12,7 +13,7 @@ vi.mock('@/lib', () => ({
   },
 }));
 
-function askUserQuestionToolUseMessage(): SDKAssistantMessage {
+function askUserQuestionToolUseMessage(name: 'AskUserQuestion' | 'ask_user_question' = 'AskUserQuestion'): SDKAssistantMessage {
   return {
     type: 'assistant',
     message: {
@@ -21,7 +22,7 @@ function askUserQuestionToolUseMessage(): SDKAssistantMessage {
         {
           type: 'tool_use',
           id: 'toolu_ask_1',
-          name: 'AskUserQuestion',
+          name,
           input: {
             questions: [
               {
@@ -84,22 +85,22 @@ describe('PermissionHandler (AskUserQuestion)', () => {
     expect(handler.isAborted('toolu_ask_1')).toBe(false);
   });
 
-  it('resolves duplicate AskUserQuestion waiters with one answer payload', async () => {
+  it.each(['AskUserQuestion', 'ask_user_question'] as const)('resolves duplicate %s waiters with one answer payload', async (toolName) => {
     const { session, client } = createPermissionHandlerSessionStub('s1');
 
     const { PermissionHandler } = await import('./permissionHandler');
     const handler = new PermissionHandler(session);
-    const input = askUserQuestionToolUseMessage().message.content[0]!.input as Record<string, unknown>;
+    const input = askUserQuestionToolUseMessage(toolName).message.content[0]!.input as Record<string, unknown>;
     const sharedToolUseId = 'toolu_ask_duplicate_1';
 
     const first = handler.handleToolCall(
-      'AskUserQuestion',
+      toolName,
       input,
       defaultMode,
       { signal: new AbortController().signal, toolUseId: sharedToolUseId },
     );
     const second = handler.handleToolCall(
-      'AskUserQuestion',
+      toolName,
       input,
       defaultMode,
       { signal: new AbortController().signal, toolUseId: sharedToolUseId },
@@ -107,25 +108,54 @@ describe('PermissionHandler (AskUserQuestion)', () => {
 
     expect(Object.keys(client.getAgentStateSnapshot().requests)).toEqual([sharedToolUseId]);
 
-    const answers = { q1: 'macOS' };
+    const legacyAnswers = { 'Which OS?': 'macOS' };
+    const structuredAnswers = { 'Which OS?': ['macOS'] };
     await client.rpcHandlerManager.getHandler('permission')?.({
       id: sharedToolUseId,
       approved: true,
-      answers,
+      answers: legacyAnswers,
     } satisfies PermissionRpcPayload);
 
     const expected = {
       behavior: 'allow',
       updatedInput: {
         ...input,
-        answers,
+        answers: legacyAnswers,
       },
     };
     await expect(expectResolvesWithin(Promise.all([first, second]))).resolves.toEqual([expected, expected]);
     expect(client.getAgentStateSnapshot().requests[sharedToolUseId]).toBeUndefined();
     expect(client.getAgentStateSnapshot().completedRequests[sharedToolUseId]).toMatchObject({
       status: 'approved',
-      answers,
+      structuredAnswersV1: structuredAnswers,
     });
+  });
+
+  it('projects canonical multi/freeform answers to Claude scalar strings without prototype-key loss', async () => {
+    const { session, client } = createPermissionHandlerSessionStub('s-claude-answer-projection');
+    const { PermissionHandler } = await import('./permissionHandler');
+    const handler = new PermissionHandler(session);
+    const input = {
+      questions: [
+        { header: 'A', question: '__proto__', multiSelect: true, options: [{ label: 'A, B' }, { label: 'Line\nTwo' }], freeform: {} },
+      ],
+    };
+    const pending = handler.handleToolCall(
+      'AskUserQuestion',
+      input,
+      defaultMode,
+      { signal: new AbortController().signal, toolUseId: 'toolu_projection_1' },
+    );
+    await client.rpcHandlerManager.getHandler<StructuredQuestionResponseV1>('session.structuredQuestion.respond.v1')?.({
+      id: 'toolu_projection_1',
+      structuredAnswersV1: { ['__proto__']: ['A, B', 'Line\nTwo'] },
+    });
+
+    const result = await pending;
+    expect(result).toMatchObject({ behavior: 'allow' });
+    const answers = (result as any).updatedInput.answers;
+    expect(Object.getPrototypeOf(answers)).toBeNull();
+    expect(Object.keys(answers)).toEqual(['__proto__']);
+    expect(answers.__proto__).toBe('A, B, Line\nTwo');
   });
 });

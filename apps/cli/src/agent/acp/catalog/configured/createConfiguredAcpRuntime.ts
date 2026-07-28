@@ -28,7 +28,6 @@ type CreateConfiguredAcpRuntimeParams = Readonly<{
   launchEnv: Readonly<Record<string, string>>;
   onThinkingChange: (thinking: boolean) => void;
   getPermissionMode?: () => PermissionMode | null | undefined;
-  onSessionIdChange?: (nextSessionId: string | null) => void;
   memoryRecallGuidance?: Parameters<typeof createAcpRuntime>[0]['memoryRecallGuidance'];
   pendingQueueDrainMaxPopPerWake?: number;
 }>;
@@ -60,6 +59,10 @@ export function createConfiguredAcpRuntime(params: CreateConfiguredAcpRuntimePar
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
+    sessionIdentity: {
+      kind: 'runtime-only',
+      reason: 'vendor-resume-unsupported',
+    },
     memoryRecallGuidance: params.memoryRecallGuidance,
     hooks: {
       onPermissionRequest: (evt) => {
@@ -96,6 +99,5 @@ export function createConfiguredAcpRuntime(params: CreateConfiguredAcpRuntimePar
         permissionHandler: params.permissionHandler,
       }) as unknown as AgentBackend;
     },
-    onSessionIdChange: params.onSessionIdChange,
   });
 }

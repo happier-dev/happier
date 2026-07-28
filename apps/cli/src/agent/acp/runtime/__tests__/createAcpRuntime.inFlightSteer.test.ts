@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
-import { createAcpRuntime } from '../createAcpRuntime';
+import { createTestAcpRuntime as createAcpRuntime } from '@/testkit/backends/acpRuntime';
 import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 import { createBasicSessionClient, createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
@@ -158,6 +158,7 @@ describe('createAcpRuntime (in-flight steer)', () => {
       inFlightSteerSupported: true,
       inFlightSteerAvailable: false,
     });
+    expect(agentState.capabilities.modelScopedConfigTombstonesV1).toBeUndefined();
 
     runtime.beginTurn();
     expect(agentState.capabilities).toMatchObject({

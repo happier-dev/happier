@@ -1,0 +1,54 @@
+{
+  "v": 1,
+  "id": "grok_acp_stub",
+  "enableEnvVar": "HAPPIER_E2E_PROVIDER_GROK_ACP_STUB",
+  "protocol": "acp",
+  "traceProvider": "grok",
+  "requiredBinaries": ["node"],
+  "permissions": {
+    "v": 1,
+    "acp": {
+      "toolPermissionPromptsByMode": {
+        "default": true,
+        "safe-yolo": true,
+        "read-only": true,
+        "yolo": true,
+        "plan": true
+      },
+      "outsideWorkspaceWriteAllowedByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "outsideWorkspaceWriteMustCompleteByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "outsideWorkspaceRequireTaskCompleteByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "expectToolPermissionPrompts": true,
+      "permissionSurfaceOutsideWorkspaceYolo": false
+    }
+  },
+  "cli": {
+    "subcommand": "grok",
+    "extraArgs": ["--started-by", "terminal"],
+    "env": {
+      "HEADLESS": "1",
+      "HAPPIER_VARIANT": "dev",
+      "HAPPIER_E2E_ACP_TRACE_MARKERS": "1",
+      "HAPPIER_GROK_PATH": "../../packages/tests/src/testkit/providers/fixtures/grok-acp-stub-provider.mjs",
+      "XAI_API_KEY": "fixture-not-a-real-secret"
+    }
+  }
+}

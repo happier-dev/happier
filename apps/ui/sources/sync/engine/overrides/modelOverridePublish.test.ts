@@ -89,6 +89,106 @@ describe('computeNextModelOverrideMetadata', () => {
         expect(second.modelOverrideV1).toEqual({ v: 1, updatedAt: 11, modelId: 'gemini-2.5-pro' });
         expect(third.modelOverrideV1).toEqual({ v: 1, updatedAt: 15, modelId: 'gemini-2.5-pro' });
     });
+
+    it('atomically clears prior-model option commands while preserving unrelated overrides', () => {
+        const next = computeNextModelOverrideMetadata({
+            metadata: buildMetadata({
+                sessionModelsV1: {
+                    v: 1,
+                    provider: 'grok',
+                    updatedAt: 5,
+                    currentModelId: 'model-a',
+                    availableModels: [{
+                        id: 'model-a',
+                        name: 'A',
+                        modelOptions: [{
+                            id: 'reasoning_effort',
+                            name: 'Effort',
+                            type: 'select',
+                            currentValue: 'high',
+                            options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }],
+                        }],
+                    }, { id: 'model-b', name: 'B' }],
+                },
+                sessionConfigOptionOverridesV1: {
+                    v: 1,
+                    updatedAt: 6,
+                    overrides: {
+                        reasoning_effort: { updatedAt: 7, value: 'high' },
+                        telemetry: { updatedAt: 4, value: 'true' },
+                    },
+                },
+            }),
+            modelId: 'model-b',
+            updatedAt: 7,
+            retireModelScopedConfigOverrides: true,
+        });
+
+        expect(next.modelOverrideV1).toMatchObject({ modelId: 'model-b', updatedAt: 7 });
+        expect(next.sessionConfigOptionOverridesV1?.overrides).toMatchObject({
+            reasoning_effort: { updatedAt: 8, value: null },
+            telemetry: { updatedAt: 4, value: 'true' },
+        });
+    });
+
+    it('preserves a strictly newer option command during a model change', () => {
+        const next = computeNextModelOverrideMetadata({
+            metadata: buildMetadata({
+                sessionModelsV1: {
+                    v: 1,
+                    provider: 'grok',
+                    updatedAt: 5,
+                    currentModelId: 'model-a',
+                    availableModels: [{
+                        id: 'model-a',
+                        name: 'A',
+                        modelOptions: [{
+                            id: 'reasoning_effort',
+                            name: 'Effort',
+                            type: 'select',
+                            currentValue: 'high',
+                            options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }],
+                        }],
+                    }],
+                },
+                sessionConfigOptionOverridesV1: {
+                    v: 1,
+                    updatedAt: 9,
+                    overrides: { reasoning_effort: { updatedAt: 9, value: 'low' } },
+                },
+            }),
+            modelId: 'model-b',
+            updatedAt: 8,
+            retireModelScopedConfigOverrides: true,
+        });
+
+        expect(next.sessionConfigOptionOverridesV1?.overrides.reasoning_effort).toEqual({ updatedAt: 9, value: 'low' });
+    });
+
+    it('does not emit tombstones when the CLI support signal is absent', () => {
+        const metadata = buildMetadata({
+            sessionModelsV1: {
+                v: 1,
+                provider: 'grok',
+                updatedAt: 5,
+                currentModelId: 'model-a',
+                availableModels: [{
+                    id: 'model-a',
+                    name: 'A',
+                    modelOptions: [{
+                        id: 'reasoning_effort', name: 'Effort', type: 'select', currentValue: 'high', options: [],
+                    }],
+                }],
+            },
+            sessionConfigOptionOverridesV1: {
+                v: 1,
+                updatedAt: 7,
+                overrides: { reasoning_effort: { updatedAt: 7, value: 'high' } },
+            },
+        });
+        const next = computeNextModelOverrideMetadata({ metadata, modelId: 'model-b', updatedAt: 7 });
+        expect(next.sessionConfigOptionOverridesV1).toBe(metadata.sessionConfigOptionOverridesV1);
+    });
 });
 
 describe('publishModelOverrideToMetadata', () => {

@@ -26,6 +26,15 @@ describe('vendorResumePolicy', () => {
     expect(resolveVendorResumeIdFromSessionMetadata(cursorAgentId, { cursorSessionId: ' cursor-session ' })).toBe('cursor-session');
   });
 
+  it('keeps Grok restart resume experimental until authenticated restart evidence closes the gate', () => {
+    expect(AGENTS_CORE.grok.resume).toEqual({
+      vendorResume: 'experimental',
+      vendorResumeIdField: 'grokSessionId',
+      experimentalResumePolicy: 'runtime_checked',
+    });
+    expect(resolveVendorResumeIdFromSessionMetadata('grok', { grokSessionId: ' grok-session ' })).toBe('grok-session');
+  });
+
   it('prefers vendor session ids from agentRuntimeDescriptorV1 over legacy top-level metadata', () => {
     expect(resolveVendorResumeIdFromSessionMetadata('codex', {
       agentRuntimeDescriptorV1: {

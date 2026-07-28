@@ -15,6 +15,7 @@ import {
   createSessionFromNewSessionComposer,
   openNewSessionMachineSelection,
   openNewSessionPathSelection,
+  selectFirstAvailableMachineForNewSession,
 } from './createSessionFromNewSessionComposer';
 
 type CountableLocator = Readonly<{
@@ -187,6 +188,60 @@ describe('openNewSessionMachineSelection', () => {
     expect(composerInput.clickSpy).toHaveBeenCalledTimes(0);
   });
 
+});
+
+describe('selectFirstAvailableMachineForNewSession', () => {
+  it('clicks the first current-or-legacy machine option through the canonical selector', async () => {
+    const machineChip = createCountableLocator({});
+    const machineOption = createCountableLocator({ counts: [1, 1] });
+    const page = {
+      getByTestId: vi.fn((testId: string) => {
+        if (testId === 'agent-input-machine-chip') return machineChip;
+        throw new Error(`unexpected test id: ${testId}`);
+      }),
+      locator: vi.fn((selector: string) => {
+        if (selector === MACHINE_OPTION_SELECTOR) return { first: () => machineOption };
+        throw new Error(`unexpected selector: ${selector}`);
+      }),
+      waitForTimeout: vi.fn(async () => {}),
+    };
+
+    await selectFirstAvailableMachineForNewSession({
+      page: page as never,
+      uiBaseUrl: 'http://127.0.0.1:3000',
+    });
+
+    expect(page.locator).toHaveBeenCalledWith(MACHINE_OPTION_SELECTOR);
+    expect(machineOption.clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not require a second click when route fallback auto-selects the only machine', async () => {
+    let currentUrl = 'http://127.0.0.1:3000/new/pick/machine';
+    const machineOptions = createCountableLocator({ counts: [0, 0, 0] });
+    const page = {
+      getByTestId: vi.fn((testId: string) => {
+        if (testId === 'agent-input-machine-chip') return createCountableLocator({ counts: [0] });
+        throw new Error(`unexpected test id: ${testId}`);
+      }),
+      locator: vi.fn((selector: string) => {
+        if (selector === MACHINE_OPTION_SELECTOR) return { first: () => machineOptions };
+        throw new Error(`unexpected selector: ${selector}`);
+      }),
+      goto: vi.fn(async () => {
+        currentUrl = 'http://127.0.0.1:3000/new';
+      }),
+      url: vi.fn(() => currentUrl),
+      waitForTimeout: vi.fn(async () => {}),
+    };
+
+    await selectFirstAvailableMachineForNewSession({
+      page: page as never,
+      uiBaseUrl: 'http://127.0.0.1:3000',
+      routeFallbackWaitMs: 1,
+    });
+
+    expect(machineOptions.clickSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe('openNewSessionPathSelection', () => {

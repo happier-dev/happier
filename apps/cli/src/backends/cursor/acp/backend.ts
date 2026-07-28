@@ -52,7 +52,7 @@ export function buildCursorAcpBackendOptions(options: CursorBackendOptions): Acp
     env: {
       ...options.env,
     },
-    authMethodId: 'cursor_login',
+    authentication: { kind: 'static', methodId: 'cursor_login' },
     ...(options.parameterizedModelPicker === true
       ? { initializeClientCapabilitiesMeta: { parameterizedModelPicker: true } }
       : {}),

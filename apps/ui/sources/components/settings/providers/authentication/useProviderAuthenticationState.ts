@@ -32,10 +32,10 @@ export function useProviderAuthenticationState(params: Readonly<{
         const machinePlatform = machineMetadata?.platform ?? null;
         const canCheckNow = Boolean(machineId);
         const supportsLoginTerminal = params.authPlugin?.support === 'login_terminal';
-        const loginLaunch = supportsLoginTerminal
-            ? (params.authPlugin?.buildLoginLaunch?.({ resolvedPath, resolvedCommand, platform: machinePlatform }) ?? null)
-            : null;
-        const canLaunchLogin = cliAvailable === true && Boolean(machineId) && Boolean(loginLaunch?.initialCommand);
+        const authLaunches = supportsLoginTerminal
+            ? (params.authPlugin?.buildAuthLaunches?.({ resolvedPath, resolvedCommand, platform: machinePlatform }) ?? [])
+            : [];
+        const canLaunchAuth = cliAvailable === true && Boolean(machineId) && authLaunches.some((launch) => Boolean(launch.initialCommand));
         const loginActionKind = authStatus?.state === 'logged_in' ? 'reauthenticate' : 'login';
 
         return {
@@ -45,8 +45,8 @@ export function useProviderAuthenticationState(params: Readonly<{
             machineHomeDir,
             canCheckNow,
             supportsLoginTerminal,
-            canLaunchLogin,
-            loginLaunch,
+            canLaunchAuth,
+            authLaunches,
             loginActionKind,
             docsUrl: params.authPlugin?.docsUrl ?? null,
             support: params.authPlugin?.support ?? 'unsupported',

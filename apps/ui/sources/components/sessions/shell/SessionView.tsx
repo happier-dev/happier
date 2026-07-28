@@ -90,6 +90,7 @@ import { writeSessionInitialPromptV1 } from '@/sync/domains/sessionInitialPrompt
 import { Session, type Metadata } from '@/sync/domains/state/storageTypes';
 import { sync } from '@/sync/sync';
 import { computeNextAcpConfigOptionOverrideMetadata } from '@/sync/engine/overrides/acpConfigOptionOverridePublish';
+import { readSessionConfigOptionOverridesState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
 import { updateUsageLimitRecoveryRememberedMode } from '@/sync/domains/settings/usageLimitRecoverySettings';
 import {
@@ -2767,7 +2768,7 @@ function SessionViewLoaded({
     const isHiddenSystemSessionSession = isHiddenSystemSession({ metadata: session.metadata ?? null });
     const modelMode = liveComposerState.modelMode;
     const sessionAcpConfigOptionOverrides = React.useMemo<React.ComponentProps<typeof AgentInput>['acpConfigOptionOverridesOverride']>(() => {
-        return (session.metadata?.acpConfigOptionOverridesV1 ?? session.metadata?.sessionConfigOptionOverridesV1 ?? null) as React.ComponentProps<typeof AgentInput>['acpConfigOptionOverridesOverride'];
+        return readSessionConfigOptionOverridesState(session.metadata ?? null);
     }, [session.metadata]);
     const [optimisticAcpConfigOptionOverrides, setOptimisticAcpConfigOptionOverrides] =
         React.useState<React.ComponentProps<typeof AgentInput>['acpConfigOptionOverridesOverride']>(
@@ -3350,7 +3351,7 @@ function SessionViewLoaded({
                 value: valueId,
                 updatedAt,
             });
-            return (nextMetadata.acpConfigOptionOverridesV1 ?? nextMetadata.sessionConfigOptionOverridesV1 ?? null) as React.ComponentProps<typeof AgentInput>['acpConfigOptionOverridesOverride'];
+            return readSessionConfigOptionOverridesState(nextMetadata);
         });
         fireAndForget(sync.publishSessionAcpConfigOptionOverrideToMetadata({
             sessionId,

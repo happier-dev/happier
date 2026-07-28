@@ -6,13 +6,13 @@ import { join, resolve } from 'node:path';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir, withTempDirSync } from '@/testkit/fs/tempDir';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
+import type { AcpAuthentication } from '@/agent/acp/AcpAuthentication';
 
 import { createGeminiBackend } from './backend';
 
 type AcpBackendLike = {
   options: {
-    authMethodId?: string;
-    authMeta?: Record<string, unknown>;
+    authentication?: AcpAuthentication;
     env?: Record<string, string | undefined>;
     unsetEnv?: readonly string[];
     mcpServers?: Record<string, unknown>;
@@ -195,7 +195,7 @@ main().catch((error) => {
         });
 
         const backend = result.backend as unknown as AcpBackendLike;
-        expect(backend.options.authMethodId).toBe('oauth-personal');
+        expect(backend.options.authentication).toEqual({ kind: 'static', methodId: 'oauth-personal' });
         expect(result.model).toBeUndefined();
         expect(result.modelSource).toBe('default');
       }),
@@ -216,7 +216,7 @@ main().catch((error) => {
         });
 
         const backend = result.backend as unknown as AcpBackendLike;
-        expect(backend.options.authMethodId).toBe('gemini-api-key');
+        expect(backend.options.authentication).toEqual({ kind: 'static', methodId: 'gemini-api-key' });
       }),
     );
   });
@@ -237,7 +237,7 @@ main().catch((error) => {
         });
 
         const backend = result.backend as unknown as AcpBackendLike;
-        expect(backend.options.authMethodId).toBe('gemini-api-key');
+        expect(backend.options.authentication).toEqual({ kind: 'static', methodId: 'gemini-api-key' });
       }),
     );
   });
@@ -380,7 +380,7 @@ main().catch((error) => {
         });
 
         const backend = result.backend as unknown as AcpBackendLike;
-        expect(backend.options.authMethodId).toBe('gemini-api-key');
+        expect(backend.options.authentication).toEqual({ kind: 'static', methodId: 'gemini-api-key' });
       }),
     );
   });
@@ -404,7 +404,7 @@ main().catch((error) => {
         });
 
         const backend = result.backend as unknown as AcpBackendLike;
-        expect(backend.options.authMethodId).toBe('vertex-ai');
+        expect(backend.options.authentication).toEqual({ kind: 'static', methodId: 'vertex-ai' });
         expect(backend.options.env).toMatchObject({
           GOOGLE_GENAI_USE_VERTEXAI: '1',
           GOOGLE_CLOUD_PROJECT: 'vertex-project',
@@ -447,13 +447,16 @@ main().catch((error) => {
 
           try {
             const backend = result.backend as unknown as AcpBackendLike;
-            expect(backend.options.authMethodId).toBe('gateway');
-            expect(backend.options.authMeta).toEqual({
-              gateway: {
-                baseUrl: 'https://gateway.example.test/v1',
-                headers: {
-                  Authorization: 'Bearer gateway-token',
-                  'X-Gateway-Account': 'acct-1',
+            expect(backend.options.authentication).toEqual({
+              kind: 'static',
+              methodId: 'gateway',
+              meta: {
+                gateway: {
+                  baseUrl: 'https://gateway.example.test/v1',
+                  headers: {
+                    Authorization: 'Bearer gateway-token',
+                    'X-Gateway-Account': 'acct-1',
+                  },
                 },
               },
             });

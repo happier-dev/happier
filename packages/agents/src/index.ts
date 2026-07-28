@@ -256,11 +256,17 @@ export {
   resolveOpenCodeSessionBackendMode,
 } from './sessionControls/providerSessionBackends.js';
 export {
+  parseSessionConfigOptionOverridesMetadataStateV1,
+  parseSessionModelsMetadataStateV1,
+  readNewestSessionConfigOptionOverridesMetadataStateV1,
+  readNewestSessionModelsMetadataStateV1,
   resolveMetadataStringOverrideStateV1,
   resolveMetadataStringOverrideStateV1FromAliases,
   resolveMetadataStringOverrideV1,
   resolvePermissionIntentFromSessionMetadata,
   type MetadataStringOverrideStateV1,
+  type SessionConfigOptionOverridesMetadataStateV1,
+  type SessionModelsMetadataStateV1,
 } from './sessionControls/metadata.js';
 export {
   LEGACY_ACP_CONFIG_OPTIONS_STATE_KEY,
@@ -270,6 +276,7 @@ export {
   LEGACY_ACP_SESSION_MODE_OVERRIDE_KEY,
   getMetadataKeysForAlias,
   readMetadataAliasValue,
+  readNewestMetadataAliasValue,
   SESSION_CONFIG_OPTIONS_STATE_KEY,
   SESSION_CONFIG_OPTION_OVERRIDES_KEY,
   SESSION_MODELS_STATE_KEY,
@@ -280,6 +287,7 @@ export {
   computeNextMetadataStringOverrideV1,
   computeNextPermissionIntentMetadata,
   computeNextMetadataConfigOptionOverrideV1,
+  computeNextModelOverrideMetadataV1,
 } from './sessionControls/publish.js';
 export {
   resolveVendorResumeIdFromSessionMetadata,

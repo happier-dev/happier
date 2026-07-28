@@ -13,7 +13,12 @@ import {
 } from './types';
 import { Socket } from 'socket.io-client';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
+import {
+    RPC_ERROR_CODES,
+    RPC_ERROR_MESSAGES,
+    isDelegatedSessionApprovalRpcMethod,
+} from '@happier-dev/protocol/rpc';
+import { isPublicRpcHandlerError, toSocketRpcTargetFailureV1 } from '@happier-dev/protocol/rpcErrors';
 
 export class RpcHandlerManager {
     private handlers: RpcHandlerMap = new Map();
@@ -99,6 +104,13 @@ export class RpcHandlerManager {
             this.logger('[RPC] Sending encrypted response', { method: request.method, responseLength: encryptedResponse.length });
             return encryptedResponse;
         } catch (error) {
+            const scopePrefix = `${this.scopePrefix}:`;
+            const methodSuffix = request.method.startsWith(scopePrefix)
+                ? request.method.slice(scopePrefix.length)
+                : '';
+            if (isPublicRpcHandlerError(error) && isDelegatedSessionApprovalRpcMethod(methodSuffix)) {
+                return toSocketRpcTargetFailureV1(error);
+            }
             this.logger('[RPC] [ERROR] Error handling request', { error });
             const errorResponse = {
                 error: error instanceof Error ? error.message : 'Unknown error'

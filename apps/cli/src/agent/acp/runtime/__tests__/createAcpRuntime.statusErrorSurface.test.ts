@@ -6,7 +6,7 @@ import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { SessionTurnMutationV1 } from '@/api/session/mutations/sessionMutationTypes';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 
-import { createAcpRuntime } from '../createAcpRuntime';
+import { createTestAcpRuntime as createAcpRuntime } from '@/testkit/backends/acpRuntime';
 import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';

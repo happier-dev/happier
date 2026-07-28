@@ -4,7 +4,7 @@ import type { StorageState } from '@/sync/store/types';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import type { Profile } from '@/sync/domains/profiles/profile';
-import type { StoreApi, UseBoundStore } from 'zustand';
+import { create, type StoreApi, type UseBoundStore } from 'zustand';
 
 import { mergeModuleMock, type MergeModuleMockOptions } from './_shared';
 
@@ -248,7 +248,53 @@ export function installStorageStoreModuleMock(overrides: Partial<StorageStoreMod
 }
 
 export function createStorageStoreMock(state: Partial<StorageState>): UseBoundStore<StoreApi<StorageState>> {
-    const snapshot = {
+    const snapshot = createStorageStateSnapshot(state);
+
+    return Object.assign(
+        ((selector?: (value: StorageState) => unknown) =>
+            typeof selector === 'function' ? selector(snapshot) : snapshot) as UseBoundStore<StoreApi<StorageState>>,
+        {
+            getState: () => snapshot,
+            getInitialState: () => snapshot,
+            setState: () => undefined,
+            subscribe: () => () => undefined,
+            destroy: () => undefined,
+        } satisfies Pick<StoreApi<StorageState>, 'getState' | 'getInitialState' | 'setState' | 'subscribe'> & {
+            destroy: () => void;
+        },
+    );
+}
+
+export function createReactiveStorageStoreMock(
+    state: Partial<StorageState>,
+): UseBoundStore<StoreApi<StorageState>> {
+    const snapshot = createStorageStateSnapshot(state);
+    return create<StorageState>()(() => snapshot);
+}
+
+export function createStorageStoreStub(
+    readState: () => Partial<StorageState>,
+): UseBoundStore<StoreApi<StorageState>> {
+    const getSnapshot = () => createStorageStateSnapshot(readState());
+    return Object.assign(
+        ((selector?: (value: StorageState) => unknown) => {
+            const snapshot = getSnapshot();
+            return typeof selector === 'function' ? selector(snapshot) : snapshot;
+        }) as UseBoundStore<StoreApi<StorageState>>,
+        {
+            getState: getSnapshot,
+            getInitialState: getSnapshot,
+            setState: () => undefined,
+            subscribe: () => () => undefined,
+            destroy: () => undefined,
+        } satisfies Pick<StoreApi<StorageState>, 'getState' | 'getInitialState' | 'setState' | 'subscribe'> & {
+            destroy: () => void;
+        },
+    );
+}
+
+function createStorageStateSnapshot(state: Partial<StorageState>): StorageState {
+    return {
         sessions: {},
         sessionListRenderables: {},
         sessionMessages: {},
@@ -265,18 +311,4 @@ export function createStorageStoreMock(state: Partial<StorageState>): UseBoundSt
         localPetSourcesBySourceKey: {},
         ...state,
     } as StorageState;
-
-    return Object.assign(
-        ((selector?: (value: StorageState) => unknown) =>
-            typeof selector === 'function' ? selector(snapshot) : snapshot) as UseBoundStore<StoreApi<StorageState>>,
-        {
-            getState: () => snapshot,
-            getInitialState: () => snapshot,
-            setState: () => undefined,
-            subscribe: () => () => undefined,
-            destroy: () => undefined,
-        } satisfies Pick<StoreApi<StorageState>, 'getState' | 'getInitialState' | 'setState' | 'subscribe'> & {
-            destroy: () => void;
-        },
-    );
 }

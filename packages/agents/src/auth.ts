@@ -132,6 +132,14 @@ export const AGENT_AUTH_PROBE_CONFIG: Readonly<Record<AgentId, AgentAuthProbeCon
     backgroundChecks: 'safe',
     envVars: ['CURSOR_API_KEY'],
   },
+  grok: {
+    agentId: 'grok',
+    binaryNames: [getProviderCliRuntimeSpec('grok').binaryName],
+    statusCommand: null,
+    parser: 'unknown',
+    backgroundChecks: 'safe',
+    envVars: ['XAI_API_KEY'],
+  },
 });
 
 export function getAgentAuthProbeConfig(

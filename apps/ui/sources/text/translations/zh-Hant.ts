@@ -818,6 +818,13 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 
       },
 
+      unsupportedContent: {
+        unparsedUserMessage: '無法解析的使用者訊息',
+        unparsedAgentMessage: '無法解析的助手訊息',
+        unsupportedAgentOutput: '不支援的輸出',
+        unsupportedTranscriptRecord: '不支援的記錄',
+      },
+
     },
 
 
@@ -3429,6 +3436,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             logInSubtitle: '開啟終端機並在這台機器上執行供應商登入流程。',
             reauthenticateTitle: '重新認證',
             reauthenticateSubtitle: '開啟終端機並在這台機器上更新供應商登入。',
+            deviceCodeTitle: '使用裝置代碼',
+            deviceCodeSubtitle: '在無介面或遠端機器上使用裝置代碼進行認證。',
             checkNowTitle: '立即檢查',
             checkNowSubtitle: '重新整理偵測到的本機認證狀態。',
             statusTitle: '狀態',
@@ -3722,6 +3731,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             },
             kiro: {
                 title: "Kiro"
+            },
+            grok: {
+                title: "Grok Build"
             },
             pi: {
                 title: "Pi"
@@ -4872,6 +4884,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         copilotSessionIdCopied: 'Copilot 工作階段 ID 已複製到剪貼簿',
         cursorSessionId: 'Cursor 工作階段 ID',
         cursorSessionIdCopied: 'Cursor 工作階段 ID 已複製到剪貼簿',
+        grokSessionId: 'Grok 工作階段 ID',
+        grokSessionIdCopied: 'Grok 工作階段 ID 已複製到剪貼簿',
         metadataCopied: '中繼資料已複製到剪貼簿',
         failedToCopyMetadata: '複製中繼資料失敗',
         failedToKillSession: '終止工作階段失敗',
@@ -5003,6 +5017,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             gemini: 'Gemini',
             copilot: 'Copilot',
             cursor: 'Cursor',
+            grok: 'Grok',
         },
           model: {
               title: '模型',
@@ -5249,6 +5264,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             other: '其他',
             otherDescription: '輸入你自己的答案',
             otherPlaceholder: '輸入你的答案...',
+            selectionLimit: ({ count }: { count: number }) => `最多可選擇 ${count} 個答案。取消選擇一個答案後可選擇其他答案。`,
         },
         exitPlanMode: {
             approve: '批准計畫',
@@ -7825,6 +7841,7 @@ settingsSession: {
         aiBackend: {
             copilotSubtitleExperimental: 'GitHub Copilot CLI（實驗）',
             cursorSubtitleExperimental: 'Cursor Agent CLI（實驗）',
+            grokSubtitleExperimental: 'Grok Build CLI（實驗）',
         },
     },
 };

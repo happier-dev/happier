@@ -773,6 +773,13 @@ export const pt: TranslationStructure = {
 
     },
 
+    unsupportedContent: {
+      unparsedUserMessage: 'Mensagem do usuário não analisada',
+      unparsedAgentMessage: 'Mensagem do assistente não analisada',
+      unsupportedAgentOutput: 'Saída não suportada',
+      unsupportedTranscriptRecord: 'Registro não suportado',
+    },
+
   },
 
 
@@ -3906,6 +3913,8 @@ export const pt: TranslationStructure = {
         logInSubtitle: "Abra um terminal e execute o fluxo de login do provedor nesta máquina.",
         reauthenticateTitle: "Reautenticar",
         reauthenticateSubtitle: "Abra um terminal e renove o login do provedor nesta máquina.",
+        deviceCodeTitle: "Usar código do dispositivo",
+        deviceCodeSubtitle: "Autentique-se numa máquina remota ou sem interface com um código do dispositivo.",
         checkNowTitle: "Verificar agora",
         checkNowSubtitle: "Atualize o estado de autenticação local detectado.",
         statusTitle: "Estado",
@@ -4199,6 +4208,9 @@ export const pt: TranslationStructure = {
             },
             kiro: {
                 title: "Kiro"
+            },
+            grok: {
+                title: "Grok Build"
             },
             pi: {
                 title: "Pi"
@@ -5955,6 +5967,9 @@ export const pt: TranslationStructure = {
     kiroSessionId: "ID da sessão Kiro",
     kiroSessionIdCopied:
       "ID da sessão Kiro copiado para a área de transferência",
+    grokSessionId: "ID da sessão Grok",
+    grokSessionIdCopied:
+      "ID da sessão Grok copiado para a área de transferência",
     customAcpSessionId: "ID da sessão ACP personalizada",
     customAcpSessionIdCopied:
       "ID da sessão ACP personalizada copiado para a área de transferência",
@@ -6183,6 +6198,7 @@ export const pt: TranslationStructure = {
       kimi: "Kimi",
       kilo: "Kilo",
       kiro: "Kiro",
+      grok: "Grok",
       customAcp: "Custom ACP",
       pi: "Pi",
       copilot: "Copilot",
@@ -6499,6 +6515,7 @@ export const pt: TranslationStructure = {
       other: "Outro",
       otherDescription: "Digite sua própria resposta",
       otherPlaceholder: "Digite sua resposta...",
+      selectionLimit: ({ count }: { count: number }) => `Selecione até ${count} respostas. Desmarque uma para escolher outra.`,
     },
     exitPlanMode: {
       approve: "Aprovar plano",
@@ -10113,6 +10130,7 @@ settingsSession: {
       kimiSubtitleExperimental: "CLI do Kimi (experimental)",
       kiloSubtitleExperimental: "CLI do Kilo (experimental)",
       kiroSubtitleExperimental: "CLI do Kiro (experimental)",
+      grokSubtitleExperimental: "CLI do Grok Build (experimental)",
       customAcpSubtitleExperimental: "CLI de ACP personalizada (experimental)",
       piSubtitleExperimental: "CLI do Pi (experimental)",
       copilotSubtitleExperimental: "GitHub Copilot CLI (em testes)",

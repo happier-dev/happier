@@ -502,11 +502,13 @@ export type Metadata = {
   qwenSessionId?: string, // Qwen Code ACP session ID (opaque)
   kimiSessionId?: string, // Kimi ACP session ID (opaque)
   kiloSessionId?: string, // Kilo ACP session ID (opaque)
+  kiroSessionId?: string, // Kiro ACP session ID (opaque)
   piSessionId?: string, // Pi RPC session ID (opaque)
   piSessionFile?: string, // Absolute Pi session file path (preferred resume primitive)
   sessionUsageLimitRecoveryV1?: SessionUsageLimitRecoveryV1,
   copilotSessionId?: string, // Copilot ACP session ID (opaque)
   cursorSessionId?: string, // Cursor ACP session ID (opaque)
+  grokSessionId?: string, // Grok ACP session ID (opaque)
   auggieAllowIndexing?: boolean, // Auggie indexing enablement (spawn-time)
   tools?: string[],
   slashCommands?: string[],
@@ -732,7 +734,10 @@ export type AgentState = {
     canDetach?: boolean | null | undefined
   } | null | undefined
   capabilities?: {
+    /** New CLIs atomically retire config commands owned by the previous model. */
+    modelScopedConfigTombstonesV1?: boolean | null | undefined
     askUserQuestionAnswersInPermission?: boolean | null | undefined
+    structuredQuestionAnswersV1Supported?: boolean | null | undefined
     inFlightSteer?: boolean | null | undefined
     inFlightSteerSupported?: boolean | null | undefined
     inFlightSteerAvailable?: boolean | null | undefined

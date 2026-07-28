@@ -1,6 +1,8 @@
 import { logger } from '@/ui/logger';
 
 import type { PermissionRpcPayload } from './permissionRpc';
+import { SESSION_RPC_METHODS, StructuredQuestionResponseV1Schema } from '@happier-dev/protocol';
+import { PUBLIC_RPC_HANDLER_ERROR_CODES, PublicRpcHandlerError, isPublicRpcHandlerError } from '@happier-dev/protocol/rpcErrors';
 
 type RpcHandlerManagerLike = {
   registerHandler: (method: string, handler: (payload: any) => any | Promise<any>) => void;
@@ -45,8 +47,19 @@ export class ClaudePermissionRpcRouter {
   private readonly consumers = new Map<string, PermissionRpcConsumer>();
 
   constructor(private readonly rpcHandlerManager: RpcHandlerManagerLike) {
-    this.rpcHandlerManager.registerHandler('permission', async (payload: PermissionRpcPayload) => {
+    this.rpcHandlerManager.registerHandler(SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_LEGACY, async (payload: PermissionRpcPayload) => {
       return this.dispatch(payload);
+    });
+    this.rpcHandlerManager.registerHandler(SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1, async (payload: unknown) => {
+      const parsed = StructuredQuestionResponseV1Schema.safeParse(payload);
+      if (!parsed.success) {
+        throw new PublicRpcHandlerError(PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_INVALID);
+      }
+      const result = this.dispatch({ id: parsed.data.id, approved: true, structuredAnswersV1: parsed.data.structuredAnswersV1 });
+      if (!result.ok) {
+        throw new PublicRpcHandlerError(PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_RECEIVER_NOT_OWNER);
+      }
+      return result;
     });
   }
 
@@ -81,6 +94,7 @@ export class ClaudePermissionRpcRouter {
           };
         }
       } catch (error) {
+        if (isPublicRpcHandlerError(error)) throw error;
         failedConsumer = consumer.name;
         logger.debug('[claude-permissions] Permission RPC consumer failed', { name: consumer.name, error });
       }
@@ -93,6 +107,10 @@ export class ClaudePermissionRpcRouter {
         errorMessage: 'permission_response_failed',
         requestId,
       };
+    }
+
+    if (payload.answers !== undefined || payload.structuredAnswersV1 !== undefined) {
+      throw new PublicRpcHandlerError(PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_RECEIVER_NOT_OWNER);
     }
 
     logger.debug('[claude-permissions] Permission RPC not handled', { requestId });

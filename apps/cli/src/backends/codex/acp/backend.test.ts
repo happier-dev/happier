@@ -145,7 +145,10 @@ describe('createCodexAcpBackend', () => {
           });
           const backend = created.backend as any;
           expect(created.spawn.command).toBe(wrapper);
-          expect(backend.options.authMethodId).toBe('openai-api-key');
+          expect(backend.options.authentication).toEqual({
+            kind: 'static',
+            methodId: 'openai-api-key',
+          });
           await created.backend.dispose();
         });
       } finally {
@@ -179,7 +182,10 @@ describe('createCodexAcpBackend', () => {
       });
 
       expect(captured).toHaveLength(1);
-      expect(captured[0].authMethodId).toBe('openai-api-key');
+      expect(captured[0].authentication).toEqual({
+        kind: 'static',
+        methodId: 'openai-api-key',
+      });
     });
   });
 

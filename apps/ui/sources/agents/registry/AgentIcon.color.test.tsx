@@ -12,6 +12,11 @@ const catalogSpies = vi.hoisted(() => ({
         ? '<svg fill="#111111" stroke="#222222"><path fill="#333333" stroke="none" /></svg>'
         : null),
     getAgentIconTintColor: vi.fn(() => '#444444'),
+    getAgentCore: vi.fn(() => ({ ui: { agentPickerIconName: 'flash-outline' } })),
+}));
+
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: (props: any) => React.createElement('Ionicons', props),
 }));
 
 vi.mock('react-native-svg', () => ({
@@ -39,6 +44,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
     getAgentIconSource: catalogSpies.getAgentIconSource,
     getAgentIconSvgXml: catalogSpies.getAgentIconSvgXml,
     getAgentIconTintColor: catalogSpies.getAgentIconTintColor,
+    getAgentCore: catalogSpies.getAgentCore,
 }));
 
 describe('AgentIcon color override', () => {
@@ -47,6 +53,7 @@ describe('AgentIcon color override', () => {
         catalogSpies.getAgentIconSource.mockClear();
         catalogSpies.getAgentIconSvgXml.mockClear();
         catalogSpies.getAgentIconTintColor.mockClear();
+        catalogSpies.getAgentCore.mockClear();
     });
 
     it('applies the explicit color to svg fills and strokes', async () => {
@@ -78,6 +85,27 @@ describe('AgentIcon color override', () => {
         );
 
         expect(screen.findAllByType('Image' as never)[0]?.props.tintColor).toBe('#777777');
+    });
+
+    it('renders the provider core neutral icon when no branded source exists', async () => {
+        const { AgentIcon } = await import('./AgentIcon');
+
+        const screen = await renderScreen(
+            <AgentIcon
+                agentId={'fallback' as never}
+                size={20}
+                color="#777777"
+                testID="fallback-agent-icon"
+            />,
+        );
+
+        expect(screen.findAllByType('Ionicons' as never)[0]?.props).toMatchObject({
+            name: 'flash-outline',
+            size: 20,
+            color: '#777777',
+            testID: 'fallback-agent-icon',
+        });
+        expect(catalogSpies.getAgentCore).toHaveBeenCalledWith('fallback');
     });
 
     it('does not recompute an unchanged icon on an equivalent parent render', async () => {

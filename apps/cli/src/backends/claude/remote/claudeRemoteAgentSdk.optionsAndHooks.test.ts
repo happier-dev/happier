@@ -1558,19 +1558,10 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             expect(capturedOptions.env.CLAUDE_CODE_OAUTH_SCOPES).toBeUndefined();
             expect(capturedOptions.env.HAPPIER_CLAUDE_EXPLICIT_ENV_ALLOWED_TEST).toBe('allowed-explicit-value');
 
-            const output = await capturedOptions.hooks.PreToolUse[0].hooks[0]({
-                hook_event_name: 'PreToolUse',
-                session_id: 'sess_1',
-                transcript_path: '/tmp/sess_1.jsonl',
-                cwd: '/tmp',
-                tool_name: 'Bash',
-                tool_input: { command: 'echo hi' },
-                tool_use_id: 'toolu_123',
-            });
-
-            expect(output.hookSpecificOutput.updatedInput.command).toContain('CLAUDE_CODE_OAUTH_REFRESH_TOKEN');
-            expect(output.hookSpecificOutput.updatedInput.command).toContain('CLAUDE_CODE_OAUTH_SCOPES');
-            expect(output.hookSpecificOutput.updatedInput.command).toContain('echo hi');
+            // Bash commands must reach Claude Code's permission layer unmodified: a PreToolUse
+            // rewrite (e.g. an `unset ...;` prelude) breaks Bash prefix allow rules and trips
+            // auto-mode classifiers. Auth isolation happens via the subprocess env instead.
+            expect(capturedOptions.hooks.PreToolUse).toBeUndefined();
         } finally {
             if (originals.refreshToken === undefined) delete process.env.CLAUDE_CODE_OAUTH_REFRESH_TOKEN;
             else process.env.CLAUDE_CODE_OAUTH_REFRESH_TOKEN = originals.refreshToken;
@@ -2990,7 +2981,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         );
     });
 
-    it('registers PreToolUse hook that scrubs sensitive env vars for Bash commands', async () => {
+    it('does not register a PreToolUse hook that rewrites Bash commands', async () => {
         let capturedHooks: any = null;
         const createQuery = vi.fn((_params: any) => {
             capturedHooks = _params.options?.hooks;
@@ -3029,35 +3020,12 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             createQuery,
         } as any);
 
-        expect(capturedHooks?.PreToolUse?.[0]?.hooks?.length).toBe(1);
-
-        const output = await capturedHooks.PreToolUse[0].hooks[0]({
-            hook_event_name: 'PreToolUse',
-            session_id: 'sess_1',
-            transcript_path: '/tmp/sess_1.jsonl',
-            cwd: '/tmp',
-            tool_name: 'Bash',
-            tool_input: { command: 'echo hi' },
-            tool_use_id: 'toolu_123',
-        });
-
-        expect(output).toEqual(
-            expect.objectContaining({
-                continue: true,
-                suppressOutput: true,
-                hookSpecificOutput: expect.objectContaining({
-                    hookEventName: 'PreToolUse',
-                    updatedInput: expect.objectContaining({
-                        command: expect.stringContaining('unset '),
-                    }),
-                }),
-            }),
-        );
-        expect(output.hookSpecificOutput.updatedInput.command).toContain('CLAUDE_CODE_OAUTH_TOKEN');
-        expect(output.hookSpecificOutput.updatedInput.command).toContain('CLAUDE_CODE_OAUTH_REFRESH_TOKEN');
-        expect(output.hookSpecificOutput.updatedInput.command).toContain('CLAUDE_CODE_OAUTH_SCOPES');
-        expect(output.hookSpecificOutput.updatedInput.command).toContain('ANTHROPIC_AUTH_TOKEN');
-        expect(output.hookSpecificOutput.updatedInput.command).toContain('echo hi');
+        // Bash `tool_input.command` must stay byte-identical to what the model produced:
+        // Claude Code's permission rules (`Bash(gh:*)`) and auto-mode classifier evaluate
+        // the post-hook command, so any rewrite (like an `unset ...;` auth prelude) breaks
+        // prefix allow rules and triggers "unsetting auth tokens" denials. Auth-token
+        // isolation is enforced through the scrubbed subprocess env instead.
+        expect(capturedHooks?.PreToolUse).toBeUndefined();
     });
 
 });

@@ -31,6 +31,8 @@ import { ThinkingTimelineRow } from '@/components/sessions/transcript/thinking/T
 import { TranscriptEventRow } from '@/components/sessions/transcript/events/TranscriptEventRow';
 import { transcriptMarkdownTextStyle } from '@/components/sessions/transcript/transcriptMarkdownTypography';
 import { parseHappierMetaEnvelope } from '@/components/sessions/transcript/structured/happierMetaEnvelope';
+import { readUnsupportedContentMeta } from '@/sync/domains/messages/unsupportedContentMeta';
+import { resolveUnsupportedContentLabel } from '@/sync/domains/messages/resolveUnsupportedContentLabel';
 import { AttachmentsMessageRow } from '@/components/sessions/attachments/messages/AttachmentsMessageRow';
 import { SessionMediaInlineImages } from '@/components/sessions/sessionMedia/SessionMediaInlineImages';
 import { parseSessionMediaMessageMeta } from '@/sync/domains/sessionMedia/sessionMediaMessageMeta';
@@ -342,6 +344,11 @@ function UserTextBlock(props: {
     return envelope?.kind === 'voice_agent_turn.v1';
   }, [props.message.meta]);
 
+  const unsupportedContentMeta = React.useMemo(
+    () => readUnsupportedContentMeta(props.message.meta),
+    [props.message.meta],
+  );
+
   const structuredNode = renderStructuredMessage({
     message: props.message,
     sessionId: props.sessionId,
@@ -368,13 +375,14 @@ function UserTextBlock(props: {
   }, [pathname, props.sessionId, router]);
 
   const markdownText = React.useMemo(() => {
+    if (unsupportedContentMeta) return resolveUnsupportedContentLabel(unsupportedContentMeta);
     if (isVoiceAgentTurn && props.message.displayText === undefined) {
       return normalizeVoiceAgentTurnTranscriptText(props.message.text);
     }
     if (props.message.displayText !== undefined) return props.message.displayText;
     if (attachmentsMeta) return stripLegacyAttachmentsBlock(props.message.text);
     return props.message.text;
-  }, [attachmentsMeta, isVoiceAgentTurn, props.message.displayText, props.message.text]);
+  }, [attachmentsMeta, isVoiceAgentTurn, props.message.displayText, props.message.text, unsupportedContentMeta]);
   const renderedMarkdownText = markdownText ?? props.message.displayText ?? props.message.text;
 
   const linkedWorkspaceFiles = React.useMemo(
@@ -406,11 +414,14 @@ function UserTextBlock(props: {
     return true;
   }, []);
 
-  const selectableMessage = isDiscarded ? null : resolveSelectableMessageText({
-    message: props.message,
-    isStructuredOnly,
-    hasAttachmentBlockToStrip: attachmentsMeta != null,
-  });
+  const selectableMessage = isDiscarded ? null : (() => {
+    const base = resolveSelectableMessageText({
+      message: props.message,
+      isStructuredOnly,
+      hasAttachmentBlockToStrip: attachmentsMeta != null,
+    });
+    return base && unsupportedContentMeta ? { ...base, text: resolveUnsupportedContentLabel(unsupportedContentMeta) } : base;
+  })();
   const selectionEnabled = props.messageDisplayCommon.transcriptMessageSelectionEnabled === true && selectableMessage != null;
   const selectionRow = useOptionalTranscriptSelectionRow(props.message.id);
   const selectionModeActionsVisible = selectionEnabled && selectionRow.isSelectionMode;
@@ -705,6 +716,10 @@ function AgentTextBlock(props: {
     const envelope = parseHappierMetaEnvelope(props.message.meta);
     return envelope?.kind === 'voice_agent_turn.v1';
   }, [props.message.meta]);
+  const unsupportedContentMeta = React.useMemo(
+    () => readUnsupportedContentMeta(props.message.meta),
+    [props.message.meta],
+  );
   const sessionThinkingDisplayMode = props.messageDisplayCommon.sessionThinkingDisplayMode;
   const sessionThinkingInlinePresentation = props.messageDisplayCommon.sessionThinkingInlinePresentation;
   const sessionThinkingInlineChrome = props.messageDisplayCommon.sessionThinkingInlineChrome;
@@ -729,14 +744,18 @@ function AgentTextBlock(props: {
   const handleOpenMediaPath = React.useCallback((filePath: string) => {
     pushSessionFileDeepLink(router, pathname, { sessionId: props.sessionId, filePath });
   }, [pathname, props.sessionId, router]);
-  const baseMarkdownText = isVoiceAgentTurn
-    ? normalizeVoiceAgentTurnTranscriptText(props.message.text)
-    : props.message.text;
-  if (isVoiceAgentTurn && baseMarkdownText == null) {
+  const baseMarkdownText = unsupportedContentMeta
+    ? resolveUnsupportedContentLabel(unsupportedContentMeta)
+    : isVoiceAgentTurn
+      ? normalizeVoiceAgentTurnTranscriptText(props.message.text)
+      : props.message.text;
+  if (!unsupportedContentMeta && isVoiceAgentTurn && baseMarkdownText == null) {
     return null;
   }
   const markdownSource = baseMarkdownText ?? props.message.text;
-  const markdown = props.message.isThinking ? unwrapLegacyThinkingWrapper(markdownSource) : markdownSource;
+  const markdown = (!unsupportedContentMeta && props.message.isThinking)
+    ? unwrapLegacyThinkingWrapper(markdownSource)
+    : markdownSource;
   const deriveThinkingSummary = (text: string) => {
     const trimmed = String(text ?? '').trim();
     if (!trimmed) return '';
@@ -749,11 +768,14 @@ function AgentTextBlock(props: {
     if (cleaned.length <= 120) return cleaned;
     return cleaned.slice(0, 117) + '…';
   };
-  const selectableMessage = resolveSelectableMessageText({
-    message: props.message,
-    isStructuredOnly,
-    hasAttachmentBlockToStrip: false,
-  });
+  const selectableMessage = (() => {
+    const base = resolveSelectableMessageText({
+      message: props.message,
+      isStructuredOnly,
+      hasAttachmentBlockToStrip: false,
+    });
+    return base && unsupportedContentMeta ? { ...base, text: resolveUnsupportedContentLabel(unsupportedContentMeta) } : base;
+  })();
   const selectionEnabled = props.messageDisplayCommon.transcriptMessageSelectionEnabled === true && selectableMessage != null;
   const copyText = selectableMessage?.text ?? (isStructuredOnly ? props.message.text : markdown);
 

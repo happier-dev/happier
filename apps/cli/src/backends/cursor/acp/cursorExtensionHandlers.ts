@@ -20,7 +20,7 @@ type CursorQuestion = Readonly<{
 }>;
 
 type PermissionDecision = Awaited<ReturnType<AcpPermissionHandler['handleToolCall']>> & {
-  answers?: Record<string, string>;
+  answers?: Readonly<Record<string, readonly string[]>>;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -85,7 +85,7 @@ function isApprovedDecision(decision: PermissionDecision): boolean {
     || decision.decision === 'approved_execpolicy_amendment';
 }
 
-function readAnswers(decision: PermissionDecision): Record<string, string> {
+function readAnswers(decision: PermissionDecision): Readonly<Record<string, readonly string[]>> {
   return decision.answers && typeof decision.answers === 'object' && !Array.isArray(decision.answers)
     ? decision.answers
     : {};
@@ -94,7 +94,7 @@ function readAnswers(decision: PermissionDecision): Record<string, string> {
 function mapAnswersToCursorQuestionIds(params: Record<string, unknown>, decision: PermissionDecision): Record<string, string> {
   const answers = readAnswers(decision);
   const questions = Array.isArray(params.questions) ? params.questions : [];
-  const out: Record<string, string> = {};
+  const out = Object.create(null) as Record<string, string>;
 
   for (const rawQuestion of questions) {
     const question = asRecord(rawQuestion) as CursorQuestion | null;
@@ -103,8 +103,8 @@ function mapAnswersToCursorQuestionIds(params: Record<string, unknown>, decision
     const prompt = readString(question.prompt);
     if (!id) continue;
     const answer = answers[id] ?? answers[prompt];
-    if (typeof answer === 'string') {
-      out[id] = answer;
+    if (Array.isArray(answer) && answer.length > 0) {
+      out[id] = answer.join(', ');
     }
   }
 

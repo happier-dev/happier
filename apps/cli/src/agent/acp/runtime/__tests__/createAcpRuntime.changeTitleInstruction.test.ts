@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 import { createBasicSessionClient } from '@/testkit/backends/sessionFixtures';
-import { createAcpRuntime } from '../createAcpRuntime';
+import { createTestAcpRuntime as createAcpRuntime } from '@/testkit/backends/acpRuntime';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 describe('createAcpRuntime (shared prompt ownership)', () => {

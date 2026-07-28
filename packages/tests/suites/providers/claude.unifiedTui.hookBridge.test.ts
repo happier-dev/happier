@@ -125,7 +125,7 @@ beforeAll(async () => {
 });
 
 describe('Claude Unified hook bridge answers (G4)', () => {
-  it('G4: answers AskUserQuestion through the hook with updatedInput.answers (no screen typing)', async () => {
+  it('G4: projects canonical AskUserQuestion arrays to Claude scalar updatedInput answers (no screen typing)', async () => {
     const { createSessionStub } = requireRuntimeModules();
     const { session, client } = createSessionStub('e2e-askuserquestion');
     const bridge = startBridge(session);
@@ -148,7 +148,10 @@ describe('Claude Unified hook bridge answers (G4)', () => {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'allow',
-        updatedInput: { answers: { 'Which color do you prefer?': 'RED' } },
+        updatedInput: {
+          questions: [{ question: 'Which color do you prefer?' }],
+          answers: { 'Which color do you prefer?': 'RED' },
+        },
       },
     });
   });
