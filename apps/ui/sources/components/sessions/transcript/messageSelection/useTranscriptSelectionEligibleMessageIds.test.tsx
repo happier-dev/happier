@@ -106,6 +106,41 @@ describe('useTranscriptSelectionEligibleMessageIds', () => {
         }
     });
 
+    it('keeps a rendered unsupported-content placeholder selectable when thinking is hidden and diagnostics are enabled', async () => {
+        // Tests run with developer diagnostics enabled, so the placeholder row is rendered and must
+        // stay selectable. The hidden-thinking branch must not silently treat diagnostics as off.
+        const previousState = storage.getState();
+        try {
+            storage.setState((state) => ({
+                ...state,
+                settings: {
+                    ...settingsDefaults,
+                    ...state.settings,
+                    sessionThinkingDisplayMode: 'hidden',
+                },
+            }));
+            writeSessionMessages([
+                message({
+                    id: 'unsupported',
+                    kind: 'agent-text',
+                    text: '[Unsupported agent output: future-type]',
+                    meta: { happierUnsupportedContentV1: 'unsupported-agent-output' } as never,
+                }),
+                message({ id: 'answer', kind: 'agent-text', text: 'done' }),
+            ]);
+
+            const hook = await renderHook(
+                () => useTranscriptSelectionEligibleMessageIds('s1', { enabled: true, metadata: null }),
+                { flushOptions: { cycles: 1, turns: 4 } },
+            );
+
+            expect(hook.getCurrent()).toEqual(['unsupported', 'answer']);
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
     it('excludes assistant stream segments with unknown state until they become terminal', async () => {
         const previousState = storage.getState();
         try {

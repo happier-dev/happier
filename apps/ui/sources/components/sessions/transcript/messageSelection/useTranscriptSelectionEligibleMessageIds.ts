@@ -4,9 +4,9 @@ import { useShallow } from 'zustand/react/shallow';
 import { parseSessionMediaMessageMeta } from '@/sync/domains/sessionMedia/sessionMediaMessageMeta';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { compareTranscriptMessagesOldestFirst } from '@/sync/domains/messages/transcriptOrdering';
-import { storage, useLocalSetting, useSetting } from '@/sync/domains/state/storage';
+import { storage, useSetting } from '@/sync/domains/state/storage';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
-import { isSessionDebugInformationEnabled } from '@/components/sessions/debug/sessionDebugInformation';
+import { useSessionDebugInformationEnabled } from '@/sync/runtime/useSessionDebugInformationEnabled';
 
 import { isAgentTextMessageActivelyStreamingForSelection, resolveSelectableMessageText } from './resolveSelectableMessageText';
 import {
@@ -55,7 +55,10 @@ function resolveMessageEligibility(message: Message, discarded: boolean, hiddenT
             token = `${message.id}:${message.kind}:discarded`;
         } else if (isTranscriptSelectionHiddenUnsupportedContent(message, debugInformationEnabled)) {
             token = `${message.id}:${message.kind}:unsupported-content-hidden`;
-        } else if (hiddenThinking && shouldExcludeMessageFromTranscriptSelection(message, { sessionThinkingDisplayMode: 'hidden' })) {
+        } else if (hiddenThinking && shouldExcludeMessageFromTranscriptSelection(message, {
+            sessionThinkingDisplayMode: 'hidden',
+            debugInformationEnabled,
+        })) {
             token = `${message.id}:${message.kind}:thinking-hidden`;
         } else if (isAgentTextMessageActivelyStreamingForSelection(message)) {
             // Active assistant segments change text very frequently. Their selection eligibility cannot
@@ -132,7 +135,7 @@ export function useTranscriptSelectionEligibleMessageIds(
     const sessionThinkingDisplayMode = useSetting('sessionThinkingDisplayMode');
     const thinkingVisibilitySignature = normalizeTranscriptSelectionThinkingVisibility(sessionThinkingDisplayMode);
     const hiddenThinking = thinkingVisibilitySignature === 'hidden';
-    const debugInformationEnabled = isSessionDebugInformationEnabled(useLocalSetting('devModeEnabled'));
+    const debugInformationEnabled = useSessionDebugInformationEnabled();
     const discardedLocalIdsSignature = React.useMemo(
         () => buildDiscardedMessageLocalIdsSignature(options?.metadata ?? null),
         [options?.metadata],

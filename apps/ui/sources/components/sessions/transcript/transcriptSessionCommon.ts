@@ -5,9 +5,8 @@ import type { Settings } from '@/sync/domains/settings/settings';
 import type { SessionForkSupportSource } from '@/sync/domains/sessionFork/forkUiSupport';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import type { ReducerState } from '@/sync/reducer/reducer';
-import { isSessionDebugInformationEnabled } from '@/components/sessions/debug/sessionDebugInformation';
+import { useSessionDebugInformationEnabled } from '@/sync/runtime/useSessionDebugInformationEnabled';
 import {
-    useLocalSetting,
     useSessionForkSupportSource,
     useSessionMessagesById,
     useSessionMessagesReducerState,
@@ -49,8 +48,9 @@ export type TranscriptMessageDisplayCommon = Pick<TranscriptSessionCommonSetting
 > & Readonly<{
     workspacePath: string | null;
     /**
-     * Resolved once per transcript rather than per row, so rendering a message does not add a
-     * settings-store subscription for every row in the list.
+     * Carried as a prop so the transcript list resolves it once for every row it hoists common
+     * props to. Rows that fall back to the standalone `MessageView` wrapper resolve this hook set
+     * themselves, as they already do for every other setting here.
      */
     debugInformationEnabled: boolean;
 }>;
@@ -105,8 +105,7 @@ export function useTranscriptSessionCommon(sessionId: string): TranscriptSession
     const messagesById = useSessionMessagesById(sessionId);
     const reducerState = useSessionMessagesReducerState(sessionId);
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
-    const localDevModeEnabled = useLocalSetting('devModeEnabled');
-    const debugInformationEnabled = isSessionDebugInformationEnabled(localDevModeEnabled);
+    const debugInformationEnabled = useSessionDebugInformationEnabled();
 
     const sessionReplayEnabled = useSetting('sessionReplayEnabled');
     const sessionReplayMaxSeedChars = useSetting('sessionReplayMaxSeedChars');

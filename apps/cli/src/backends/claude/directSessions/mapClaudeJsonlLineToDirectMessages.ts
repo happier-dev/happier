@@ -96,6 +96,9 @@ export function mapClaudeJsonlLineToDirectMessages(params: Readonly<{
         id: stableId,
         localId: stableId,
         createdAtMs,
+        // Classify from the raw body: a row we cannot parse still gets the same role treatment as a
+        // synced one, instead of reaching the transcript as unclassified agent content.
+        messageRole: resolveClaudeSessionMessageRole(rawObject),
         raw: {
           role: 'agent',
           content: {
