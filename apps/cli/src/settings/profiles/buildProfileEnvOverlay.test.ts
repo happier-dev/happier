@@ -6,6 +6,7 @@ import {
   deriveAccountMachineKeyFromRecoverySecret,
   deriveSettingsSecretsKeyV1,
   encryptSecretStringV1,
+  getBuiltInBackendProfile,
 } from '@happier-dev/protocol';
 
 function makeCredentials(): Credentials {
@@ -164,5 +165,100 @@ describe('buildProfileEnvOverlay', () => {
       promptSecretFn: null,
       startedBy: 'terminal',
     })).rejects.toThrow(/DEEPSEEK_AUTH_TOKEN/);
+  });
+});
+
+describe('buildProfileEnvOverlay with the shipped MiniMax built-in profiles', () => {
+  const MINIMAX_CASES = [
+    {
+      profileId: 'minimax',
+      secretName: 'MINIMAX_AUTH_TOKEN',
+      expectedBaseUrl: 'https://api.minimax.io/anthropic',
+    },
+    {
+      profileId: 'minimax-cn',
+      secretName: 'MINIMAX_CN_AUTH_TOKEN',
+      expectedBaseUrl: 'https://api.minimaxi.com/anthropic',
+    },
+  ] as const;
+
+  it.each(MINIMAX_CASES)(
+    'expands $profileId regional defaults and routes every Claude model tier to MiniMax',
+    async ({ profileId, secretName, expectedBaseUrl }) => {
+      const { buildProfileEnvOverlay } = await import('./buildProfileEnvOverlay.js');
+
+      const profile = getBuiltInBackendProfile(profileId);
+      expect(profile).not.toBeNull();
+
+      const result = await buildProfileEnvOverlay({
+        agentId: 'claude',
+        profile: profile!,
+        accountSettings: {},
+        credentials: makeCredentials(),
+        processEnv: { [secretName]: 'mm-from-env' },
+        promptSecretFn: null,
+        startedBy: 'terminal',
+      });
+
+      expect(result.envOverlayExpanded).toMatchObject({
+        ANTHROPIC_BASE_URL: expectedBaseUrl,
+        ANTHROPIC_AUTH_TOKEN: 'mm-from-env',
+        ANTHROPIC_MODEL: 'MiniMax-M3',
+        // Claude Code resolves the opus/sonnet/haiku aliases through these keys.
+        // Without them a model switch would send "opus"/"sonnet" upstream, which
+        // MiniMax rejects.
+        ANTHROPIC_DEFAULT_OPUS_MODEL: 'MiniMax-M3',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: 'MiniMax-M3',
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'MiniMax-M2.7',
+        API_TIMEOUT_MS: '600000',
+      });
+    },
+  );
+
+  it.each(MINIMAX_CASES)(
+    'keeps $profileId free of OpenAI-namespace variables',
+    async ({ profileId, secretName }) => {
+      const { buildProfileEnvOverlay } = await import('./buildProfileEnvOverlay.js');
+
+      const result = await buildProfileEnvOverlay({
+        agentId: 'claude',
+        profile: getBuiltInBackendProfile(profileId)!,
+        accountSettings: {},
+        credentials: makeCredentials(),
+        processEnv: { [secretName]: 'mm-from-env' },
+        promptSecretFn: null,
+        startedBy: 'terminal',
+      });
+
+      // Codex resolves its provider from ~/.codex/config.toml, never from these
+      // variables. Exporting them would only leak the MiniMax key into unrelated
+      // OpenAI-SDK tool subprocesses spawned by a Claude session.
+      const openAiKeys = Object.keys(result.envOverlayExpanded).filter((name) => name.startsWith('OPENAI_'));
+      expect(openAiKeys).toEqual([]);
+    },
+  );
+
+  it.each(MINIMAX_CASES)(
+    'refuses to build $profileId without its regional API key',
+    async ({ profileId, secretName }) => {
+      const { buildProfileEnvOverlay } = await import('./buildProfileEnvOverlay.js');
+
+      await expect(buildProfileEnvOverlay({
+        agentId: 'claude',
+        profile: getBuiltInBackendProfile(profileId)!,
+        accountSettings: {},
+        credentials: makeCredentials(),
+        processEnv: {},
+        promptSecretFn: null,
+        startedBy: 'terminal',
+      })).rejects.toThrow(new RegExp(secretName));
+    },
+  );
+
+  it('does not offer MiniMax to Codex sessions', () => {
+    for (const { profileId } of MINIMAX_CASES) {
+      const profile = getBuiltInBackendProfile(profileId);
+      expect(profile?.compatibilityByTargetKey?.['agent:codex']).toBe(false);
+    }
   });
 });
