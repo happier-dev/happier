@@ -34,6 +34,7 @@ import {
   parseLocalVoiceTtsSettings,
   resolveLocalVoiceAdapterSettings,
 } from '@/voice/local/localVoiceSettings';
+import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
 import { useDaemonVoiceModelCatalogState } from '@/voice/settings/panels/modelCatalog/useDaemonVoiceModelCatalogState';
 import { DaemonVoiceModelCatalogProvider } from '@/voice/settings/panels/modelCatalog/DaemonVoiceModelCatalogContext';
 import { useVoiceExecutionMachinePresentation } from '@/voice/credentials/useExecutionMachinePresentation';
@@ -89,6 +90,14 @@ export default function VoiceSettingsScreen() {
     : readLocalConversationVoiceSettings(voice);
   const activeLocalStt = parseLocalVoiceSttSettings(activeLocalAdapter.stt);
   const activeLocalTts = parseLocalVoiceTtsSettings(activeLocalAdapter.tts);
+  const requiresDaemonSttModel = activeLocalStt.provider === 'local_neural'
+    && resolveLocalNeuralExecutionPolicy({
+      requestedExecution: activeLocalStt.localNeural.execution,
+    }).preferredExecution === 'daemon';
+  const requiresDaemonTtsModel = activeLocalTts.provider === 'local_neural'
+    && resolveLocalNeuralExecutionPolicy({
+      requestedExecution: activeLocalTts.localNeural.execution,
+    }).preferredExecution === 'daemon';
   const daemonModelAvailability = React.useMemo(
     () => resolveVoiceDaemonModelAvailabilityFromCatalogState({
       loading: daemonModelCatalog.state.loading,
@@ -96,6 +105,8 @@ export default function VoiceSettingsScreen() {
       statuses: daemonModelCatalog.state.statuses,
       selectedSttPackId: activeLocalStt.localNeural?.assetId ?? null,
       selectedTtsPackId: activeLocalTts.localNeural?.assetId ?? null,
+      requireStt: requiresDaemonSttModel,
+      requireTts: requiresDaemonTtsModel,
     }),
     [
       activeLocalStt.localNeural?.assetId,
@@ -103,6 +114,8 @@ export default function VoiceSettingsScreen() {
       daemonModelCatalog.state.errorCode,
       daemonModelCatalog.state.loading,
       daemonModelCatalog.state.statuses,
+      requiresDaemonSttModel,
+      requiresDaemonTtsModel,
     ],
   );
   const dictationDaemonModelAvailability = React.useMemo(

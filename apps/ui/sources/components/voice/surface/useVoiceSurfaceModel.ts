@@ -47,6 +47,7 @@ import {
 import { useVoiceLevelSourceActive } from './useVoiceLevelSourceActive';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { VOICE_SETTINGS_PROVIDER_FOCUS_TARGET } from '@/voice/settings/voiceSettingsRouteFocus';
+import { resolveVoiceSurfaceCredentialErrorSubtitleKey } from './resolveVoiceSurfaceCredentialErrorSubtitle';
 
 const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
 
@@ -226,8 +227,16 @@ export function useVoiceSurfaceModel(props: VoiceSurfaceProps): VoiceSurfaceView
     const recovery = resolveVoiceSurfaceRecovery(recoveryAction);
     const controlsLoading = snap.status === 'connecting' && !canStop;
     const controlsDisabled = !canStop && !canStart;
+    const credentialErrorSubtitleKey = resolveVoiceSurfaceCredentialErrorSubtitleKey({
+        activeAdapterId: snap.adapterId ?? null,
+        errorCode: snap.errorCode,
+        providerConfig: readVoiceProviderSettingsConfig(canonicalVoice, providerId),
+        providerEntry,
+    });
     const errorSubtitle = isVoiceMachineErrorKind(snap.errorCode)
-        ? t(resolveVoiceMachineErrorTranslationKey(snap.errorCode))
+        ? credentialErrorSubtitleKey
+            ? tLoose(credentialErrorSubtitleKey)
+            : t(resolveVoiceMachineErrorTranslationKey(snap.errorCode))
         : null;
     const subtitle = errorSubtitle
         ?? outputStatus?.text

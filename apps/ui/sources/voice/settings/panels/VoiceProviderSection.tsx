@@ -49,13 +49,7 @@ import {
   resolveVoiceProviderAvailability,
   type ResolveVoiceProviderAvailabilityInput,
 } from '@/voice/settings/resolveVoiceProviderAvailability';
-import {
-  parseLocalVoiceSttSettings,
-  parseLocalVoiceTtsSettings,
-  resolveLocalVoiceAdapterSettings,
-} from '@/voice/local/localVoiceSettings';
-import { resolveOpenAiCompatEndpointConsent } from '@/voice/local/openaiCompat/endpoint';
-import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
+import { projectLocalConversationReadinessFacts } from '@/voice/settings/projectLocalConversationReadinessFacts';
 import { VoiceGlobalConnectedServicesBindingField } from './realtime/VoiceGlobalConnectedServicesBindingField';
 import { resolveVoiceProviderReadinessPresentation } from './voiceProviderReadinessPresentation';
 
@@ -70,137 +64,6 @@ function normalizePlatform(platform: string): 'web' | 'ios' | 'android' | 'macos
     || platform === 'linux'
     ? platform
     : 'unknown';
-}
-
-function projectLocalPathReadinessFact(
-  path: ReturnType<typeof resolveVoiceProviderAvailability>['local']['paths'][keyof ReturnType<typeof resolveVoiceProviderAvailability>['local']['paths']],
-): VoiceReadinessFact {
-  if (path.runnable) return 'ready';
-  if (path.readiness === 'installing') return 'installing';
-  if (path.readiness === 'installable') return 'missing';
-  if (path.readiness === 'unknown') return 'unknown';
-  if (path.readiness === 'error') return 'incompatible';
-  return 'missing';
-}
-
-function selectedLocalNeuralExecutionFacts(
-  voice: VoiceSettings,
-  platform: ReturnType<typeof normalizePlatform>,
-): Readonly<{
-  hasLocalNeural: boolean;
-  requiresDaemon: boolean;
-}> {
-  const local = resolveLocalVoiceAdapterSettings({ voice });
-  const stt = parseLocalVoiceSttSettings(local.config.stt);
-  const tts = parseLocalVoiceTtsSettings(local.config.tts);
-  const selectedExecutions = [
-    stt.provider === 'local_neural' ? stt.localNeural.execution : null,
-    tts.provider === 'local_neural' ? tts.localNeural.execution : null,
-  ].filter((execution): execution is NonNullable<typeof execution> => execution !== null);
-  return {
-    hasLocalNeural: selectedExecutions.length > 0,
-    requiresDaemon: selectedExecutions.some((execution) => (
-      resolveLocalNeuralExecutionPolicy({
-        requestedExecution: execution,
-        platformOs: platform,
-      }).preferredExecution === 'daemon'
-    )),
-  };
-}
-
-function resolveLocalRuntimeFact(
-  local: ReturnType<typeof resolveVoiceProviderAvailability>['local'],
-  input: ResolveVoiceProviderAvailabilityInput['local'],
-  voice: VoiceSettings,
-  platform: ReturnType<typeof normalizePlatform>,
-): VoiceReadinessFact {
-  const selectedLocal = voice.providerId === 'local_conversation'
-    ? resolveLocalVoiceAdapterSettings({ voice })
-    : null;
-  const selectedExecutions = selectedLocal
-    ? selectedLocalNeuralExecutionFacts(voice, platform)
-    : null;
-  if (selectedExecutions?.requiresDaemon) {
-    if (input?.daemon?.runtimeState === 'available') return 'ready';
-    if (input?.daemon?.runtimeState === 'unavailable') return 'missing';
-    return 'unknown';
-  }
-  if (selectedLocal) {
-    const stt = parseLocalVoiceSttSettings(selectedLocal.config.stt);
-    if (stt.provider === 'device') {
-      const path = platform === 'web'
-        ? local.paths.browserSpeech
-        : local.paths.nativeDevice;
-      return projectLocalPathReadinessFact(path);
-    }
-  }
-  if (input?.daemon?.runtimeState === 'available') return 'ready';
-  if (local.runnable) return 'ready';
-  if (Object.values(local.paths).some((path) => path.readiness === 'installing')) return 'installing';
-  if (local.enabled) return 'missing';
-  if (Object.values(local.paths).some((path) => path.readiness === 'unknown')) return 'unknown';
-  return 'incompatible';
-}
-
-function resolveLocalModelFact(
-  input: ResolveVoiceProviderAvailabilityInput['local'],
-  voice: VoiceSettings,
-  platform: ReturnType<typeof normalizePlatform>,
-): VoiceReadinessFact {
-  if (voice.providerId !== 'local_conversation') return 'ready';
-  const selectedExecutions = selectedLocalNeuralExecutionFacts(voice, platform);
-  if (!selectedExecutions.hasLocalNeural) return 'ready';
-  if (!selectedExecutions.requiresDaemon) return 'unknown';
-  if (input?.daemon?.modelState === 'ready') return 'ready';
-  if (input?.daemon?.modelState === 'missing') return 'missing';
-  if (input?.daemon?.modelState === 'installing') return 'installing';
-  if (input?.daemon?.modelState === 'error') return 'incompatible';
-  return 'unknown';
-}
-
-function projectOpenAiCompatEndpointFact(
-  config: Readonly<{
-    baseUrl: string | null;
-    insecureLocalOriginConsent: string | null;
-    insecureLocalConsentMachineId: string | null;
-  }>,
-  executionMachineId: string | null | undefined,
-): VoiceReadinessFact {
-  const baseUrl = typeof config.baseUrl === 'string' ? config.baseUrl.trim() : '';
-  if (!baseUrl) return 'missing';
-  try {
-    const endpoint = resolveOpenAiCompatEndpointConsent(
-      baseUrl,
-      config.insecureLocalOriginConsent,
-      config.insecureLocalConsentMachineId,
-      executionMachineId ?? null,
-    );
-    return endpoint.requiresInsecureConsent
-      && endpoint.insecureLocalOriginConsent === null
-      ? 'missing'
-      : 'ready';
-  } catch {
-    return 'incompatible';
-  }
-}
-
-function resolveLocalEndpointFact(
-  voice: VoiceSettings,
-  executionMachineId: string | null | undefined,
-): VoiceReadinessFact {
-  if (voice.providerId !== 'local_conversation') return 'ready';
-  const local = resolveLocalVoiceAdapterSettings({ voice });
-  const stt = parseLocalVoiceSttSettings(local.config.stt);
-  const tts = parseLocalVoiceTtsSettings(local.config.tts);
-  const selectedEndpoints = [
-    stt.provider === 'openai_compat' ? stt.openaiCompat : null,
-    tts.provider === 'openai_compat' ? tts.openaiCompat : null,
-  ].filter((endpoint): endpoint is NonNullable<typeof endpoint> => endpoint !== null);
-  for (const endpoint of selectedEndpoints) {
-    const fact = projectOpenAiCompatEndpointFact(endpoint, executionMachineId);
-    if (fact !== 'ready') return fact;
-  }
-  return 'ready';
 }
 
 function localizedText(value: string | Readonly<{ key: string; fallback: string }>): string {
@@ -270,6 +133,13 @@ export function VoiceProviderSection(props: {
   });
   const localExecutionMachineFact: VoiceReadinessFact = props.executionMachineId != null ? 'ready' : 'missing';
   const platform = normalizePlatform(props.platformOs ?? Platform.OS);
+  const localConversationReadinessFacts = projectLocalConversationReadinessFacts({
+    voice,
+    platform,
+    local: availability.local,
+    localInput: props.localAvailability,
+    executionMachineId: props.executionMachineId,
+  });
   const rows = projectVoiceProviderSelectionRows(voice, registry).map((row) => {
     const settingsProjection = projectVoiceProviderSettings(row.entry, row.envelope);
     const accountCredentialReference = row.entry.accountCredentialSlot
@@ -320,9 +190,9 @@ export function VoiceProviderSection(props: {
             ? localExecutionMachineFact
             : 'missing',
         credential: credentialFact,
-        endpoint: resolveLocalEndpointFact(voice, props.executionMachineId),
-        runtime: resolveLocalRuntimeFact(availability.local, props.localAvailability, voice, platform),
-        model: resolveLocalModelFact(props.localAvailability, voice, platform),
+        endpoint: localConversationReadinessFacts.endpoint,
+        runtime: localConversationReadinessFacts.runtime,
+        model: localConversationReadinessFacts.model,
       },
     });
     const selectable = isVoiceRoleSelectableForConfiguration({
